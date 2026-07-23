@@ -523,8 +523,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
 
 VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers) => {
   const currentIds = new Set(currentSquad.map(p => p.element));
-  const outPlayers = [];
-  const inPlayers = [];
+  const candidates = [];
 
   currentSquad.forEach(sp => {
     const pid = sp.element;
@@ -532,31 +531,70 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers) => {
     const cPrice = (sp.selling_price || sp.now_cost || 0) / 10;
     if (!cXP) return;
     const pos = cXP.positionId;
-    const candidates = players.filter(p =>
+    const upgrades = players.filter(p =>
       p.id !== pid && !currentIds.has(p.id) &&
       p.positionId === pos &&
       p.price <= cPrice + bank + 0.1 &&
-      p.totalXP > cXP.totalXP + 0.5
-    ).sort((a, b) => b.totalXP - a.totalXP);
+      p.totalXP > cXP.totalXP + 1.0
+    ).sort((a, b) => (b.totalXP - b.price) - (a.totalXP - a.price));
 
-    if (candidates.length > 0) {
-      const best = candidates[0];
-      if (best.totalXP > cXP.totalXP + 1.0) {
-        outPlayers.push({ id: pid, name: sp.web_name || "?", position: VG.POSITIONS[pos], price: cPrice });
-        inPlayers.push({ id: best.id, name: best.name, position: best.position, price: best.price, totalXP: best.totalXP });
-        bank -= (best.price - cPrice);
-        currentIds.delete(pid);
-        currentIds.add(best.id);
-      }
+    if (upgrades.length > 0) {
+      const best = upgrades[0];
+      const gain = best.totalXP - cXP.totalXP;
+      const cost = +(best.price - cPrice).toFixed(1);
+      candidates.push({
+        out: { id: pid, name: sp.web_name || "?", position: VG.POSITIONS[pos], price: cPrice, totalXP: cXP.totalXP },
+        in: { id: best.id, name: best.name, position: best.position, price: best.price, totalXP: best.totalXP },
+        gain, cost, netGain: gain
+      });
     }
   });
 
-  const nTransfers = Math.min(inPlayers.length, freeTransfers + 1);
-  const hits = Math.max(0, nTransfers - freeTransfers) * 4;
+  // Sort by net gain (biggest improvement first)
+  candidates.sort((a, b) => b.netGain - a.netGain);
+
+  // Phase 1: Only use free transfers (no hits)
+  const outPlayers = [];
+  const inPlayers = [];
+  let spent = 0;
+  const usedIds = new Set();
+
+  for (const c of candidates) {
+    if (outPlayers.length >= freeTransfers) break;
+    if (usedIds.has(c.in.id)) continue;
+    if (spent + c.cost > bank + 0.1) continue;
+    outPlayers.push(c.out);
+    inPlayers.push(c.in);
+    spent += c.cost;
+    usedIds.add(c.in.id);
+    currentIds.delete(c.out.id);
+    currentIds.add(c.in.id);
+  }
+
+  // Phase 2: Consider hits ONLY if improvement is massive (>8 pts per hit)
+  const hitCandidates = [];
+  for (const c of candidates) {
+    if (usedIds.has(c.in.id)) continue;
+    if (c.netGain <= 8) continue; // Not worth a hit
+    hitCandidates.push(c);
+  }
+
+  let hitTransfers = 0;
+  for (const c of hitCandidates) {
+    if (spent + c.cost > bank + 0.1) continue;
+    outPlayers.push(c.out);
+    inPlayers.push(c.in);
+    spent += c.cost;
+    usedIds.add(c.in.id);
+    hitTransfers++;
+  }
+
+  const hits = hitTransfers * 4;
 
   return {
-    mode: "transfer", transfersIn: inPlayers.slice(0, nTransfers), transfersOut: outPlayers.slice(0, nTransfers),
-    hitCost: hits, recommendedTransfers: nTransfers
+    mode: "transfer", transfersIn: inPlayers, transfersOut: outPlayers,
+    hitCost: hits, recommendedTransfers: outPlayers.length, freeTransfersUsed: Math.min(outPlayers.length, freeTransfers),
+    hitWarning: hits > 0 ? `${hitTransfers} hit(s) = -${hits} pts. Champion advice: avoid hits unless improvement > 8 pts.` : null
   };
 };
 
@@ -711,7 +749,7 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
         : `No DGW trigger — save for a Double Gameweek`,
       tip: tcBest.tcScore >= TC_THRESHOLD
         ? "Double Gameweek captain — high ceiling play"
-        : "TC doubles your captain's points. Only play it when your best captain has TWO fixtures (DGW) against weak opponents."
+        : "TC doubles your captain's points. Only play when your captain has TWO fixtures (DGW) against weak opponents. Classic timing: GW36-37."
     },
     bench_boost: {
       recommend: bbBest.bbScore >= BB_THRESHOLD,
@@ -722,7 +760,7 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
         : `No DGW bench coverage — save for a Double Gameweek`,
       tip: bbBest.bbScore >= BB_THRESHOLD
         ? "Multiple bench players have double fixtures — ideal BB window"
-        : "BB gets value when bench players play TWICE. Wait for a DGW where your bench has double fixtures."
+        : "BB is best in DGW when bench players play twice. Classic sequence: WC → BB → FH → TC. New rule: must use one chip in first half."
     },
     wildcard: {
       recommend: wcBest.wcScore >= WC_THRESHOLD,
@@ -733,7 +771,7 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
         : `Squad looks healthy — hold WC for later`,
       tip: wcBest.wcScore >= WC_THRESHOLD
         ? "Significant squad issues detected — WC can fix multiple problems at once"
-        : "Save WC until you have 3+ injuries or a run of tough fixtures. Early season data helps plan your second WC."
+        : "Save WC until you have 3+ injuries or a run of tough fixtures. Use it to set up for BB. Classic: WC early to fix mistakes, or WC GW32 to prepare for DGW run."
     },
     free_hit: {
       recommend: fhBest.fhScore >= FH_THRESHOLD,
@@ -744,7 +782,7 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
         : `No BGW/DGW trigger — save for a Blank Gameweek`,
       tip: fhBest.fhScore >= FH_THRESHOLD
         ? "Blank Gameweek — use FH to field 11 without hits"
-        : "FH lets you pick any 15 players for one week. Most valuable on Blank Gameweeks when many teams don't play."
+        : "FH lets you pick any 15 players for one week. Best on BGWs. Also powerful in GW38 for differential sprint to win mini-league."
     },
     gwScores
   };
@@ -909,5 +947,76 @@ VG.render.ticker = (ticker, startGW, nGWs) => {
     html += '</tr>';
   });
   html += '</tbody></table></div>';
+  return html;
+};
+
+// ── Strategy Tips: championship wisdom ──────────────────────────────────
+VG.TIPS = [
+  {
+    category: "Core Strategy",
+    icon: "🏆",
+    tips: [
+      { title: "Avoid Points Hits", text: "2025/26 champion Erik Ibsen did not take a single points hit all season. \"Better to play a player with a bad fixture than take a hit — it's mathematically never the right call.\"", source: "Erik Ibsen (2025/26 Champion)" },
+      { title: "Master Rolling Transfers", text: "Ibsen made zero transfers in 15 out of 38 gameweeks, rolling his free transfers. This gave him 2 free transfers in 8 GWs and 3 in 3 GWs for \"big moves\" to restructure his squad.", source: "Erik Ibsen" },
+      { title: "Balance Template vs Differentials", text: "The \"template\" squad has high-ownership players — safe but limited upside. Top players hunt low-ownership differentials in mid-to-late season to jump up ranks.", source: "General wisdom" },
+      { title: "Stay Adaptable", text: "2023/24 champion Jonas Sand Labakk was struggling early and decisively used his Wildcard in GW8. \"You need to think for yourself. You can't let others make all the decisions for you.\"", source: "Jonas Sand Labakk (2023/24 Champion)" }
+    ]
+  },
+  {
+    category: "Player Selection",
+    icon: "⚽",
+    tips: [
+      { title: "Invest in Starting Players", text: "Ibsen stresses having 15 regular starters. He strongly advises against picking non-playing \"bench fillers\" just to save money — every player should get minutes.", source: "Erik Ibsen" },
+      { title: "Goalkeeper Rotation", text: "Ibsen experimented with two premium keepers (Raya and Pickford) and rotated them based on fixtures. A rotating GK pair can outperform a single premium pick.", source: "Erik Ibsen" },
+      { title: "Captaincy is King", text: "Champion Lovro Budisin scored 29.1% of his total points from his captain — nearly 8% more than the previous season's winner. Captain choice is the single biggest lever.", source: "Lovro Budisin (2024/25 Champion)" },
+      { title: "Don't Rely on a Single God", text: "Budisin went almost the entire season without Haaland, allowing him to have multiple captaincy options like Salah, Palmer, and Son. Flexibility beats rigidity.", source: "Lovro Budisin" },
+      { title: "Hunt for Value Picks", text: "Budisin chose Isak and Chris Wood. Their combined price (£14.5m) was £0.5m cheaper than Haaland alone, yet they outperformed him as the season's top forwards.", source: "Lovro Budisin" }
+    ]
+  },
+  {
+    category: "Chip Strategy",
+    icon: "🃏",
+    tips: [
+      { title: "Classic Chip Sequence", text: "The championship-winning sequence: Wildcard → Bench Boost → Free Hit → Triple Captain, typically around GW32-38 when BGW/DGW clusters appear.", source: "Elite FPL strategy" },
+      { title: "Wildcard Timing", text: "Use when your squad needs a major overhaul. Fix early mistakes (like Ibsen did in GW2), reverse bad form (like Labakk in GW8), or prepare for DGWs.", source: "Multiple champions" },
+      { title: "Bench Boost in DGW", text: "Classic strategy: Play Bench Boost during a Double Gameweek when all 15 players have fixtures. With new rules forcing one chip in the first half, GW1 is a viable alternative.", source: "FPL experts" },
+      { title: "Free Hit for BGWs", text: "Make unlimited free transfers for a single gameweek. Cover Blank Gameweeks when multiple teams have no fixture. Also powerful for GW38 differential sprint.", source: "FPL experts" },
+      { title: "Triple Captain in DGW", text: "Play during a Double Gameweek on an in-form player with two favorable fixtures. Never waste it on a single fixture — the upside isn't there.", source: "FPL experts" }
+    ]
+  },
+  {
+    category: "Season Timeline",
+    icon: "⏰",
+    tips: [
+      { title: "Early Season (GW1-4)", text: "Be very conservative with transfers for the first 3-4 weeks. Wait for enough data before making critical adjustments. Roll your transfers if possible.", source: "Elite FPL strategy" },
+      { title: "Mid-Season (GW15-30)", text: "This is where rank gains happen. Plan around BGW/DGW clusters. Use your Wildcard to set up for the Bench Boost, then Free Hit through the Blank.", source: "Elite FPL strategy" },
+      { title: "End of Season (GW36-38)", text: "GW37 is prime for TC or BB. GW38: Use Free Hit to load up on differentials for a final sprint to win your mini-league.", source: "Elite FPL strategy" }
+    ]
+  },
+  {
+    category: "Mindset",
+    icon: "💎",
+    tips: [
+      { title: "Patience Beats Recklessness", text: "FPL is a marathon, not a sprint. Patience and discipline will almost always outperform reckless, short-term moves.", source: "General wisdom" },
+      { title: "Trust Your Gut", text: "Budisin makes his own decisions right before the deadline and trusts his instincts. Data informs, but intuition decides.", source: "Lovro Budisin" },
+      { title: "Avoid Points Hits", text: "It's almost always better to roll your transfer. The math doesn't lie — a 4-point hit needs to outperform by 4+ points to break even.", source: "Multiple champions" }
+    ]
+  }
+];
+
+VG.render.tips = () => {
+  let html = '';
+  VG.TIPS.forEach(section => {
+    html += `<div class="tips-section">`;
+    html += `<div class="tips-section-header">${section.icon} ${section.category}</div>`;
+    section.tips.forEach(tip => {
+      html += `<div class="tip-card">`;
+      html += `<div class="tip-title">${tip.title}</div>`;
+      html += `<div class="tip-text">${tip.text}</div>`;
+      html += `<div class="tip-source">— ${tip.source}</div>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+  });
   return html;
 };
