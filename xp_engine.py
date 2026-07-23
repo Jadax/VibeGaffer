@@ -118,13 +118,34 @@ def get_team_elo_ratings() -> Dict[int, float]:
     if not elo_df.empty and "team_id" in elo_df.columns and "elo" in elo_df.columns:
         return dict(zip(elo_df["team_id"].astype(int), elo_df["elo"].astype(float)))
 
-    # Fallback: approximate Elo from FPL's team strength (3 is neutral)
+    # Fallback: approximate Elo from FPL's strength ratings.
+    # FPL doesn't expose a single 'strength' field — we average the home/away
+    # overall, attack, and defence ratings into a composite score.
     teams_df = get_teams_df()
     if teams_df.empty:
         return {}
     avg_elo = 1500.0
-    return {int(row["id"]): avg_elo + (float(row.get("strength", 3)) - 3) * 50
-            for _, row in teams_df.iterrows()}
+    result = {}
+    for _, row in teams_df.iterrows():
+        try:
+            tid = int(row["id"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        # Composite strength: average of all available strength fields
+        strength_fields = [
+            row.get("strength_overall_home", 3),
+            row.get("strength_overall_away", 3),
+            row.get("strength_attack_home", 3),
+            row.get("strength_attack_away", 3),
+            row.get("strength_defence_home", 3),
+            row.get("strength_defence_away", 3),
+        ]
+        try:
+            composite = sum(float(v) for v in strength_fields) / len(strength_fields)
+        except (ValueError, TypeError):
+            composite = 3.0
+        result[tid] = avg_elo + (composite - 3) * 50
+    return result
 
 
 # ============================================================================

@@ -844,6 +844,15 @@ def run_optimization(config: Dict[str, Any]):
     bank_override = config["bank_override"]
     horizon = config["horizon"]
 
+    try:
+        _run_optimization_inner(team_id, gameweek, free_transfers, bank_override, horizon)
+    except Exception as e:
+        st.error(f"⚠️ Optimization failed: {type(e).__name__}: {e}")
+        st.info("Try a different gameweek, or check your internet connection.")
+
+
+def _run_optimization_inner(team_id, gameweek, free_transfers, bank_override, horizon):
+
     with st.spinner("Computing xP projections across all players..."):
         xp_df = compute_all_players_xp(gameweek, horizon)
     if xp_df.empty:
