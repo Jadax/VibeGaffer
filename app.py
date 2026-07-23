@@ -87,6 +87,16 @@ def inject_css():
     [data-testid="stException"] { display: none !important; }
     /* Nuclear option: hide entire header bar on error pages */
     header { display: none !important; height: 0 !important; min-height: 0 !important; }
+    /* Ultra-aggressive: hide ANY button or link with "Manage" or "Deploy" text */
+    button:has(span:contains("Manage")),
+    a:has(span:contains("Manage")),
+    [class*="appDeploy"],
+    [class*="AppDeploy"],
+    [data-testid="stAppDeployButton"] { display: none !important; visibility: hidden !important; }
+    /* Hide the error overlay completely if it appears */
+    [data-testid="stErrorDialog"] { display: none !important; }
+    [role="dialog"] { display: none !important; }
+    .stAlert:has(.vg-loader) { display: block !important; }
 
     /* Sidebar */
     [data-testid="stSidebar"] {
@@ -554,7 +564,7 @@ def render_header():
                 </p>
             </div>
             <div style="text-align: right;">
-                <span class="neon-badge neon-badge-green pulse-glow" style="font-size:0.8rem;">v1.2 LIVE</span>
+                <span class="neon-badge neon-badge-green pulse-glow" style="font-size:0.8rem;">v1.3 LIVE</span>
             </div>
         </div>
     </div>
@@ -625,25 +635,33 @@ def render_recommendation_banner(result: Dict[str, Any]):
     st.markdown('<div class="section-title">📋 Executive Recommendation</div>', unsafe_allow_html=True)
 
     cols = st.columns(4)
-    with cols[0]:
-        mode_label = "Draft" if mode == "draft" else "Transfer"
-        mode_color = "#00ff87" if mode == "draft" else "#7c3aed"
-        st.markdown(f"""
-        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
-                    border-radius: 12px; padding: 12px 16px;">
-            <div style="color: #888; font-size: 0.8rem; font-weight: 500;">MODE</div>
-            <div style="color: {mode_color}; font-size: 1.4rem; font-weight: 800; margin-top: 2px;">{mode_label}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with cols[1]:
-        st.metric("Transfers", len(result.get("transfers_in", [])))
-    with cols[2]:
-        hit = result.get("hit_cost", 0)
-        st.metric("Hit Cost", f"-{hit} pts" if hit > 0 else "✓ None")
-    with cols[3]:
-        net = result.get("net_after_hit", result.get("total_xp", 0))
-        delta = f"+{net:.1f}" if net > 0 else f"{net:.1f}"
-        st.metric("Net xP Gain", delta)
+    mode_label = "Draft" if mode == "draft" else "Transfer"
+    mode_color = "#00ff87" if mode == "draft" else "#7c3aed"
+    transfers_count = len(result.get("transfers_in", []))
+    hit = result.get("hit_cost", 0)
+    hit_label = f"-{hit} pts" if hit > 0 else "✓ None"
+    net = result.get("net_after_hit", result.get("total_xp", 0))
+    net_label = f"+{net:.1f}" if net > 0 else f"{net:.1f}"
+
+    metric_cards = [
+        ("MODE", mode_label, mode_color),
+        ("Transfers", str(transfers_count), "#00ff87"),
+        ("Hit Cost", hit_label, "#00ff87" if hit == 0 else "#ff4757"),
+        ("Net xP Gain", net_label, "#00ff87" if net >= 0 else "#ff4757"),
+    ]
+
+    for i, (label, value, color) in enumerate(metric_cards):
+        with cols[i]:
+            st.markdown(f"""
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+                        border-radius: 12px; padding: 16px; height: 80px;
+                        display: flex; flex-direction: column; justify-content: center;">
+                <div style="color: #888; font-size: 0.75rem; font-weight: 600;
+                            text-transform: uppercase; letter-spacing: 0.5px;">{label}</div>
+                <div style="color: {color}; font-size: 1.8rem; font-weight: 800;
+                            margin-top: 2px; line-height: 1.1;">{value}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
     # Transfers
     transfers_in = result.get("transfers_in", [])
