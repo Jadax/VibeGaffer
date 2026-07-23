@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VibeGaffer — FPL Intelligence | Astraiva</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div>
+    <h1>⚽ VibeGaffer</h1>
+    <p><span style="color:#7c3aed;font-weight:700;">Astraiva</span> · Tushant Sharma · FPL Intelligence Engine</p>
+  </div>
+  <div><span class="badge pulse-glow">v2.0 LIVE</span></div>
+</div>
+
+<div class="container">
+<div class="main-layout">
+
+<!-- Sidebar -->
+<div class="sidebar" id="sidebar">
+  <label>FPL Team ID <span style="color:#666;">(leave blank for GW1 Draft)</span></label>
+  <input type="number" id="teamId" placeholder="Enter your Team ID" min="0">
+  <label>Gameweek</label>
+  <select id="gameweek"><option value="1">GW1</option></select>
+  <label>Free Transfers</label>
+  <select id="freeTransfers"><option value="1">1</option><option value="2">2</option></select>
+  <label>Bank Override (£m)</label>
+  <input type="number" id="bankOverride" placeholder="Auto-detect" step="0.1" min="0">
+  <label>xP Horizon</label>
+  <select id="horizon"><option value="3">3 GWs</option><option value="4">4 GWs</option><option value="5">5 GWs</option></select>
+  <button onclick="VG.run()">🚀 Fetch & Optimize</button>
+  <div class="status-row" id="status">Ready</div>
+</div>
+
+<!-- Main -->
+<div id="main">
+
+  <!-- Welcome -->
+  <div class="welcome" id="welcome">
+    <div style="font-size:4rem;margin-bottom:16px;">⚽</div>
+    <h2>Welcome to VibeGaffer</h2>
+    <p>Your <strong style="color:#fff;">FPL intelligence engine</strong> — squad optimization, transfer recommendations, price predictions & fixture analysis.</p>
+    <p style="font-size:0.8rem;color:#666;">Enter your Team ID in the sidebar and click <strong style="color:#00ff87;">Fetch & Optimize</strong>.</p>
+  </div>
+
+  <!-- Results (hidden until loaded) -->
+  <div id="results" style="display:none;">
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" onclick="VG.switchTab('pitch')">📋 Squad</button>
+      <button class="tab" onclick="VG.switchTab('compare')">🔍 Compare</button>
+      <button class="tab" onclick="VG.switchTab('prices')">💷 Prices</button>
+      <button class="tab" onclick="VG.switchTab('fixtures')">📅 Fixtures</button>
+      <button class="tab" onclick="VG.switchTab('diffs')">💎 Differentials</button>
+    </div>
+
+    <!-- Tab: Squad & Pitch -->
+    <div class="tab-content active" id="tab-pitch">
+      <div id="squadContent"></div>
+    </div>
+
+    <!-- Tab: Player Comparison -->
+    <div class="tab-content" id="tab-compare">
+      <div class="section-title">🔍 Player Comparison</div>
+      <p class="subtitle">Compare up to 3 players on 6 key metrics.</p>
+      <select class="player-select" id="compareSelect" multiple size="8" style="height:150px;margin-bottom:16px;"></select>
+      <div class="compare-chart-wrap"><canvas id="radarChart"></canvas></div>
+      <div id="compareTable"></div>
+    </div>
+
+    <!-- Tab: Price Changes -->
+    <div class="tab-content" id="tab-prices">
+      <div class="section-title">💷 Price Change Predictor</div>
+      <p class="subtitle">Who rises or falls tonight based on net transfers.</p>
+      <div id="priceContent"></div>
+    </div>
+
+    <!-- Tab: Fixture Ticker -->
+    <div class="tab-content" id="tab-fixtures">
+      <div class="section-title">📅 Fixture Difficulty Ticker</div>
+      <p class="subtitle">Next 8 gameweeks. Green=easy, Red=hard.</p>
+      <div id="fixtureContent"></div>
+    </div>
+
+    <!-- Tab: Differentials -->
+    <div class="tab-content" id="tab-diffs">
+      <div class="section-title">💎 Differential Picks</div>
+      <p class="subtitle">Low ownership (&lt;5%), high projected xP.</p>
+      <div id="diffContent"></div>
+    </div>
+  </div>
+</div>
+
+</div>
+</div>
+
+<div class="footer">
+  <strong>VibeGaffer</strong> v2.0 · &copy; 2025 <strong style="color:#7c3aed;">Astraiva</strong> · Built by <strong style="color:#ddd;">Tushant Sharma</strong>
+</div>
+
+<script>
+// ── Orchestrator ──────────────────────────────────────────────────────────
+VG.switchTab = (name) => {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector(`.tab[onclick="VG.switchTab('${name}')"]`)?.classList.add('active');
+  document.getElementById(`tab-${name}`)?.classList.add('active');
+};
+
+VG.init = async () => {
+  const el = id => document.getElementById(id);
+  // Populate GW selector
+  try {
+    VG.bootstrapData = await VG.loadBootstrap();
+    VG.buildMaps(VG.bootstrapData);
+    VG.allFixtures = await VG.loadFixtures();
+    const gwSel = el("gameweek");
+    gwSel.innerHTML = "";
+    for (let i = 1; i <= 38; i++) {
+      gwSel.innerHTML += `<option value="${i}" ${i === VG.currentGW ? "selected" : ""}>GW${i}</option>`;
+    }
+    el("status").innerText = VG.bootstrapData.elements.length + " players loaded · GW" + VG.currentGW;
+  } catch(e) {
+    el("status").innerHTML = '<span style="color:#ff4757">API offline — retrying</span>';
+    setTimeout(VG.init, 5000);
+  }
+};
+
+VG.run = async () => {
+  const el = id => document.getElementById(id);
+  const loader = (t) => `<div class="vg-loader"><div class="vg-loader-spinner"></div><div class="vg-loader-text">${t}</div></div>`;
+
+  try {
+    el("welcome").style.display = "none";
+    el("results").style.display = "block";
+    el("squadContent").innerHTML = loader("Loading player data...");
+
+    // Reload fresh data
+    VG.bootstrapData = await VG.loadBootstrap();
+    VG.buildMaps(VG.bootstrapData);
+    VG.allFixtures = await VG.loadFixtures();
+
+    const gw = parseInt(el("gameweek").value);
+    const horizon = parseInt(el("horizon").value);
+    const teamIdVal = el("teamId").value.trim();
+    const teamId = teamIdVal ? parseInt(teamIdVal) : 0;
+    const bankOverride = el("bankOverride").value ? parseFloat(el("bankOverride").value) : null;
+
+    // Build Elo map (approximate from team strength)
+    const eloMap = {};
+    Object.values(VG.teams).forEach(t => {
+      const fields = [t.strength_overall_home, t.strength_overall_away, t.strength_attack_home,
+                      t.strength_attack_away, t.strength_defence_home, t.strength_defence_away];
+      const avg = fields.filter(x => x !== undefined).reduce((a, b) => a + b, 0) / fields.filter(x => x !== undefined).length || 3;
+      eloMap[t.id] = 1500 + (avg - 3) * 50;
+    });
+
+    // Compute xP
+    el("squadContent").innerHTML = loader("Computing xP projections...");
+    const allXP = VG.computeAllXP(gw, horizon, VG.allFixtures, eloMap);
+
+    let result;
+    if (teamId <= 0 || gw === 1) {
+      // Mode A: Draft
+      const draft = VG.optimizeDraft(allXP, 100);
+      const chips = VG.evaluateChips(draft.starting, draft.bench, gw, VG.allFixtures);
+      result = { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, netAfterHit: draft.totalXP, mode: "draft" };
+    } else {
+      // Mode B: Transfers
+      const squadData = await VG.loadSquad(teamId, gw);
+      const currentSquad = squadData.picks.picks;
+      const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
+      const freeTransfers = parseInt(el("freeTransfers").value);
+      const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers);
+      // Build full squad after transfers
+      const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
+      const transferOutIds = new Set(transferResult.transfersOut.map(p => p.id));
+      const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
+      const fullIds = [...retainedIds, ...transferInIds];
+      const starting = allXP.filter(p => fullIds.includes(p.id)).sort((a, b) => (b.xpPerPrice || 0) - (a.xpPerPrice || 0));
+      const chips = VG.evaluateChips(starting.slice(0, 11), starting.slice(11, 15), gw, VG.allFixtures);
+      result = {
+        ...transferResult, chipAdvice: chips, starting: starting.slice(0, 11), bench: starting.slice(11, 15),
+        totalCost: 0, budgetRemaining: bank, formation: { DEF: 4, MID: 4, FWD: 2 }, mode: "transfer"
+      };
+    }
+
+    VG.currentResult = result;
+    VG.currentGW = gw;
+    VG.currentHorizon = horizon;
+    VG.allXP = allXP;
+
+    // Render Squad tab
+    const modeLabel = result.mode === "draft" ? "Draft" : "Transfer";
+    const modeColor = "#00ff87";
+    const transfersLabel = (result.transfersIn || []).length;
+    const hitLabel = (result.hitCost || 0) > 0 ? `-${result.hitCost} pts` : "✓ None";
+    const hitColor = (result.hitCost || 0) > 0 ? "#ff4757" : "#00ff87";
+    const netLabel = (result.netAfterHit || 0) >= 0 ? `+${(result.netAfterHit || 0).toFixed(1)}` : (result.netAfterHit || 0).toFixed(1);
+    const netColor = (result.netAfterHit || 0) >= 0 ? "#00ff87" : "#ff4757";
+
+    let html = `<div class="metrics">`;
+    html += VG.render.metricCard("MODE", modeLabel, modeColor);
+    html += VG.render.metricCard("Transfers", transfersLabel, "#00ff87");
+    html += VG.render.metricCard("Hit Cost", hitLabel, hitColor);
+    html += VG.render.metricCard("Net xP Gain", netLabel, netColor);
+    html += `</div>`;
+
+    // Transfers
+    if (result.transfersIn?.length || result.transfersOut?.length) {
+      html += '<div class="section-title">🔄 Transfers</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">';
+      html += '<div><h4 style="color:#00ff87;">IN</h4>';
+      result.transfersIn.forEach(p => html += `<div class="transfer-in"><strong style="color:#00ff87;">${p.name}</strong><br><span class="xfer-meta">${p.position || ""} · £${(p.price || 0).toFixed(1)}m · xP ${(p.xpPerPrice || 0).toFixed(1)}</span></div>`);
+      html += '</div><div><h4 style="color:#ff4757;">OUT</h4>';
+      result.transfersOut.forEach(p => html += `<div class="transfer-out"><strong style="color:#ff4757;">${p.name}</strong><br><span class="xfer-meta">${p.position || ""} · £${(p.price || 0).toFixed(1)}m</span></div>`);
+      html += '</div></div>';
+    }
+
+    // Captaincy
+    if (result.starting?.length >= 2) {
+      const c = result.starting[0];
+      const v = result.starting[1];
+      html += `<div class="section-title">🏅 Captaincy</div><div class="captain-row">`;
+      html += `<div class="captain-card pulse-glow"><div class="cap-tag" style="color:#ffc107;">★ CAPTAIN</div><div class="cap-name">${c.name}</div><div class="cap-stat">${c.position || ""} · xP <span style="color:#00ff87;">${(c.xpPerPrice || 0).toFixed(1)}</span></div></div>`;
+      html += `<div class="vice-card"><div class="cap-tag" style="color:#06b6d4;">☆ VICE</div><div class="cap-name">${v.name}</div><div class="cap-stat">${v.position || ""} · xP <span style="color:#06b6d4;">${(v.xpPerPrice || 0).toFixed(1)}</span></div></div>`;
+      html += `</div>`;
+    }
+
+    // Chips
+    if (result.chipAdvice) {
+      html += `<div class="section-title">💎 Chip Advice</div><div class="chips">`;
+      html += VG.render.chipCard("TC", "#ffc107", result.chipAdvice.triple_captain);
+      html += VG.render.chipCard("BB", "#2196F3", result.chipAdvice.bench_boost);
+      html += VG.render.chipCard("WC", "#7c3aed", result.chipAdvice.wildcard);
+      html += VG.render.chipCard("FH", "#ff4757", result.chipAdvice.free_hit);
+      html += `</div>`;
+    }
+
+    // Pitch
+    if (result.starting?.length) {
+      const fmt = result.formation || { DEF: 4, MID: 4, FWD: 2 };
+      html += `<div class="section-title">⚽ Starting XI <span style="color:#666;font-size:0.8rem;margin-left:8px;">${fmt.DEF}-${fmt.MID}-${fmt.FWD}</span></div>`;
+      html += VG.render.pitch(result.starting, fmt);
+    }
+
+    // Bench
+    if (result.bench?.length) {
+      html += VG.render.bench(result.bench);
+    }
+
+    el("squadContent").innerHTML = html;
+
+    // Populate comparison select
+    const sel = el("compareSelect");
+    sel.innerHTML = "";
+    const names = allXP.map(p => p.name).sort();
+    names.forEach(n => { sel.innerHTML += `<option value="${n}">${n}</option>`; });
+    sel.onchange = () => VG.renderComparison();
+
+    // Preload prices and fixtures silently
+    VG.preloadTabs(gw, horizon);
+
+  } catch(e) {
+    el("squadContent").innerHTML = `<div style="background:rgba(255,71,87,0.1);border:1px solid rgba(255,71,87,0.3);border-radius:12px;padding:20px;text-align:center;color:#ff4757;"><strong>Error:</strong> ${e.message}<br><span style="font-size:0.8rem;color:#aaa;">Check your internet and try again.</span></div>`;
+  }
+};
+
+// ── Preload other tabs ────────────────────────────────────────────────────
+VG.preloadTabs = async (gw, horizon) => {
+  // Fixtures
+  const tickerData = VG.buildFixtureTicker(gw, 8, VG.allFixtures);
+  document.getElementById("fixtureContent").innerHTML = VG.render.ticker(tickerData, gw, 8);
+
+  // Price changes
+  try {
+    const risks = await VG.getPriceRisk();
+    let ph = '<div class="price-grid"><div><h4 style="color:#00ff87;">🔺 Likely Risers</h4>';
+    const rising = risks.filter(r => r.risk === "rising" || r.risk === "likely_rise").slice(0, 10);
+    const falling = risks.filter(r => r.risk === "falling" || r.risk === "likely_fall").slice(0, 10);
+    if (rising.length === 0) ph += '<p style="color:#777;">No clear risers</p>';
+    rising.forEach(r => {
+      ph += `<div class="price-rise-card"><strong>${r.name}</strong> <span class="risk-badge rise">${r.risk.replace('_',' ')}</span><br><span style="color:#777;font-size:0.7rem;">${r.pos} · £${r.price.toFixed(1)}m · +${(r.net||0).toLocaleString()} net</span></div>`;
+    });
+    ph += '</div><div><h4 style="color:#ff4757;">🔻 Likely Fallers</h4>';
+    if (falling.length === 0) ph += '<p style="color:#777;">No clear fallers</p>';
+    falling.forEach(r => {
+      ph += `<div class="price-fall-card"><strong>${r.name}</strong> <span class="risk-badge fall">${r.risk.replace('_',' ')}</span><br><span style="color:#777;font-size:0.7rem;">${r.pos} · £${r.price.toFixed(1)}m · ${(r.net||0).toLocaleString()} net</span></div>`;
+    });
+    ph += '</div></div>';
+    document.getElementById("priceContent").innerHTML = ph;
+  } catch(e) {
+    document.getElementById("priceContent").innerHTML = '<p style="color:#777;">Price data unavailable (try during live GW)</p>';
+  }
+
+  // Differentials
+  if (VG.allXP) {
+    const diffs = VG.allXP.filter(p => (p.ownership || 100) <= 5).sort((a, b) => (b.xpPerPrice || 0) - (a.xpPerPrice || 0)).slice(0, 20);
+    let dh = '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>xP</th><th>xP/£m</th><th>Own%</th></tr>';
+    diffs.forEach(p => {
+      dh += `<tr><td style="color:#fff;">${p.name}</td><td>${p.position}</td><td>£${p.price.toFixed(1)}m</td><td>${p.totalXP || (p.xpPerPrice||0).toFixed(1)}</td><td>${(p.xpPerPrice||0).toFixed(2)}</td><td>${(p.ownership||0).toFixed(1)}%</td></tr>`;
+    });
+    dh += '</table>';
+    document.getElementById("diffContent").innerHTML = dh;
+  }
+};
+
+// ── Player comparison radar ───────────────────────────────────────────────
+VG.renderComparison = () => {
+  const sel = document.getElementById("compareSelect");
+  const selected = Array.from(sel.selectedOptions).map(o => o.value).slice(0, 3);
+  if (selected.length < 2) {
+    document.getElementById("compareTable").innerHTML = "";
+    return;
+  }
+  const colors = ['#00ff87', '#7c3aed', '#ffc107'];
+  const datasets = [];
+  const allLabels = ["Total xP", "Form", "Price £m", "xP/£m"];
+
+  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>xP/£m</th><th>Form</th></tr>';
+
+  selected.forEach((name, i) => {
+    const p = VG.allXP.find(x => x.name === name);
+    if (!p) return;
+    const playerData = VG.players[p.id];
+    const form = parseFloat(playerData?.form || "0");
+    const ppg = parseFloat(playerData?.points_per_game || "0");
+    datasets.push({
+      label: name, data: [p.xpPerPrice.toFixed(1), Math.max(form, ppg).toFixed(1), p.price.toFixed(1), p.xpPerPrice.toFixed(2)],
+      borderColor: colors[i], backgroundColor: colors[i] + "22", borderWidth: 2, pointRadius: 3
+    });
+    tableHtml += `<tr><td style="color:#fff;">${name}</td><td>${p.position}</td><td>£${p.price.toFixed(1)}m</td><td>${p.xpPerPrice.toFixed(2)}</td><td>${Math.max(form, ppg).toFixed(1)}</td></tr>`;
+  });
+  tableHtml += '</table>';
+  document.getElementById("compareTable").innerHTML = tableHtml;
+
+  const ctx = document.getElementById("radarChart");
+  if (ctx._chart) ctx._chart.destroy();
+  ctx._chart = new Chart(ctx, {
+    type: 'radar',
+    data: { labels: allLabels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { r: { grid: { color: 'rgba(255,255,255,0.08)' }, pointLabels: { color: '#aaa', font: { size: 10 } }, ticks: { color: '#666', font: { size: 8 } } } },
+      plugins: { legend: { labels: { color: '#ddd', font: { size: 11 } } } }
+    }
+  });
+};
+
+// Boot
+VG.init();
+</script>
+</body>
+</html>
