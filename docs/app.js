@@ -591,9 +591,6 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
     const capGWXP = cap?.gwXP || 0;
     const capIsDGW = cap ? dgwTeams.includes(cap.teamId) : false;
     const capFDR = cap?.gwFDR || 3;
-    const capAvgFDR = gwFix.length > 0
-      ? gwFix.reduce((s, f) => s + (f.team_h_difficulty || 3) + (f.team_a_difficulty || 3), 0) / (gwFix.length * 2)
-      : 3;
 
     // Bench analysis
     const benchXP = gp.gwBenchXP || 0;
@@ -601,28 +598,51 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
     const benchAvgXP = gp.bench?.length > 0 ? benchXP / gp.bench.length : 0;
 
     // ── TC Score ──
-    // High when: captain has high xP, DGW with easy fixtures
+    // TC is ONLY good on DGW. Non-DGW TC is almost always a waste.
+    // Score: captain_xP * multiplier, where non-DGW gets a 0.15x penalty
     let tcScore = 0;
     if (cap) {
       tcScore = capGWXP * 10;
-      if (capIsDGW) tcScore *= 2.0;
-      if (capFDR <= 2) tcScore *= 1.4;
-      else if (capFDR <= 3) tcScore *= 1.1;
-      else if (capFDR >= 4) tcScore *= 0.7;
+      if (capIsDGW) {
+        // DGW captain: excellent TC window
+        tcScore *= 2.5;
+        if (capFDR <= 2) tcScore *= 1.5;
+        else if (capFDR <= 3) tcScore *= 1.2;
+      } else {
+        // Non-DGW: heavily penalized — almost never play TC here
+        tcScore *= 0.15;
+        // Only exception: absurdly high single-GW xP (8.5+) against weak opponent
+        if (capGWXP >= 8.5 && capFDR <= 2) tcScore = 60;
+        else if (capGWXP >= 9.0 && capFDR <= 3) tcScore = 55;
+      }
     }
 
     // ── BB Score ──
-    // High when: bench xP is high, bench players have DGW
-    let bbScore = benchXP * 8;
-    if (benchDGWCount >= 2) bbScore *= 2.0;
-    else if (benchDGWCount >= 1) bbScore *= 1.4;
-    if (benchAvgXP >= 5) bbScore *= 1.3;
+    // BB is ONLY good on DGW when bench players also have doubles.
+    // Non-DGW BB is almost never worth it — you only get 4 extra playing slots.
+    let bbScore = 0;
+    if (benchDGWCount >= 2) {
+      // Multiple bench players have DGW — ideal BB
+      bbScore = benchXP * 3.5;
+      if (benchAvgXP >= 5) bbScore *= 1.4;
+    } else if (benchDGWCount === 1) {
+      // One bench player has DGW — decent but not ideal
+      bbScore = benchXP * 1.8;
+    }
+    // Non-DGW: bbScore stays 0 — never play BB on a normal GW
 
     // ── WC Score ──
-    // Moderate score in early GWs (squad still settling), higher when many underperformers
+    // WC should only be recommended when there are actual squad problems:
+    // - Many injuries/unavailable players (3+)
+    // - Many players with very tough fixtures (7+ with FDR 4-5)
+    // Mild early-season value (GW3-6) when form data emerges
     let wcScore = 0;
-    if (gw <= 4) wcScore = 30; // early season WC is common
-    // Check if many squad players have bad fixtures this GW
+    // Count injured/unavailable/doubtful players
+    const injuredCount = squad.filter(p => {
+      const data = VG.players[p.id];
+      return data && data.status !== "a";
+    }).length;
+    // Count players with tough fixtures this GW
     const badFixCount = squad.filter(p => {
       const f = fixtures.find(fi => fi.event === gw && (fi.team_h === p.teamId || fi.team_a === p.teamId));
       if (!f) return false;
@@ -630,10 +650,17 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
       const fdr = isH ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
       return fdr >= 4;
     }).length;
-    if (badFixCount >= 5) wcScore += badFixCount * 5;
+
+    // Injuries are the strongest WC trigger
+    if (injuredCount >= 4) wcScore += injuredCount * 15;
+    else if (injuredCount >= 3) wcScore += injuredCount * 10;
+    // Many tough fixtures — but only if really extreme
+    if (badFixCount >= 8) wcScore += (badFixCount - 7) * 10;
+    // Mild early-season WC value (react to GW1-3 data, but don't overvalue it)
+    if (gw >= 3 && gw <= 5) wcScore += 10;
 
     // ── FH Score ──
-    // High on BGW (many blanking), or when DGW allows loading up on DGW players
+    // FH is valuable on BGW (blanking teams) or large DGW (loading up)
     let fhScore = 0;
     if (isBGW) {
       const blankingTeams = Object.keys(VG.teams).map(Number).filter(t => !teamFixCount[t] || teamFixCount[t] === 0);
@@ -655,7 +682,9 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
       capIsDGW,
       capFDR,
       benchXP,
-      benchDGWCount
+      benchDGWCount,
+      injuredCount,
+      badFixCount
     };
   });
 
@@ -666,10 +695,10 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
   const wcBest = bestGW("wcScore");
   const fhBest = bestGW("fhScore");
 
-  // Thresholds for recommendation
-  const TC_THRESHOLD = 50;
-  const BB_THRESHOLD = 40;
-  const WC_THRESHOLD = 35;
+  // Thresholds for recommendation — conservative: only recommend with strong trigger
+  const TC_THRESHOLD = 80;
+  const BB_THRESHOLD = 80;
+  const WC_THRESHOLD = 50;
   const FH_THRESHOLD = 35;
 
   return {
@@ -679,12 +708,10 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
       score: tcBest.tcScore,
       reason: tcBest.tcScore >= TC_THRESHOLD
         ? `GW${tcBest.gw}: ${tcBest.capName} ${tcBest.capIsDGW ? "(DGW!) " : ""}xP ${tcBest.capGWXP.toFixed(1)} · FDR ${tcBest.capFDR}`
-        : `Best: GW${tcBest.gw} (${tcBest.capName} xP ${tcBest.capGWXP.toFixed(1)}) — hold for better window`,
-      tip: tcBest.capIsDGW
+        : `No DGW trigger — save for a Double Gameweek`,
+      tip: tcBest.tcScore >= TC_THRESHOLD
         ? "Double Gameweek captain — high ceiling play"
-        : tcBest.capFDR <= 2
-        ? "Easy fixture for captain — decent TC window"
-        : "Consider waiting for a DGW with an easier captain fixture"
+        : "TC doubles your captain's points. Only play it when your best captain has TWO fixtures (DGW) against weak opponents."
     },
     bench_boost: {
       recommend: bbBest.bbScore >= BB_THRESHOLD,
@@ -692,21 +719,21 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
       score: bbBest.bbScore,
       reason: bbBest.bbScore >= BB_THRESHOLD
         ? `GW${bbBest.gw}: Bench xP ${bbBest.benchXP.toFixed(1)}${bbBest.benchDGWCount >= 2 ? ` · ${bbBest.benchDGWCount} DGW players` : ""}`
-        : `Best: GW${bbBest.gw} (bench xP ${bbBest.benchXP.toFixed(1)}) — bench too weak`,
-      tip: bbBest.benchDGWCount >= 2
+        : `No DGW bench coverage — save for a Double Gameweek`,
+      tip: bbBest.bbScore >= BB_THRESHOLD
         ? "Multiple bench players have double fixtures — ideal BB window"
-        : "Bench lacks DGW coverage; wait for a week where your bench doubles"
+        : "BB gets value when bench players play TWICE. Wait for a DGW where your bench has double fixtures."
     },
     wildcard: {
       recommend: wcBest.wcScore >= WC_THRESHOLD,
       bestGW: wcBest.gw,
       score: wcBest.wcScore,
       reason: wcBest.wcScore >= WC_THRESHOLD
-        ? `GW${wcBest.gw}: ${wcBest.wcScore >= 50 ? "Early season restructuring" : "Multiple bad fixtures for squad"}`
-        : `Best: GW${wcBest.gw} — squad looks solid, hold WC`,
-      tip: wcBest.gw <= 4
-        ? "Early season WC lets you react to form changes after initial fixtures"
-        : "Use WC when 4+ players have tough fixtures or key injuries emerge"
+        ? `GW${wcBest.gw}: ${wcBest.injuredCount >= 3 ? wcBest.injuredCount + ' injuries' : wcBest.badFixCount >= 8 ? wcBest.badFixCount + ' tough fixtures' : 'Squad needs restructuring'}`
+        : `Squad looks healthy — hold WC for later`,
+      tip: wcBest.wcScore >= WC_THRESHOLD
+        ? "Significant squad issues detected — WC can fix multiple problems at once"
+        : "Save WC until you have 3+ injuries or a run of tough fixtures. Early season data helps plan your second WC."
     },
     free_hit: {
       recommend: fhBest.fhScore >= FH_THRESHOLD,
@@ -714,10 +741,10 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
       score: fhBest.fhScore,
       reason: fhBest.fhScore >= FH_THRESHOLD
         ? `GW${fhBest.gw}: ${fhBest.isBGW ? "Blank GW — many teams out" : `DGW with ${fhBest.dgwTeams?.length || 0} double teams`}`
-        : `Best: GW${fhBest.gw} — no strong BGW/DGW trigger`,
-      tip: fhBest.isBGW
+        : `No BGW/DGW trigger — save for a Blank Gameweek`,
+      tip: fhBest.fhScore >= FH_THRESHOLD
         ? "Blank Gameweek — use FH to field 11 without hits"
-        : "FH most valuable on BGWs; hold unless desperate for DGW loading"
+        : "FH lets you pick any 15 players for one week. Most valuable on Blank Gameweeks when many teams don't play."
     },
     gwScores
   };
