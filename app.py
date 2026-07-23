@@ -58,7 +58,7 @@ def inject_css():
     /* Full page dark bg */
     .stApp { background: radial-gradient(ellipse at top, #0f0f23 0%, #08080f 70%); }
 
-    /* ---- Hide Streamlit chrome (top bar, GitHub link, Share, Manage app, etc.) ---- */
+    /* ---- Hide ALL Streamlit chrome (top bar, GitHub link, Share, Manage app, etc.) ---- */
     #MainMenu { visibility: hidden !important; }
     header [data-testid="stToolbar"] { display: none !important; }
     [data-testid="stToolbar"] { display: none !important; }
@@ -69,11 +69,24 @@ def inject_css():
     [class*="viewerBadge"] { display: none !important; }
     footer { visibility: hidden !important; }
     [data-testid="stFooter"] { display: none !important; }
-    /* Hide the "Manage app" button shown on Streamlit Cloud error pages */
+    /* Hide "Manage app" button and all streamlit.io links */
     [data-testid="stAppDeployButton"] { display: none !important; }
     [data-testid="baseButton-headerNoPadding"] { display: none !important; }
     .stAppDeployButton { display: none !important; }
     a[href*="streamlit.io"] { display: none !important; }
+    [class*="manageApp"],
+    [class*="ManageApp"],
+    [class*="deployButton"],
+    [class*="DeployButton"],
+    button[title*="Manage"],
+    button[aria-label*="Manage"],
+    [data-testid*="manage"],
+    [data-testid*="deploy"] { display: none !important; }
+    /* Hide error page elements */
+    .stException { display: none !important; }
+    [data-testid="stException"] { display: none !important; }
+    /* Nuclear option: hide entire header bar on error pages */
+    header { display: none !important; height: 0 !important; min-height: 0 !important; }
 
     /* Sidebar */
     [data-testid="stSidebar"] {
@@ -212,6 +225,155 @@ def inject_css():
         background: rgba(255,193,7,0.12);
         color: #ffc107;
         border: 1px solid rgba(255,193,7,0.25);
+    }
+
+    /* ---- Custom animated loader (replaces ugly st.spinner) ---- */
+    .vg-loader {
+        display: flex; align-items: center; justify-content: center;
+        gap: 14px; padding: 28px; margin: 20px 0;
+        background: rgba(255,255,255,0.02);
+        border: 1px solid rgba(0,255,135,0.15);
+        border-radius: 14px;
+    }
+    .vg-loader-text {
+        color: #ddd; font-weight: 600; font-size: 0.95rem;
+        letter-spacing: 0.3px;
+    }
+    .vg-loader-spinner {
+        width: 28px; height: 28px;
+        border: 3px solid rgba(0,255,135,0.15);
+        border-top-color: #00ff87;
+        border-radius: 50%;
+        animation: vg-spin 0.8s linear infinite;
+    }
+    .vg-loader-bar {
+        display: inline-block; width: 4px; height: 18px;
+        background: #00ff87; margin: 0 2px;
+        border-radius: 2px;
+        animation: vg-bounce 1.2s ease-in-out infinite;
+    }
+    .vg-loader-bar:nth-child(2) { animation-delay: 0.15s; }
+    .vg-loader-bar:nth-child(3) { animation-delay: 0.3s; }
+    .vg-loader-bar:nth-child(4) { animation-delay: 0.45s; }
+    @keyframes vg-spin { to { transform: rotate(360deg); } }
+    @keyframes vg-bounce {
+        0%, 100% { transform: scaleY(0.4); opacity: 0.4; }
+        50% { transform: scaleY(1); opacity: 1; }
+    }
+
+    /* ---- Hide Streamlit's default spinners and status widgets ---- */
+    [data-testid="stSpinner"] { display: none !important; }
+    .stSpinner { display: none !important; }
+    .stAlert:has(.vg-loader) { background: transparent !important; }
+
+    /* ---- Premium pitch visualizer ---- */
+    .vg-pitch-wrap {
+        position: relative; width: 100%;
+        background: #1a472a;
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow:
+            inset 0 0 60px rgba(0,0,0,0.35),
+            0 8px 32px rgba(0,0,0,0.5),
+            0 0 0 1px rgba(255,255,255,0.05);
+        margin: 16px 0;
+    }
+    .vg-pitch {
+        position: relative; width: 100%;
+        aspect-ratio: 68 / 105;
+        background:
+            repeating-linear-gradient(
+                0deg,
+                #2d8a3e 0px, #2d8a3e 60px,
+                #1e6b2c 60px, #1e6b2c 120px
+            );
+    }
+    .vg-pitch-line {
+        position: absolute; border: 1.5px solid rgba(255,255,255,0.55);
+        pointer-events: none;
+    }
+    .vg-pitch-center-line { top: 50%; left: 0; right: 0; height: 0; }
+    .vg-pitch-center-circle {
+        top: 50%; left: 50%; width: 18%; aspect-ratio: 1;
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+    }
+    .vg-pitch-center-dot {
+        top: 50%; left: 50%; width: 6px; height: 6px;
+        transform: translate(-50%, -50%);
+        background: rgba(255,255,255,0.55);
+        border: none; border-radius: 50%;
+    }
+    .vg-pitch-penalty-top {
+        top: 0; left: 18%; right: 18%; height: 16%;
+        border-bottom: 0;
+    }
+    .vg-pitch-penalty-bot {
+        bottom: 0; left: 18%; right: 18%; height: 16%;
+        border-top: 0;
+    }
+    .vg-pitch-six-top {
+        top: 0; left: 36%; right: 36%; height: 6%;
+        border-bottom: 0;
+    }
+    .vg-pitch-six-bot {
+        bottom: 0; left: 36%; right: 36%; height: 6%;
+        border-top: 0;
+    }
+    .vg-pitch-arc-top {
+        top: 14%; left: 30%; right: 30%; height: 8%;
+        border: 0; border-top: 1.5px solid rgba(255,255,255,0.55);
+        border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+    }
+    .vg-pitch-arc-bot {
+        bottom: 14%; left: 30%; right: 30%; height: 8%;
+        border: 0; border-bottom: 1.5px solid rgba(255,255,255,0.55);
+        border-radius: 0 0 50% 50% / 0 0 100% 100%;
+    }
+    .vg-pitch-corner {
+        position: absolute; width: 8px; height: 8px;
+        border: 1.5px solid rgba(255,255,255,0.55);
+        border-radius: 50%;
+    }
+    .vg-pitch-corner.tl { top: -1px; left: -1px; }
+    .vg-pitch-corner.tr { top: -1px; right: -1px; }
+    .vg-pitch-corner.bl { bottom: -1px; left: -1px; }
+    .vg-pitch-corner.br { bottom: -1px; right: -1px; }
+
+    /* ---- Player card on pitch ---- */
+    .vg-player {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        min-width: 90px; max-width: 110px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        color: #fff;
+        text-align: center;
+        font-family: 'Inter', sans-serif;
+        box-shadow:
+            0 4px 12px rgba(0,0,0,0.45),
+            0 0 0 1.5px rgba(255,255,255,0.25);
+        backdrop-filter: blur(4px);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        cursor: default;
+    }
+    .vg-player:hover {
+        transform: translate(-50%, -50%) scale(1.08);
+        box-shadow:
+            0 8px 24px rgba(0,0,0,0.6),
+            0 0 0 2px rgba(255,255,255,0.4);
+        z-index: 10;
+    }
+    .vg-player.gk { background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%); color: #1a1a2e; }
+    .vg-player.def { background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); }
+    .vg-player.mid { background: linear-gradient(135deg, #00ff87 0%, #00cc6a 100%); color: #1a1a2e; }
+    .vg-player.fwd { background: linear-gradient(135deg, #ff4757 0%, #d63031 100%); }
+    .vg-player-name {
+        font-size: 0.78rem; font-weight: 700; line-height: 1.1;
+        margin-bottom: 3px;
+    }
+    .vg-player-xp {
+        font-size: 0.62rem; font-weight: 600; opacity: 0.9;
     }
 
     /* ---- Transfer cards ---- */
@@ -364,6 +526,16 @@ FORMATION_POSITIONS = {
 # ============================================================================
 # Branding
 # ============================================================================
+
+def render_loader(text: str):
+    """Render a custom animated loader (replaces Streamlit's default spinner)."""
+    st.markdown(f"""
+    <div class="vg-loader">
+        <div class="vg-loader-spinner"></div>
+        <div class="vg-loader-text">{text}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
 
 def render_header():
     st.markdown("""
@@ -548,65 +720,76 @@ def render_recommendation_banner(result: Dict[str, Any]):
 # Pitch Visualizer
 # ============================================================================
 
-def draw_pitch():
-    fig = go.Figure()
-    fig.add_shape(type="rect", x0=0, x1=100, y0=0, y1=100,
-                  line=dict(color=PITCH_LINES, width=1.5), fillcolor=PITCH_GREEN)
-    fig.add_shape(type="line", x0=0, x1=100, y0=50, y1=50,
-                  line=dict(color=PITCH_LINES, width=0.8))
-    fig.add_shape(type="circle", x0=44, x1=56, y0=44, y1=56,
-                  line=dict(color=PITCH_LINES, width=0.8))
-    fig.add_shape(type="rect", x0=18, x1=82, y0=0, y1=16,
-                  line=dict(color=PITCH_LINES, width=0.8))
-    fig.add_shape(type="rect", x0=18, x1=82, y0=84, y1=100,
-                  line=dict(color=PITCH_LINES, width=0.8))
-    fig.add_shape(type="rect", x0=36, x1=64, y0=0, y1=6,
-                  line=dict(color=PITCH_LINES, width=0.8))
-    fig.add_shape(type="rect", x0=36, x1=64, y0=94, y1=100,
-                  line=dict(color=PITCH_LINES, width=0.8))
-    fig.update_xaxes(visible=False, range=[-3, 103])
-    fig.update_yaxes(visible=False, range=[-3, 103])
-    fig.update_layout(
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=0, t=5, b=5), height=520, showlegend=False
-    )
-    return fig
+def draw_pitch_html():
+    """Return the HTML for a realistic football pitch with grass stripes,
+       proper markings, penalty boxes, six-yard boxes, center circle, and arcs."""
+    return """
+    <div class="vg-pitch-wrap">
+        <div class="vg-pitch">
+            <div class="vg-pitch-line vg-pitch-center-line"></div>
+            <div class="vg-pitch-line vg-pitch-center-circle"></div>
+            <div class="vg-pitch-line vg-pitch-center-dot"></div>
+            <div class="vg-pitch-line vg-pitch-penalty-top"></div>
+            <div class="vg-pitch-line vg-pitch-penalty-bot"></div>
+            <div class="vg-pitch-line vg-pitch-six-top"></div>
+            <div class="vg-pitch-line vg-pitch-six-bot"></div>
+            <div class="vg-pitch-line vg-pitch-arc-top"></div>
+            <div class="vg-pitch-line vg-pitch-arc-bot"></div>
+            <div class="vg-pitch-corner tl"></div>
+            <div class="vg-pitch-corner tr"></div>
+            <div class="vg-pitch-corner bl"></div>
+            <div class="vg-pitch-corner br"></div>
+    """
 
 
 def render_pitch(starting_xi: List[Dict], formation: Dict[str, int]):
-    fig = draw_pitch()
+    """
+    Render a premium football pitch with player cards positioned in formation.
+    Uses pure HTML/CSS for realistic grass texture, proper markings, and
+    shadowed player cards with hover effects.
+    """
     gk_players = [p for p in starting_xi if p.get("position_id") == 1 or p.get("position") == "GK"]
     def_players = [p for p in starting_xi if p.get("position_id") == 2 or p.get("position") == "DEF"]
     mid_players = [p for p in starting_xi if p.get("position_id") == 3 or p.get("position") == "MID"]
     fwd_players = [p for p in starting_xi if p.get("position_id") == 4 or p.get("position") == "FWD"]
     nd, nm, nf = formation.get("DEF", len(def_players)), formation.get("MID", len(mid_players)), formation.get("FWD", len(fwd_players))
 
+    # Player positions (x% from left, y% from top) — attacking from bottom up
+    GK_Y = 92
+    DEF_Y = 75
+    MID_Y = 50
+    FWD_Y = 25
+
+    def x_positions(n, x_min=8, x_max=92):
+        if n == 1: return [50]
+        return [x_min + (x_max - x_min) * i / (n - 1) for i in range(n)]
+
     groups = [
-        (gk_players[:1], "GK"),
-        (def_players[:nd], f"DEF_{nd}"),
-        (mid_players[:nm], f"MID_{nm}"),
-        (fwd_players[:nf], f"FWD_{nf}")
+        (gk_players[:1], "gk", GK_Y, x_positions(1)),
+        (def_players[:nd], "def", DEF_Y, x_positions(nd)),
+        (mid_players[:nm], "mid", MID_Y, x_positions(nm)),
+        (fwd_players[:nf], "fwd", FWD_Y, x_positions(nf))
     ]
-    for players, pos_key in groups:
-        coords = FORMATION_POSITIONS.get(pos_key, [])
+
+    html = draw_pitch_html()
+    for players, pos_class, y_pct, x_coords in groups:
         for i, player in enumerate(players):
-            if i >= len(coords): break
-            cx, cy = coords[i]
+            if i >= len(x_coords): break
             name = player.get("name", "Unknown")
-            if len(name) > 14:
-                parts = name.split()
-                name = parts[-1] if parts else name[:14]
-            pos = player.get("position", "")
+            # Use last name for compactness
+            parts = name.split()
+            short_name = parts[-1] if len(parts) > 1 else name
+            if len(short_name) > 10:
+                short_name = short_name[:10]
             xp = player.get("total_xp", 0)
-            color = POS_COLORS.get(pos, "#666")
-            fig.add_annotation(
-                x=cx * 100, y=cy * 100,
-                text=f"<b>{name}</b><br><span style='font-size:9px;'>{pos} · xP {xp:.1f}</span>",
-                showarrow=False, font=dict(color="#fff", size=10),
-                bgcolor=color, borderpad=5, borderwidth=1.5,
-                bordercolor="rgba(255,255,255,0.3)", opacity=0.94
-            )
-    st.plotly_chart(fig, use_container_width=True)
+            html += f"""
+                <div class="vg-player {pos_class}" style="left:{x_coords[i]}%; top:{y_pct}%;">
+                    <div class="vg-player-name">{short_name}</div>
+                    <div class="vg-player-xp">xP {xp:.1f}</div>
+                </div>
+            """
+    html += "</div></div>"
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def render_bench(bench: List[Dict]):
@@ -858,15 +1041,28 @@ def run_optimization(config: Dict[str, Any]):
 
 def _run_optimization_inner(team_id, gameweek, free_transfers, bank_override, horizon):
 
-    with st.spinner("Computing xP projections across all players..."):
-        xp_df = compute_all_players_xp(gameweek, horizon)
+    loader = st.empty()
+    loader.markdown("""
+    <div class="vg-loader">
+        <div class="vg-loader-spinner"></div>
+        <div class="vg-loader-text">Computing xP projections across all players...</div>
+    </div>
+    """, unsafe_allow_html=True)
+    xp_df = compute_all_players_xp(gameweek, horizon)
+    loader.empty()
     if xp_df.empty:
         st.error("Failed to compute xP data. Check your internet connection.")
         return
 
     if team_id <= 0 or gameweek == 1:
-        with st.spinner("Solving draft squad optimization..."):
-            result = solve_draft_squad(xp_df, 100.0)
+        loader.markdown("""
+        <div class="vg-loader">
+            <div class="vg-loader-spinner"></div>
+            <div class="vg-loader-text">Solving draft squad optimization...</div>
+        </div>
+        """, unsafe_allow_html=True)
+        result = solve_draft_squad(xp_df, 100.0)
+        loader.empty()
         if result["status"] != "optimal":
             st.error(f"Optimization failed: {result.get('message', 'Unknown error')}")
             return
@@ -894,8 +1090,14 @@ def _run_optimization_inner(team_id, gameweek, free_transfers, bank_override, ho
             st.error("Could not fetch current squad. Try a different gameweek.")
             return
         bank = bank_override if bank_override else team_info.get("last_deadline_bank", 0) / 10.0
-        with st.spinner("Solving transfer optimization..."):
-            result = solve_transfers(current_squad, xp_df, bank, free_transfers, horizon)
+        loader.markdown("""
+        <div class="vg-loader">
+            <div class="vg-loader-spinner"></div>
+            <div class="vg-loader-text">Solving transfer optimization...</div>
+        </div>
+        """, unsafe_allow_html=True)
+        result = solve_transfers(current_squad, xp_df, bank, free_transfers, horizon)
+        loader.empty()
         if result["status"] != "optimal":
             st.error("Transfer optimization failed.")
             return
