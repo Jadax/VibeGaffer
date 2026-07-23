@@ -118,6 +118,7 @@ VG.switchTab = (name) => {
 VG.init = async () => {
   const el = id => document.getElementById(id);
   // Populate GW selector
+  VG._retries = 0;
   try {
     VG.bootstrapData = await VG.loadBootstrap();
     VG.buildMaps(VG.bootstrapData);
@@ -127,10 +128,12 @@ VG.init = async () => {
     for (let i = 1; i <= 38; i++) {
       gwSel.innerHTML += `<option value="${i}" ${i === VG.currentGW ? "selected" : ""}>GW${i}</option>`;
     }
-    el("status").innerText = VG.bootstrapData.elements.length + " players loaded · GW" + VG.currentGW;
+    el("status").innerHTML = '<span style="color:#00ff87;">●</span> ' + VG.bootstrapData.elements.length + ' players · GW' + VG.currentGW;
   } catch(e) {
-    el("status").innerHTML = '<span style="color:#ff4757">API offline — retrying</span>';
-    setTimeout(VG.init, 5000);
+    VG._retries++;
+    const secs = Math.min(VG._retries * 3, 30);
+    el("status").innerHTML = '<span style="color:#ff4757;">●</span> API unreachable (attempt ' + VG._retries + ') — retrying in ' + secs + 's';
+    setTimeout(VG.init, secs * 1000);
   }
 };
 

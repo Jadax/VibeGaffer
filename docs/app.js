@@ -27,16 +27,33 @@ VG.cache = {
   set(k, d) { localStorage.setItem("vg_" + k, JSON.stringify({ d, t: Date.now() })); }
 };
 
-// ── Fetcher (browser direct — no proxy, no 503) ───────────────────────────
+// ── Fetcher (browser direct + CORS proxy fallback) ─────────────────────────
+VG.PROXIES = [
+  { fn: (url) => url, name: "direct" },
+  { fn: (url) => "https://corsproxy.io/?" + encodeURIComponent(url), name: "proxy1" },
+  { fn: (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url), name: "proxy2" },
+  { fn: (url) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url), name: "proxy3" }
+];
+
 VG.fetch = async (url, label) => {
   const c = VG.cache.get(url);
   if (c) return c;
   document.getElementById("status").innerText = "Fetching " + (label || "data") + "...";
-  const r = await fetch(url, { cache: "no-cache" });
-  if (!r.ok) throw new Error(label + " " + r.status);
-  const j = await r.json();
-  VG.cache.set(url, j);
-  return j;
+  let lastErr = null;
+  for (const proxy of VG.PROXIES) {
+    try {
+      const proxyUrl = proxy.fn(url);
+      const r = await fetch(proxyUrl, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        cache: "no-cache"
+      });
+      if (!r.ok) { lastErr = new Error(label + " " + r.status + " via " + proxy.name); continue; }
+      const j = await r.json();
+      VG.cache.set(url, j);
+      return j;
+    } catch(e) { lastErr = e; }
+  }
+  throw new Error(label + " unreachable: " + (lastErr?.message || "all proxies failed"));
 };
 
 // ── Data Loading ──────────────────────────────────────────────────────────
