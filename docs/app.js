@@ -1,87 +1,80 @@
-/**
- * VibeGaffer — FPL Intelligence Engine
- * Static web app, no backend required. Browser fetches FPL API directly.
- * Hosted on GitHub Pages. Author: Tushant Sharma | Astraiva
- */
 const VG = {};
 
-// ── FPL API ────────────────────────────────────────────────────────────────
 VG.FPL = "https://fantasy.premierleague.com/api";
 VG.POSITIONS = { 1: "GK", 2: "DEF", 3: "MID", 4: "FWD" };
-VG.POS_BASE_XP = { 1: 2.5, 2: 3.5, 3: 4.5, 4: 4.0 };
-VG.FDR_MULT = { 1: 1.30, 2: 1.15, 3: 1.00, 4: 0.85, 5: 0.70 };
-VG.CS_PROB = { 1: { 1: 0.55, 2: 0.45, 3: 0.35, 4: 0.25, 5: 0.15 }, 2: { 1: 0.45, 2: 0.35, 3: 0.28, 4: 0.20, 5: 0.12 }, 3: { 1: 0.35, 2: 0.28, 3: 0.22, 4: 0.15, 5: 0.10 }, 4: { 1: 0.30, 2: 0.22, 3: 0.18, 4: 0.12, 5: 0.08 } };
-VG.GOAL_PROB = { 1: 0.01, 2: 0.05, 3: 0.12, 4: 0.20 };
-VG.ASSIST_PROB = { 1: 0.01, 2: 0.06, 3: 0.15, 4: 0.14 };
-VG.GOAL_PTS = { 1: 6, 2: 6, 3: 5, 4: 4 };
-VG.ASSIST_PTS = 3;
-VG.CS_PTS = { 1: 4, 2: 4, 3: 1, 4: 0 };
-VG.CACHE_TTL = 1800000; // 30 min
+VG.POS_TARGET = { 1: 2, 2: 5, 3: 5, 4: 3 };
+VG.POS_SHIRT = { 1: "gk", 2: "def", 3: "mid", 4: "fwd" };
+VG.CACHE_TTL = 1800000;
 
-// ── Cache (localStorage) ───────────────────────────────────────────────────
+VG.TEAM_COLORS = {
+  1: { home: "#EF0107", away: "#FFFFFF" },
+  2: { home: "#DA291C", away: "#FFFFFF" },
+  3: { home: "#003090", away: "#FFFFFF" },
+  4: { home: "#6C1D45", away: "#FFFFFF" },
+  5: { home: "#0057B8", away: "#FDB913" },
+  6: { home: "#FBEE23", away: "#000000" },
+  7: { home: "#C8102E", away: "#FFFFFF" },
+  8: { home: "#FDB913", away: "#1B1B1B" },
+  9: { home: "#EE2737", away: "#FFFFFF" },
+  10: { home: "#003399", away: "#FFFFFF" },
+  11: { home: "#6CABDD", away: "#1C2C5B" },
+  12: { home: "#0057B8", away: "#FFFFFF" },
+  13: { home: "#00B2A9", away: "#FFFFFF" },
+  14: { home: "#003090", away: "#FFFFFF" },
+  15: { home: "#003090", away: "#FBEE23" },
+  16: { home: "#EE2737", away: "#FFFFFF" },
+  17: { home: "#132257", away: "#FFFFFF" },
+  18: { home: "#FFFFFF", away: "#DB0007" },
+  19: { home: "#7A263A", away: "#FFFFFF" },
+  20: { home: "#FDB913", away: "#000000" }
+};
+
 VG.cache = {
   get(k) {
     try { const v = JSON.parse(localStorage.getItem("vg_" + k)); if (v && Date.now() - v.t < VG.CACHE_TTL) return v.d; } catch {}
     return null;
   },
-  set(k, d) { localStorage.setItem("vg_" + k, JSON.stringify({ d, t: Date.now() })); }
+  set(k, d) { try { localStorage.setItem("vg_" + k, JSON.stringify({ d, t: Date.now() })); } catch {} }
 };
 
-// ── Fetcher (direct first, then CORS proxy fallback) ─────────────────────────
 VG.PROXIES = [
   { fn: (url) => url, name: "direct" },
   { fn: (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url), name: "allorigins" },
   { fn: (url) => "https://corsproxy.io/?" + encodeURIComponent(url), name: "corsproxy" },
-  { fn: (url) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url), name: "codetabs" },
 ];
 
 VG.fetch = async (url, label) => {
   const c = VG.cache.get(url);
   if (c) return c;
-  const setStatus = (t) => document.getElementById("status").innerHTML = t;
-  setStatus('<span style="color:#ffc107;">●</span> Fetching ' + (label || "data") + '...');
+  const setStatus = (t) => { const el = document.getElementById("status"); if (el) el.innerHTML = t; };
+  setStatus('<span class="status-dot warning"></span> Fetching ' + (label || "data") + '...');
   let lastErr = null;
   for (const proxy of VG.PROXIES) {
     try {
-      setStatus('<span style="color:#ffc107;">●</span> ' + (label || "data") + ' via ' + proxy.name + '...');
-      const proxyUrl = proxy.fn(url);
+      setStatus('<span class="status-dot warning"></span> Trying ' + proxy.name + '...');
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 20000);
-      const r = await fetch(proxyUrl, {
-        signal: ctrl.signal,
-        cache: "no-cache",
-        headers: proxy.name === "direct" ? {} : undefined
-      });
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const r = await fetch(proxy.fn(url), { signal: ctrl.signal, cache: "no-cache" });
       clearTimeout(timer);
-      if (!r.ok) { lastErr = new Error(proxy.name + " returned " + r.status); continue; }
-      const txt = await r.text();
-      let j;
-      try { j = JSON.parse(txt); } catch { j = { contents: txt }; }
-      if (j.contents && typeof j.contents === "string") {
-        try { j = JSON.parse(j.contents); } catch { /* raw text */ }
-      }
+      if (!r.ok) { lastErr = new Error(proxy.name + " " + r.status); continue; }
+      const j = await r.json();
       VG.cache.set(url, j);
       return j;
-    } catch(e) { lastErr = e; }
+    } catch (e) { lastErr = e; }
   }
-  setStatus('<span style="color:#ff4757;">●</span> ' + label + ' failed after all attempts');
-  throw new Error(label + " failed: " + (lastErr?.message || "all routes timed out"));
+  setStatus('<span class="status-dot error"></span> ' + label + ' failed');
+  throw new Error(label + ": " + (lastErr?.message || "all routes failed"));
 };
 
-// ── Data Loading (local cache first, API fallback) ──────────────────────────
 VG.loadBootstrap = async () => {
-  // 1. Try local cache (committed by GitHub Action every 15 min)
   try {
     const r = await fetch("data/bootstrap.json", { cache: "no-cache" });
     if (r.ok) {
       const j = await r.json();
       if (j && j.elements) return j;
     }
-    console.warn("[VG] Local bootstrap.json returned", r.status, "- falling back to API");
-  } catch(e) {
-    console.warn("[VG] Local bootstrap.json fetch failed:", e.message, "- falling back to API");
-  }
-  // 2. Fall back to live API via proxies
+    console.warn("[VG] Local bootstrap returned", r.status);
+  } catch (e) { console.warn("[VG] Local bootstrap failed:", e.message); }
   return VG.fetch(VG.FPL + "/bootstrap-static/", "bootstrap");
 };
 
@@ -92,10 +85,8 @@ VG.loadFixtures = async () => {
       const j = await r.json();
       if (Array.isArray(j) && j.length > 0) return j;
     }
-    console.warn("[VG] Local fixtures.json returned", r.status, "- falling back to API");
-  } catch(e) {
-    console.warn("[VG] Local fixtures.json fetch failed:", e.message, "- falling back to API");
-  }
+    console.warn("[VG] Local fixtures returned", r.status);
+  } catch (e) { console.warn("[VG] Local fixtures failed:", e.message); }
   return VG.fetch(VG.FPL + "/fixtures/", "fixtures");
 };
 
@@ -107,7 +98,6 @@ VG.loadSquad = async (tid, gw) => {
   return { info, picks };
 };
 
-// ── Build lookup tables ───────────────────────────────────────────────────
 VG.buildMaps = (data) => {
   VG.players = {};
   VG.playersByTeam = {};
@@ -122,222 +112,353 @@ VG.buildMaps = (data) => {
   VG.currentGW = data.events.find(e => e.is_current)?.id || data.events.find(e => e.is_next)?.id || 1;
 };
 
-// ── xP Engine ─────────────────────────────────────────────────────────────
-VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr, eloDiff) => {
+// ── xP Engine: proper FPL scoring model ──────────────────────────────────
+VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const p = VG.players[pid];
-  if (!p) return { xp: 0.1 };
+  if (!p) return { xp: 0, mins: 0, cs: 0, goal: 0, assist: 0, bonus: 0 };
+
   const pos = p.element_type;
-  const baseXP = VG.POS_BASE_XP[pos] || 3.5;
-  const form = parseFloat(p.form || "0");
-  const ppg = parseFloat(p.points_per_game || "0");
-  const fplForm = Math.max(form, ppg, 0.5);
+  const price = p.now_cost / 10;
   const mins = parseInt(p.minutes || "0");
   const starts = parseInt(p.starts || "0");
-  const minsAvg = mins > 0 ? mins / Math.max(starts, 1) : (starts > 0 ? 75 : 0);
-  const minsProb = minsAvg >= 80 ? 0.95 : minsAvg >= 60 ? 0.80 : minsAvg >= 45 ? 0.60 : minsAvg >= 30 ? 0.40 : minsAvg >= 15 ? 0.20 : 0.50;
+  const goals = parseInt(p.goals_scored || "0");
+  const assists = parseInt(p.assists || "0");
+  const cleanSheets = parseInt(p.clean_sheets || "0");
+  const saves = parseInt(p.saves || "0");
+  const bonus = parseInt(p.bonus || "0");
+  const yellows = parseInt(p.yellow_cards || "0");
+  const reds = parseInt(p.red_cards || "0");
+  const ownGoals = parseInt(p.own_goals || "0");
+  const penMiss = parseInt(p.penalties_missed || "0");
+  const totalPts = parseInt(p.total_points || "0");
+  const ppg = parseFloat(p.points_per_game || "0");
+  const form = parseFloat(p.form || "0");
+  const ict = parseFloat(p.ict_index || "0");
+  const influence = parseFloat(p.influence || "0");
+  const creativity = parseFloat(p.creativity || "0");
+  const threat = parseFloat(p.threat || "0");
 
-  const fdrMult = VG.FDR_MULT[fdr] || 1.0;
-  const homeMult = isHome ? 1.10 : 1.0;
-  const eloFactor = 1.0 + Math.max(-0.15, Math.min(0.15, eloDiff * 0.1));
+  // Minutes probability
+  const gamesPlayed = starts || Math.max(1, Math.ceil(mins / 80));
+  const avgMins = gamesPlayed > 0 ? mins / gamesPlayed : 0;
+  let minsProb;
+  if (mins < 90 || starts === 0) {
+    minsProb = 0.3;
+  } else if (avgMins >= 85) {
+    minsProb = 0.92;
+  } else if (avgMins >= 70) {
+    minsProb = 0.80;
+  } else if (avgMins >= 55) {
+    minsProb = 0.65;
+  } else {
+    minsProb = 0.45;
+  }
 
-  const rawXP = 0.20 * baseXP + 0.35 * fplForm + 0.30 * (baseXP * fdrMult) + 0.15 * (baseXP * eloFactor);
-  const adjXP = rawXP * homeMult;
+  // Confidence adjustment: more data = more reliable
+  const seasonGames = 38;
+  const dataConfidence = Math.min(1.0, gamesPlayed / Math.max(seasonGames * 0.5, 10));
+  const confidenceMult = 0.5 + 0.5 * dataConfidence;
 
-  let csProb = (pos === 1 || pos === 2) ? (VG.CS_PROB[pos]?.[fdr] || 0.2) : 0;
-  if (isHome && (pos === 1 || pos === 2)) csProb = Math.min(csProb * 1.15, 0.65);
-  const goalProb = (VG.GOAL_PROB[pos] || 0.1) * fdrMult;
-  const assistProb = (VG.ASSIST_PROB[pos] || 0.08) * fdrMult;
+  // Per-90 rates
+  const nineties = mins > 0 ? mins / 90 : 1;
+  const goalsPer90 = goals / nineties;
+  const assistsPer90 = assists / nineties;
+  const csRate = cleanSheets / Math.max(gamesPlayed, 1);
+  const savesPerGame = saves / Math.max(gamesPlayed, 1);
+  const bonusPerGame = bonus / Math.max(gamesPlayed, 1);
+  const yellowsPerGame = yellows / Math.max(gamesPlayed, 1);
+  const redsPerGame = reds / Math.max(gamesPlayed, 1);
+  const ownGoalsPerGame = ownGoals / Math.max(gamesPlayed, 1);
+  const penMissPerGame = penMiss / Math.max(gamesPlayed, 1);
 
-  const xp = minsProb * 2 + csProb * (VG.CS_PTS[pos] || 0) + goalProb * (VG.GOAL_PTS[pos] || 4) + assistProb * VG.ASSIST_PTS + 0.5 * minsProb - 0.15;
-  return { xp: Math.max(xp, 0.1), minsProb, csProb, goalProb, assistProb, fdr, adjXP };
+  // Fixture difficulty multipliers
+  const fdrMult = { 1: 1.35, 2: 1.15, 3: 1.00, 4: 0.85, 5: 0.65 };
+  const attMult = fdrMult[fdr] || 1.0;
+  const defMult = fdrMult[6 - (fdr || 3)] || 1.0;
+
+  // Team strength adjustment
+  const teamId = p.team;
+  const team = VG.teams[teamId];
+  const opp = VG.teams[oppTeamId];
+  let teamStrMult = 1.0;
+  if (team && opp) {
+    const teamStr = (team.strength_overall_home + team.strength_overall_away) / 2;
+    const oppStr = (opp.strength_overall_home + opp.strength_overall_away) / 2;
+    teamStrMult = 0.85 + 0.30 * ((teamStr - oppStr + 3) / 6);
+  }
+
+  // Projected rates (blend historical + form-adjusted)
+  const projGoalsPer90 = goalsPer90 * attMult * teamStrMult * confidenceMult + 0.05 * (1 - confidenceMult);
+  const projAssistsPer90 = assistsPer90 * attMult * teamStrMult * confidenceMult + 0.03 * (1 - confidenceMult);
+
+  // Clean sheet probability by position and FDR
+  const baseCSPos = { 1: 0.35, 2: 0.30, 3: 0.08, 4: 0 };
+  const baseCS = (baseCSPos[pos] || 0) * defMult * teamStrMult;
+  const projCS = Math.min(Math.max(baseCS * confidenceMult + csRate * confidenceMult * defMult, 0), 0.70);
+
+  // Goal probability (per fixture)
+  const projGoals = Math.min(projGoalsPer90 * (isHome ? 1.10 : 1.0), 0.85);
+  // Assist probability (per fixture)
+  const projAssists = Math.min(projAssistsPer90 * (isHome ? 1.10 : 1.0), 0.85);
+
+  // Bonus probability (rough: based on ICT + form)
+  const projBonus = Math.min(bonusPerGame * confidenceMult + (pos === 3 || pos === 4 ? 0.15 : 0.08), 1.0);
+
+  // FPL scoring
+  const GOAL_PTS = { 1: 6, 2: 6, 3: 5, 4: 4 };
+  const ASSIST_PTS = 3;
+  const CS_PTS = { 1: 4, 2: 4, 3: 1, 4: 0 };
+  const APPEARANCE_PTS = 2; // 60+ mins
+
+  // xP calculation per fixture
+  const xpAppearance = minsProb * APPEARANCE_PTS;
+  const xpCS = projCS * (CS_PTS[pos] || 0);
+  const xpGoals = projGoals * (GOAL_PTS[pos] || 4);
+  const xpAssists = projAssists * ASSIST_PTS;
+  const xpBonus = projBonus * 1.5; // avg ~1.5 pts from bonus when awarded
+  const xpSaves = pos === 1 ? Math.min(savesPerGame / 3, 1.0) * 3 * defMult * confidenceMult : 0;
+  const xpNegative = minsProb * (yellowsPerGame * 1 + redsPerGame * 3 + ownGoalsPerGame * 2 + penMissPerGame * 2);
+
+  const totalXP = xpAppearance + xpCS + xpGoals + xpAssists + xpBonus + xpSaves - xpNegative;
+
+  return {
+    xp: Math.max(totalXP, 0.1),
+    minsProb,
+    csProb: projCS,
+    goalProb: projGoals,
+    assistProb: projAssists,
+    bonusProb: projBonus,
+    fdr,
+    xpComponents: { xpAppearance, xpCS, xpGoals, xpAssists, xpBonus, xpSaves, xpNegative }
+  };
 };
 
-VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures, eloMap) => {
+VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   const p = VG.players[pid];
   if (!p) return { totalXP: 0, gwDetails: [], info: {} };
-  const teamId = p.team;
-  const teamElo = eloMap[teamId] || 1500;
 
+  const teamId = p.team;
   const upcoming = fixtures.filter(f =>
     (f.team_h === teamId || f.team_a === teamId) && f.event >= startGW && f.event < startGW + nGWs
   );
 
   let totalXP = 0;
   const gwDetails = [];
-  upcoming.forEach(f => {
-    const isHome = f.team_h === teamId;
-    const oppId = isHome ? f.team_a : f.team_h;
-    const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
-    const oppElo = eloMap[oppId] || 1500;
-    const eloDiff = (teamElo - oppElo) / 400;
-    const res = VG.computeFixtureXP(pid, oppId, isHome, fdr || 3, eloDiff);
-    res.gw = f.event;
-    res.opponent = VG.teams[oppId]?.short_name || "";
-    res.venue = isHome ? "H" : "A";
-    gwDetails.push(res);
-    totalXP += res.xp;
-  });
 
-  const form = parseFloat(p.form || "0");
-  totalXP += form * 0.1;
-  const ppg = parseFloat(p.points_per_game || "0");
+  if (upcoming.length === 0) {
+    // Pre-season / no fixtures: estimate from form and ppg
+    const ppg = parseFloat(p.points_per_game || "0");
+    const form = parseFloat(p.form || "0");
+    totalXP = nGWs * Math.max(ppg, form, 1.0) * 0.6;
+  } else {
+    upcoming.forEach(f => {
+      const isHome = f.team_h === teamId;
+      const oppId = isHome ? f.team_a : f.team_h;
+      const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
+      const res = VG.computeFixtureXP(pid, oppId, isHome, fdr || 3);
+      res.gw = f.event;
+      res.opponent = VG.teams[oppId]?.short_name || "?";
+      res.venue = isHome ? "H" : "A";
+      gwDetails.push(res);
+      totalXP += res.xp;
+    });
+  }
+
+  const price = p.now_cost / 10;
   return {
     totalXP: +totalXP.toFixed(2),
     gwDetails,
-    info: { id: p.id, name: p.first_name + " " + p.second_name, position: VG.POSITIONS[p.element_type], teamId, price: p.now_cost / 10, form: Math.max(form, ppg, 0), xpPerPrice: 0, totalXP: +totalXP.toFixed(2) }
+    info: {
+      id: pid,
+      name: p.web_name || p.second_name || p.first_name,
+      fullName: p.first_name + " " + p.second_name,
+      position: VG.POSITIONS[p.element_type],
+      positionId: p.element_type,
+      teamId,
+      teamName: VG.teams[teamId]?.short_name || "",
+      price,
+      form: Math.max(parseFloat(p.form || "0"), parseFloat(p.points_per_game || "0"), 0),
+      totalPoints: parseInt(p.total_points || "0"),
+      ict: parseFloat(p.ict_index || "0"),
+      ownership: parseFloat(p.selected_by_percent || "0"),
+      xpPerPrice: 0,
+      totalXP: +totalXP.toFixed(2),
+      status: p.status,
+      news: p.news || ""
+    }
   };
 };
 
-VG.computeAllXP = (startGW, nGWs, fixtures, eloMap) => {
+VG.computeAllXP = (startGW, nGWs, fixtures) => {
   const results = [];
   Object.values(VG.players).forEach(p => {
     if (p.status !== "a" || p.now_cost <= 0) return;
-    const xp = VG.computeMultiGWXP(p.id, startGW, nGWs, fixtures, eloMap);
-    if (xp.totalXP > 0) {
-      xp.info.xpPerPrice = +(xp.totalXP / Math.max(xp.info.price, 4.0)).toFixed(2);
-      xp.info.positionId = p.element_type;
-      xp.info.ownership = parseFloat(p.selected_by_percent || "0");
-      results.push(xp.info);
-    }
+    const xp = VG.computeMultiGWXP(p.id, startGW, nGWs, fixtures);
+    xp.info.xpPerPrice = +(xp.totalXP / Math.max(xp.info.price, 4.0)).toFixed(2);
+    results.push(xp.info);
   });
-  results.forEach(r => { r.xpPerPrice = +(r.xpPerPrice).toFixed(2); });
-  return results.sort((a, b) => b.xpPerPrice - a.xpPerPrice);
+  return results.sort((a, b) => b.totalXP - a.totalXP);
 };
 
-// ── Greedy Squad Optimizer ────────────────────────────────────────────────
+// ── Optimizer: maximize total xP within budget ──────────────────────────
 VG.optimizeDraft = (players, budget = 100) => {
-  const posCounts = { 1: 2, 2: 5, 3: 5, 4: 0 }; // GK, DEF, MID
-  for (let pid in VG.players) {
-    const p = VG.players[pid];
-    if (p.element_type === 4) posCounts[4] = (posCounts[4] || 0) + 1;
-  }
-  // Fixed: FWD count = 3
   const target = { 1: 2, 2: 5, 3: 5, 4: 3 };
-
   const squad = [];
   let spent = 0;
   const clubCounts = {};
+  const inSquad = new Set();
 
-  // Sort by xP descending (best players first)
-  const sorted = [...players].sort((a, b) => b.xpPerPrice - a.xpPerPrice);
-
-  // Phase 1: greedy selection respecting constraints
-  for (const p of sorted) {
-    if (squad.length >= 15) break;
-    const pos = p.positionId || parseInt(VG.players[p.id]?.element_type);
-    const posCount = squad.filter(s => (s.positionId || parseInt(VG.players[s.id]?.element_type)) === pos).length;
-    if (posCount >= (target[pos] || 0)) continue;
-    const club = p.teamId || VG.players[p.id]?.team;
-    if ((clubCounts[club] || 0) >= 3) continue;
-    if (spent + p.price > budget) continue;
-    squad.push(p);
+  const addPlayer = (p) => {
+    squad.push({ ...p });
     spent += p.price;
-    clubCounts[club] = (clubCounts[club] || 0) + 1;
-  }
+    clubCounts[p.teamId] = (clubCounts[p.teamId] || 0) + 1;
+    inSquad.add(p.id);
+  };
 
-  // Phase 2: fill any remaining slots
-  for (const p of sorted) {
-    if (squad.length >= 15) break;
-    if (squad.includes(p)) continue;
-    const pos = p.positionId || parseInt(VG.players[p.id]?.element_type);
-    const posCount = squad.filter(s => (s.positionId || parseInt(VG.players[s.id]?.element_type)) === pos).length;
-    if (posCount >= (target[pos] || 0)) continue;
-    const club = p.teamId || VG.players[p.id]?.team;
-    if ((clubCounts[club] || 0) >= 3) continue;
-    if (spent + p.price > budget + 0.5) continue;
-    squad.push(p);
-    spent += p.price;
-    clubCounts[club] = (clubCounts[club] || 0) + 1;
-  }
+  const canAdd = (p, posOverride) => {
+    const pos = posOverride || p.positionId;
+    if (inSquad.has(p.id)) return false;
+    const posCount = squad.filter(s => s.positionId === pos).length;
+    if (posCount >= (target[pos] || 0)) return false;
+    if ((clubCounts[p.teamId] || 0) >= 3) return false;
+    if (spent + p.price > budget + 0.1) return false;
+    return true;
+  };
 
-  // Phase 3: upgrade cheapest players with remaining budget — maximize total xP
-  let remaining = +(budget - spent).toFixed(1);
-  if (remaining > 0.5) {
-    for (let pass = 0; pass < 3; pass++) {
-      if (remaining < 0.5) break;
-      for (let i = squad.length - 1; i >= 0 && remaining > 0.5; i--) {
-        const cur = squad[i];
-        const curPos = cur.positionId || parseInt(VG.players[cur.id]?.element_type);
-        const curTotalXP = cur.totalXP || (cur.xpPerPrice * cur.price) || 0;
-        let bestCand = null, bestGain = 0;
-        for (const p of sorted) {
-          if (squad.includes(p)) continue;
-          const candPos = p.positionId || parseInt(VG.players[p.id]?.element_type);
-          if (candPos !== curPos) continue;
-          const candTotalXP = p.totalXP || (p.xpPerPrice * p.price) || 0;
-          const costDiff = +(p.price - cur.price).toFixed(1);
-          if (costDiff <= 0 || costDiff > remaining) continue;
-          const candClub = p.teamId || VG.players[p.id]?.team;
-          const clubCount = squad.filter((s, j) => j !== i && (s.teamId || VG.players[s.id]?.team) === candClub).length;
-          if (clubCount >= 3) continue;
-          const gain = candTotalXP - curTotalXP;
-          if (gain > bestGain) { bestGain = gain; bestCand = p; }
-        }
-        if (bestCand) {
-          const costDiff = +(bestCand.price - cur.price).toFixed(1);
-          squad[i] = bestCand;
-          remaining -= costDiff;
-          spent += costDiff;
-        }
-      }
+  // Phase 1: Fill all 15 slots — pick top-value player at each position
+  const byValue = [...players].sort((a, b) => b.xpPerPrice - a.xpPerPrice);
+  [1, 2, 3, 4].forEach(pos => {
+    for (const p of byValue) {
+      if (squad.filter(s => s.positionId === pos).length >= target[pos]) break;
+      if (p.positionId !== pos) continue;
+      if (inSquad.has(p.id)) continue;
+      if ((clubCounts[p.teamId] || 0) >= 3) continue;
+      if (spent + p.price > budget + 0.1) continue;
+      addPlayer(p);
+    }
+  });
+
+  // Phase 2: Fill any remaining slots
+  if (squad.length < 15) {
+    for (const p of byValue) {
+      if (squad.length >= 15) break;
+      if (inSquad.has(p.id)) continue;
+      if ((clubCounts[p.teamId] || 0) >= 3) continue;
+      if (spent + p.price > budget + 0.1) continue;
+      addPlayer(p);
     }
   }
 
-  // Select starting XI
+  // Phase 3: Aggressively upgrade with remaining budget — maximize total xP
+  const remaining = () => +(budget - spent).toFixed(1);
+  for (let pass = 0; pass < 8; pass++) {
+    if (remaining() < 0.1) break;
+    let improved = false;
+    // Sort squad by totalXP ascending (upgrade cheapest/weakest first)
+    const indices = Array.from({ length: squad.length }, (_, i) => i);
+    indices.sort((a, b) => squad[a].totalXP - squad[b].totalXP);
+    for (const i of indices) {
+      if (remaining() < 0.1) break;
+      const cur = squad[i];
+      let bestCand = null, bestGain = 0;
+      for (const p of players) {
+        if (inSquad.has(p.id)) continue;
+        if (p.positionId !== cur.positionId) continue;
+        const costDiff = +(p.price - cur.price).toFixed(1);
+        if (costDiff <= 0 || costDiff > remaining()) continue;
+        if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== cur.teamId) continue;
+        const gain = p.totalXP - cur.totalXP;
+        if (gain > bestGain) { bestGain = gain; bestCand = p; }
+      }
+      if (bestCand && bestGain > 0) {
+        const costDiff = +(bestCand.price - cur.price).toFixed(1);
+        inSquad.delete(cur.id);
+        inSquad.add(bestCand.id);
+        if (bestCand.teamId !== cur.teamId) {
+          clubCounts[cur.teamId] = (clubCounts[cur.teamId] || 1) - 1;
+          clubCounts[bestCand.teamId] = (clubCounts[bestCand.teamId] || 0) + 1;
+        }
+        squad[i] = { ...bestCand };
+        spent += costDiff;
+        improved = true;
+      }
+    }
+    if (!improved) break;
+  }
+
+  // Select starting XI: pick the highest xP player at each position for the formation
   const byPos = { 1: [], 2: [], 3: [], 4: [] };
-  squad.forEach(p => { const pos = p.positionId || parseInt(VG.players[p.id]?.element_type); byPos[pos].push(p); });
-  Object.values(byPos).forEach(arr => arr.sort((a, b) => (b.xpPerPrice || b.totalXP || 0) - (a.xpPerPrice || a.totalXP || 0)));
+  squad.forEach(p => byPos[p.positionId].push(p));
+  Object.values(byPos).forEach(arr => arr.sort((a, b) => b.totalXP - a.totalXP));
 
-  const starting = [byPos[1][0]];
-  const bench = [byPos[1][1]];
-  [2, 3, 4].forEach(pos => {
-    const arr = byPos[pos];
-    const minStart = pos === 2 ? 3 : pos === 3 ? 3 : 1;
-    const maxStart = pos === 2 ? 5 : pos === 3 ? 5 : 3;
-    const nStart = Math.min(maxStart, Math.max(minStart, arr.length - 1));
-    arr.forEach((p, i) => { if (i < nStart && starting.length < 11) starting.push(p); else bench.push(p); });
+  // Choose best formation (1-3-5-1, 1-4-4-1, 1-5-3-1, 1-4-3-2, 1-3-4-2)
+  const formations = [
+    [3, 4, 3], [3, 5, 2], [4, 3, 3], [4, 4, 2], [4, 5, 1], [5, 3, 2], [5, 4, 1]
+  ];
+  let bestFormation = null, bestTotalXP = 0;
+  formations.forEach(([defN, midN, fwdN]) => {
+    if (byPos[2].length < defN || byPos[3].length < midN || byPos[4].length < fwdN) return;
+    let xp = 0;
+    xp += byPos[1][0].totalXP;
+    for (let i = 0; i < defN; i++) xp += byPos[2][i].totalXP;
+    for (let i = 0; i < midN; i++) xp += byPos[3][i].totalXP;
+    for (let i = 0; i < fwdN; i++) xp += byPos[4][i].totalXP;
+    if (xp > bestTotalXP) { bestTotalXP = xp; bestFormation = { DEF: defN, MID: midN, FWD: fwdN }; }
   });
-  while (starting.length < 11 && bench.length) starting.push(bench.shift());
-  bench.sort((a, b) => (b.xpPerPrice || b.totalXP || 0) - (a.xpPerPrice || a.totalXP || 0));
+  if (!bestFormation) bestFormation = { DEF: 4, MID: 4, FWD: 2 };
 
-  const defCount = starting.filter(p => (p.positionId || parseInt(VG.players[p.id]?.element_type)) === 2).length;
-  const midCount = starting.filter(p => (p.positionId || parseInt(VG.players[p.id]?.element_type)) === 3).length;
-  const fwdCount = starting.filter(p => (p.positionId || parseInt(VG.players[p.id]?.element_type)) === 4).length;
+  const starting = [];
+  const bench = [];
+  starting.push(byPos[1][0]);
+  if (byPos[1][1]) bench.push(byPos[1][1]);
+
+  [2, 3, 4].forEach(pos => {
+    const n = bestFormation[VG.POSITIONS[pos]];
+    byPos[pos].forEach((p, i) => {
+      if (i < n) starting.push(p); else bench.push(p);
+    });
+  });
+
+  // Ensure 11 starters
+  while (starting.length < 11 && bench.length > 0) starting.push(bench.shift());
+  bench.sort((a, b) => a.positionId - b.positionId || b.totalXP - a.totalXP);
+
+  const totalXP = +starting.reduce((s, p) => s + (p.totalXP || 0), 0).toFixed(1);
+  const benchXP = +bench.reduce((s, p) => s + (p.totalXP || 0), 0).toFixed(1);
 
   return {
-    mode: "draft", squad, starting: starting.slice(0, 11), bench: bench.slice(0, 4),
-    formation: { DEF: defCount, MID: midCount, FWD: fwdCount },
+    mode: "draft",
+    squad, starting: starting.slice(0, 11), bench: bench.slice(0, 4),
+    formation: bestFormation,
     totalCost: +spent.toFixed(1), budgetRemaining: +(budget - spent).toFixed(1),
-    gotCap: starting.slice(0, 2), totalXP: +starting.reduce((s, p) => s + (p.xpPerPrice || 0), 0).toFixed(1)
+    totalXP, benchXP,
+    gotCap: [...starting].filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2)
   };
 };
 
 VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers) => {
-  // Simple transfer optimizer: find best upgrade per position
   const currentIds = new Set(currentSquad.map(p => p.element));
   const outPlayers = [];
   const inPlayers = [];
 
-  // Check if any squad players have low xP and can be replaced
   currentSquad.forEach(sp => {
     const pid = sp.element;
     const cXP = players.find(p => p.id === pid);
-    const cPrice = sp.selling_price || sp.now_cost / 10;
+    const cPrice = (sp.selling_price || sp.now_cost || 0) / 10;
     if (!cXP) return;
-    const pos = parseInt(cXP.positionId || VG.players[pid]?.element_type);
-    // Find candidates: same position, higher xP, affordable
+    const pos = cXP.positionId;
     const candidates = players.filter(p =>
       p.id !== pid && !currentIds.has(p.id) &&
-      (p.positionId || parseInt(VG.players[p.id]?.element_type)) === pos &&
-      p.price <= cPrice + bank &&
-      (p.xpPerPrice || 0) > (cXP.xpPerPrice || 0) + 0.5
-    ).sort((a, b) => (b.xpPerPrice || 0) - (a.xpPerPrice || 0));
+      p.positionId === pos &&
+      p.price <= cPrice + bank + 0.1 &&
+      p.totalXP > cXP.totalXP + 0.5
+    ).sort((a, b) => b.totalXP - a.totalXP);
 
     if (candidates.length > 0) {
       const best = candidates[0];
-      if ((best.xpPerPrice || 0) > (cXP.xpPerPrice || 0) + 1.0) {
-        outPlayers.push({ id: pid, name: sp.web_name || VG.players[pid]?.second_name, position: VG.POSITIONS[pos], price: cPrice });
-        inPlayers.push({ id: best.id, name: best.name, position: best.position, price: best.price, xpPerPrice: best.xpPerPrice });
+      if (best.totalXP > cXP.totalXP + 1.0) {
+        outPlayers.push({ id: pid, name: sp.web_name || "?", position: VG.POSITIONS[pos], price: cPrice });
+        inPlayers.push({ id: best.id, name: best.name, position: best.position, price: best.price, totalXP: best.totalXP });
         bank -= (best.price - cPrice);
         currentIds.delete(pid);
         currentIds.add(best.id);
@@ -354,28 +475,28 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers) => {
   };
 };
 
-// ── Chip Advice ───────────────────────────────────────────────────────────
+// ── Chip Advice ───────────────────────────────────────────────────────
 VG.evaluateChips = (starting, bench, gw, fixtures) => {
-  const capXP = Math.max(...starting.map(p => p.xpPerPrice || 0), 0);
-  const benchXP = bench.reduce((s, p) => s + (p.xpPerPrice || 0), 0);
+  const capXP = Math.max(...starting.map(p => p.totalXP || 0), 0);
+  const benchXP = bench.reduce((s, p) => s + (p.totalXP || 0), 0);
   const gwFix = fixtures.filter(f => f.event === gw);
   const teamCounts = {};
   gwFix.forEach(f => { teamCounts[f.team_h] = (teamCounts[f.team_h] || 0) + 1; teamCounts[f.team_a] = (teamCounts[f.team_a] || 0) + 1; });
   const isDGW = Object.values(teamCounts).some(c => c >= 2);
   const isBGW = gwFix.length === 0;
   return {
-    triple_captain: { recommend: capXP >= 11.5 || isDGW, reason: "Cap xP " + capXP.toFixed(1) + (isDGW ? " + DGW" : "") },
-    bench_boost: { recommend: benchXP >= 14.5, reason: "Bench xP " + benchXP.toFixed(1) },
+    triple_captain: { recommend: capXP >= 12.0 || isDGW, reason: "Cap xP " + capXP.toFixed(1) + (isDGW ? " + DGW" : "") },
+    bench_boost: { recommend: benchXP >= 12.0, reason: "Bench xP " + benchXP.toFixed(1) },
     free_hit: { recommend: isBGW, reason: isBGW ? "Blank GW" : "No trigger" },
     wildcard: { recommend: false, reason: "Hold" }
   };
 };
 
-// ── Fixture Ticker Builder ────────────────────────────────────────────────
+// ── Fixture Ticker ────────────────────────────────────────────────────
 VG.buildFixtureTicker = (startGW, nGWs, fixtures) => {
   const ticker = {};
   Object.values(VG.teams).forEach(t => {
-    const row = { name: t.short_name || t.name, fdr: [] };
+    const row = { name: t.short_name || t.name, id: t.id, fdr: [] };
     for (let gw = startGW; gw < startGW + nGWs; gw++) {
       const f = fixtures.find(fi => fi.event === gw && (fi.team_h === t.id || fi.team_a === t.id));
       if (f) {
@@ -391,121 +512,139 @@ VG.buildFixtureTicker = (startGW, nGWs, fixtures) => {
   return ticker;
 };
 
-// ── Price Change Risk ─────────────────────────────────────────────────────
+// ── Price Change Risk ─────────────────────────────────────────────────
 VG.getPriceRisk = async () => {
   const data = VG.bootstrapData;
   if (!data) return [];
-  const live = await VG.fetch(VG.FPL + "/event/" + VG.currentGW + "/live/", "live");
-  if (!live || !live.elements) return [];
-  const liveMap = {};
-  live.elements.forEach(e => { liveMap[e.id] = e; });
-  return data.elements.filter(p => liveMap[p.id]).map(p => {
-    const l = liveMap[p.id];
-    const net = (l.transfers_in_event || 0) - (l.transfers_out_event || 0);
-    let risk = "stable";
-    if (net >= 10500) risk = "rising";
-    else if (net >= 7000) risk = "likely_rise";
-    else if (net <= -5600) risk = "falling";
-    else if (net <= -4000) risk = "likely_fall";
-    return { id: p.id, name: p.first_name + " " + p.second_name, pos: VG.POSITIONS[p.element_type], price: p.now_cost / 10, net, risk };
-  });
+  try {
+    const live = await VG.fetch(VG.FPL + "/event/" + VG.currentGW + "/live/", "live");
+    if (!live || !live.elements) return [];
+    const liveMap = {};
+    live.elements.forEach(e => { liveMap[e.id] = e; });
+    return data.elements.filter(p => liveMap[p.id]).map(p => {
+      const l = liveMap[p.id];
+      const net = (l.transfers_in_event || 0) - (l.transfers_out_event || 0);
+      let risk = "stable";
+      if (net >= 10500) risk = "rising";
+      else if (net >= 7000) risk = "likely_rise";
+      else if (net <= -5600) risk = "falling";
+      else if (net <= -4000) risk = "likely_fall";
+      return { id: p.id, name: p.first_name + " " + p.second_name, pos: VG.POSITIONS[p.element_type], price: p.now_cost / 10, net, risk };
+    });
+  } catch (e) {
+    console.warn("[VG] Price risk failed:", e);
+    return [];
+  }
 };
 
-// ── Render Engine ─────────────────────────────────────────────────────────
+// ── Render Engine ─────────────────────────────────────────────────────
 VG.render = {};
 
-VG.render.loader = (text) => `<div class="vg-loader"><div class="vg-loader-spinner"></div><div class="vg-loader-text">${text}</div></div>`;
-
-VG.render.pitch = (starting, formation) => {
-  const DEF_Y = 72, MID_Y = 48, FWD_Y = 24, GK_Y = 92;
-  const xPos = n => n === 1 ? [50] : Array.from({ length: n }, (_, i) => 8 + 84 * i / (n - 1));
+VG.render.pitch = (result) => {
+  const starting = result.starting || [];
+  const gotCap = result.gotCap || [];
+  const rows = [];
+  // Build from GK up
   const byPos = { 1: [], 2: [], 3: [], 4: [] };
-  starting.forEach(p => { const pos = p.positionId || parseInt(VG.players[p.id]?.element_type); byPos[pos].push(p); });
+  starting.forEach(p => byPos[p.positionId].push(p));
+  Object.values(byPos).forEach(arr => arr.sort((a, b) => b.totalXP - a.totalXP));
 
-  const groups = [
-    { arr: byPos[1], y: GK_Y, cls: "gk" },
-    { arr: byPos[2], y: DEF_Y, cls: "def" },
-    { arr: byPos[3], y: MID_Y, cls: "mid" },
-    { arr: byPos[4], y: FWD_Y, cls: "fwd" }
+  // Row order: FWD, MID, DEF, GK (top to bottom)
+  const rowDefs = [
+    { pos: 4, label: "FWD", y: 18 },
+    { pos: 3, label: "MID", y: 37 },
+    { pos: 2, label: "DEF", y: 56 },
+    { pos: 1, label: "GK", y: 75 }
   ];
 
-  const defCount = byPos[2].length;
-  const midCount = byPos[3].length;
-  const fwdCount = byPos[4].length;
+  let html = '<div class="pitch-container"><div class="pitch-surface">';
+  // Pitch markings
+  html += '<div class="pitch-markings"><div class="pitch-hl"></div><div class="pitch-circle"></div><div class="pitch-dot"></div>';
+  html += '<div class="pitch-pen top"></div><div class="pitch-pen bottom"></div>';
+  html += '<div class="pitch-six top"></div><div class="pitch-six bottom"></div>';
+  html += '<div class="pitch-arc top"></div><div class="pitch-arc bottom"></div></div>';
 
-  let html = '<div class="vg-pitch-wrap"><div class="vg-pitch">';
-  html += '<div class="vg-line hl"></div><div class="vg-line vc"><div class="vg-circle"></div><div class="vg-dot"></div></div>';
-  html += '<div class="vg-box top-pen"></div><div class="vg-box bot-pen"></div>';
-  html += '<div class="vg-box top-six"></div><div class="vg-box bot-six"></div>';
-  html += '<div class="vg-arc top-arc"></div><div class="vg-arc bot-arc"></div>';
-
-  groups.forEach(g => {
-    const n = g.arr.length;
-    if (n === 0) return;
-    const xs = xPos(n);
-    g.arr.forEach((p, i) => {
-      if (i >= xs.length) return;
-      const name = p.name || VG.players[p.id]?.second_name || "?";
-      const shortName = name.length > 11 ? name.split(" ").pop() : name;
-      const xp = (p.xpPerPrice || 0).toFixed(1);
-      html += `<div class="vg-player ${g.cls}" style="left:${xs[i].toFixed(1)}%;top:${g.y}%;"><div class="vp-name">${shortName}</div><div class="vp-xp">xP ${xp}</div></div>`;
+  rowDefs.forEach(rd => {
+    const players = byPos[rd.pos];
+    if (players.length === 0) return;
+    const n = players.length;
+    players.forEach((p, i) => {
+      const xPct = n === 1 ? 50 : 12 + 76 * i / (n - 1);
+      const teamColor = VG.TEAM_COLORS[p.teamId] || { home: "#555", away: "#fff" };
+      const isCaptain = gotCap.length > 0 && p.id === gotCap[0].id;
+      const isVice = gotCap.length > 1 && p.id === gotCap[1].id;
+      html += `<div class="player-card ${VG.POS_SHIRT[p.positionId]}" style="left:${xPct}%;top:${rd.y}%;" data-pid="${p.id}">`;
+      html += `<div class="player-shirt" style="background:${teamColor.home};color:${teamColor.away};">`;
+      html += `<div class="player-number">${p.positionId === 1 ? VG.teams[p.teamId]?.short_name || "GK" : (VG.players[p.id]?.shirt_number || "")}</div>`;
+      html += '</div>';
+      html += `<div class="player-info">`;
+      html += `<div class="player-name">${p.name}</div>`;
+      html += `<div class="player-meta">${p.teamName} · £${p.price.toFixed(1)}m</div>`;
+      html += `<div class="player-xp">${(p.totalXP / 12).toFixed(1)} xP/GW</div>`;
+      html += '</div>';
+      if (isCaptain) html += '<div class="captain-badge">C</div>';
+      if (isVice) html += '<div class="vice-badge">V</div>';
+      html += '</div>';
     });
   });
+
   html += '</div></div>';
   return html;
 };
 
 VG.render.bench = (bench) => {
   if (!bench.length) return "";
-  let html = '<div class="vg-bench"><div class="section-title">🪑 Bench</div><div class="bench-row">';
+  let html = '<div class="bench-section"><div class="bench-label">SUBSTITUTES</div><div class="bench-grid">';
   bench.forEach((p, i) => {
-    const name = p.name || VG.players[p.id]?.second_name || "?";
-    const pos = p.position || VG.POSITIONS[parseInt(VG.players[p.id]?.element_type)] || "?";
-    const price = (p.price || VG.players[p.id]?.now_cost / 10 || 0).toFixed(1);
-    const xp = (p.xpPerPrice || 0).toFixed(1);
-    const cls = pos === "GK" ? "gk" : pos === "DEF" ? "def" : pos === "MID" ? "mid" : "fwd";
-    html += `<div class="bench-card ${cls}"><div class="bench-num">B${i + 1}</div><div class="bench-name">${name}</div><div class="bench-info">${pos} · £${price}m · xP ${xp}</div></div>`;
+    const teamColor = VG.TEAM_COLORS[p.teamId] || { home: "#555", away: "#fff" };
+    html += `<div class="bench-card ${VG.POS_SHIRT[p.positionId]}">`;
+    html += `<div class="bench-position">${VG.POSITIONS[p.positionId]}${i + 1}</div>`;
+    html += `<div class="bench-shirt" style="background:${teamColor.home};color:${teamColor.away};">${VG.teams[p.teamId]?.short_name || ""}</div>`;
+    html += `<div class="bench-name">${p.name}</div>`;
+    html += `<div class="bench-details">£${p.price.toFixed(1)}m · ${(p.totalXP || 0).toFixed(1)} xP</div>`;
+    html += '</div>';
   });
   html += '</div></div>';
   return html;
 };
 
-VG.render.ticker = (ticker, startGW, nGWs) => {
-  const fdrColors = { 1: "#2d7a2d", 2: "#5baa3a", 3: "#555", 4: "#c0392b", 5: "#8b0000", 0: "#1a1a2e" };
-  let html = '<div class="ticker-wrap"><table class="ticker-table"><tr><th>Team</th>';
-  for (let gw = startGW; gw < startGW + nGWs; gw++) html += `<th>GW${gw}</th>`;
-  html += '</tr>';
-  Object.entries(ticker).forEach(([tid, row]) => {
-    html += `<tr><td class="team-name">${row.name}</td>`;
-    row.fdr.forEach(cell => {
-      const color = fdrColors[cell.fdr] || "#333";
-      html += `<td><div class="fdr-cell" style="background:${color}">${cell.fdr > 0 ? cell.opp + " " + (cell.isHome ? "H" : "A") : "—"}</div></td>`;
-    });
-    html += '</tr>';
-  });
-  html += '</table></div>';
-  return html;
-};
-
-VG.render.radarChart = (canvasId, players, labels, datasets) => {
-  new Chart(document.getElementById(canvasId), {
-    type: 'radar',
-    data: { labels, datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      scales: { r: { grid: { color: 'rgba(255,255,255,0.08)' }, pointLabels: { color: '#aaa', font: { size: 10 } }, ticks: { display: false } } },
-      plugins: { legend: { labels: { color: '#ddd', font: { size: 11 } } } }
-    }
-  });
+VG.render.metrics = (result) => {
+  const metrics = [
+    { label: "FORMATION", value: `${result.formation.DEF}-${result.formation.MID}-${result.formation.FWD}`, color: "#00ff87" },
+    { label: "SQUAD VALUE", value: `£${result.totalCost.toFixed(1)}m`, color: "#06b6d4" },
+    { label: "BANK", value: `£${result.budgetRemaining.toFixed(1)}m`, color: result.budgetRemaining > 0.5 ? "#fbbf24" : "#666" },
+    { label: "TOTAL xP", value: result.totalXP.toFixed(1), color: "#00ff87" },
+  ];
+  return '<div class="metrics-row">' + metrics.map(m =>
+    `<div class="metric"><div class="metric-label">${m.label}</div><div class="metric-value" style="color:${m.color}">${m.value}</div></div>`
+  ).join('') + '</div>';
 };
 
 VG.render.metricCard = (label, value, color) =>
-  `<div class="metric-card"><div class="metric-label">${label}</div><div class="metric-value" style="color:${color}">${value}</div></div>`;
+  `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value" style="color:${color}">${value}</div></div>`;
 
 VG.render.chipCard = (label, color, advice) => {
-  const cls = advice.recommend ? "chip-card active pulse-glow" : "chip-card";
-  const borderColor = advice.recommend ? color : "rgba(255,255,255,0.08)";
-  const text = advice.recommend ? "PLAY NOW!" : "Hold";
-  const textColor = advice.recommend ? "#00ff87" : "#666";
-  return `<div class="${cls}" style="border-color:${borderColor}"><div class="chip-label" style="color:${color}">${label}</div><div class="chip-action" style="color:${textColor}">${text}</div><div class="chip-reason">${advice.reason}</div></div>`;
+  const active = advice.recommend ? " active" : "";
+  const textColor = advice.recommend ? "#00ff87" : "#555";
+  return `<div class="chip${active}" style="border-color:${advice.recommend ? color : 'rgba(255,255,255,0.06)'}">
+    <div class="chip-label" style="color:${color}">${label}</div>
+    <div class="chip-action" style="color:${textColor}">${advice.recommend ? "PLAY" : "Hold"}</div>
+    <div class="chip-reason">${advice.reason}</div></div>`;
+};
+
+VG.render.ticker = (ticker, startGW, nGWs) => {
+  const fdrColors = { 1: "#22c55e", 2: "#86efac", 3: "#64748b", 4: "#fb923c", 5: "#ef4444", 0: "#1e293b" };
+  let html = '<div class="ticker-scroll"><table class="ticker-table"><thead><tr><th></th>';
+  for (let gw = startGW; gw < startGW + nGWs; gw++) html += `<th>GW${gw}</th>`;
+  html += '</tr></thead><tbody>';
+  Object.entries(ticker).forEach(([, row]) => {
+    html += `<tr><td class="ticker-team">${row.name}</td>`;
+    row.fdr.forEach(cell => {
+      const bg = fdrColors[cell.fdr] || "#334155";
+      html += `<td><div class="fdr-chip" style="background:${bg}20;color:${bg};border:1px solid ${bg}40">${cell.fdr > 0 ? cell.opp + (cell.isHome ? " (H)" : " (A)") : "–"}</div></td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
 };
