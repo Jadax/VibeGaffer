@@ -151,8 +151,8 @@ VG.run = async () => {
 
     let result;
     if (teamId <= 0 || gw === 1) {
-      const draft = VG.optimizeDraft(allXP, 100);
-      const chips = VG.evaluateChips(draft.starting, draft.bench, gw, VG.allFixtures);
+      const draft = VG.optimizeDraft(allXP, 100, VG.allFixtures, gw, horizon);
+      const chips = VG.evaluateChips(draft.squad, draft.gwPicks, gw, VG.allFixtures);
       result = { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, netAfterHit: draft.totalXP, mode: "draft" };
     } else {
       const squadData = await VG.loadSquad(teamId, gw);
@@ -164,13 +164,19 @@ VG.run = async () => {
       const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
       const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
       const fullIds = [...retainedIds, ...transferInIds];
-      const starting = allXP.filter(p => fullIds.includes(p.id)).sort((a, b) => b.totalXP - a.totalXP);
-      const chips = VG.evaluateChips(starting.slice(0, 11), starting.slice(11, 15), gw, VG.allFixtures);
-      const starting11 = starting.slice(0, 11);
-      const gotCap = starting11.filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2);
+      const allSquad = allXP.filter(p => fullIds.includes(p.id)).sort((a, b) => b.totalXP - a.totalXP);
+      // Compute per-GW picks for transfer squad
+      const gwPicks = [];
+      const allGWs = [...new Set(VG.allFixtures.map(f => f.event))].sort((a, b) => a - b).filter(g => g >= gw);
+      allGWs.forEach(g => gwPicks.push(VG.computePerGWPicks(allSquad, g, VG.allFixtures)));
+      const starting11 = gwPicks[0]?.starting || allSquad.slice(0, 11);
+      const bench4 = gwPicks[0]?.bench || allSquad.slice(11, 15);
+      const gotCap = gwPicks[0]?.gotCap || starting11.filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2);
+      const chips = VG.evaluateChips(allSquad, gwPicks, gw, VG.allFixtures);
       result = {
-        ...transferResult, chipAdvice: chips, starting: starting11, bench: starting.slice(11, 15),
-        totalCost: 0, budgetRemaining: bank, formation: { DEF: 4, MID: 4, FWD: 2 }, totalXP: starting11.reduce((s, p) => s + (p.totalXP || 0), 0), mode: "transfer", gotCap
+        ...transferResult, chipAdvice: chips, starting: starting11, bench: bench4,
+        totalCost: 0, budgetRemaining: bank, formation: gwPicks[0]?.formation || { DEF: 4, MID: 4, FWD: 2 },
+        totalXP: gwPicks.reduce((s, g) => s + g.gwTotalXP, 0), mode: "transfer", gotCap, gwPicks, squad: allSquad
       };
     }
 
@@ -197,12 +203,12 @@ VG.run = async () => {
     }
 
     // Captaincy
-    if (result.starting?.length >= 2) {
-      const c = result.starting[0];
-      const v = result.starting[1];
+    if (result.gotCap?.length >= 2) {
+      const c = result.gotCap[0];
+      const v = result.gotCap[1];
       html += '<div class="section-title">Captaincy</div><div class="captaincy-row">';
-      html += `<div class="cap-card primary"><div class="cap-role" style="color:#fbbf24;">Captain</div><div class="cap-name">${c.name}</div><div class="cap-stats"><span style="color:#fbbf24;">${(c.totalXP || 0).toFixed(1)} xP</span> · ${c.position} · ${c.teamName}</div></div>`;
-      html += `<div class="cap-card secondary"><div class="cap-role" style="color:#06b6d4;">Vice</div><div class="cap-name">${v.name}</div><div class="cap-stats"><span style="color:#06b6d4;">${(v.totalXP || 0).toFixed(1)} xP</span> · ${v.position} · ${v.teamName}</div></div>`;
+      html += `<div class="cap-card primary"><div class="cap-role" style="color:#fbbf24;">Captain</div><div class="cap-name">${c.name}</div><div class="cap-stats"><span style="color:#fbbf24;">${(c.gwXP || c.totalXP || 0).toFixed(1)} xP</span> · ${c.position} · ${c.teamName}${c.gwOpp ? ' · ' + c.gwVenue + ' vs ' + c.gwOpp : ''}</div></div>`;
+      html += `<div class="cap-card secondary"><div class="cap-role" style="color:#06b6d4;">Vice</div><div class="cap-name">${v.name}</div><div class="cap-stats"><span style="color:#06b6d4;">${(v.gwXP || v.totalXP || 0).toFixed(1)} xP</span> · ${v.position} · ${v.teamName}${v.gwOpp ? ' · ' + v.gwVenue + ' vs ' + v.gwOpp : ''}</div></div>`;
       html += '</div>';
     }
 
@@ -213,6 +219,24 @@ VG.run = async () => {
       html += VG.render.chipCard("BB", "#3b82f6", result.chipAdvice.bench_boost);
       html += VG.render.chipCard("WC", "#7c3aed", result.chipAdvice.wildcard);
       html += VG.render.chipCard("FH", "#ef4444", result.chipAdvice.free_hit);
+      html += '</div>';
+    }
+
+    // Per-GW Breakdown
+    if (result.gwPicks?.length > 0) {
+      html += '<div class="section-title">Gameweek Breakdown</div>';
+      html += '<div class="gw-breakdown">';
+      result.gwPicks.forEach(gp => {
+        const cap = gp.gotCap?.[0];
+        const fmt = gp.formation;
+        const fdrClass = gp.gwTotalXP >= 50 ? 'good' : gp.gwTotalXP >= 35 ? 'mid' : 'tough';
+        html += `<div class="gw-card ${fdrClass}">`;
+        html += `<div class="gw-card-header"><span class="gw-card-num">GW${gp.gw}</span><span class="gw-card-xp">${gp.gwTotalXP.toFixed(1)} xP</span></div>`;
+        html += `<div class="gw-card-formation">${fmt.DEF}-${fmt.MID}-${fmt.FWD}</div>`;
+        html += `<div class="gw-card-cap">C: ${cap?.name || '?'} ${cap?.gwOpp ? `<span class="${cap.gwVenue === 'H' ? 'home' : 'away'}">${cap.gwVenue} ${cap.gwOpp}</span>` : ''}</div>`;
+        if (gp.dgwPlayers?.length > 0) html += `<div class="gw-card-dgw">DGW ⚡</div>`;
+        html += '</div>';
+      });
       html += '</div>';
     }
 

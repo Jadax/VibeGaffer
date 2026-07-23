@@ -203,3 +203,26 @@ a { color: #00ff87; text-decoration: none; }
 .squad-item .info .pteam { font-size: 0.6rem; color: #475569; }
 .squad-item .pprice { color: #64748b; font-weight: 600; font-size: 0.7rem; }
 .squad-item .pxp { color: #00ff87; font-weight: 700; font-size: 0.7rem; }
+
+/* ── Per-GW Breakdown ─────────────────────────────────────── */
+.gw-breakdown { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 12px; }
+.gw-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 12px; transition: border-color 0.2s; }
+.gw-card.good { border-left: 3px solid #00ff87; }
+.gw-card.mid { border-left: 3px solid #fbbf24; }
+.gw-card.tough { border-left: 3px solid #ef4444; }
+.gw-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.gw-card-num { font-weight: 800; font-size: 0.82rem; color: #e2e8f0; }
+.gw-card-xp { font-weight: 700; font-size: 0.78rem; color: #00ff87; }
+.gw-card-formation { font-size: 0.7rem; color: #64748b; font-weight: 600; margin-bottom: 4px; }
+.gw-card-cap { font-size: 0.68rem; color: #94a3b8; }
+.gw-card-cap .home { color: #00ff87; font-weight: 600; }
+.gw-card-cap .away { color: #fbbf24; font-weight: 600; }
+.gw-card-dgw { font-size: 0.65rem; color: #fbbf24; font-weight: 700; margin-top: 4px; }
+
+/* ── Chip Enhancements ────────────────────────────────────── */
+.chip { position: relative; }
+.chip-header { display: flex; justify-content: space-between; align-items: center; }
+.chip-score-bar { height: 3px; background: rgba(255,255,255,0.05); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.chip-score-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+.chip-timing { font-size: 0.62rem; font-weight: 600; margin-top: 4px; }
+.chip-tip { line-height: 1.3; }

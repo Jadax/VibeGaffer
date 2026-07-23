@@ -300,8 +300,86 @@ VG.computeAllXP = (startGW, nGWs, fixtures) => {
   return results.sort((a, b) => b.totalXP - a.totalXP);
 };
 
+// ── Per-GW Picks: best XI + formation for a single gameweek ──────────────
+VG.computePerGWPicks = (squad, gw, fixtures) => {
+  // Compute single-GW xP for each squad member
+  const gwXP = squad.map(p => {
+    const data = VG.players[p.id];
+    if (!data) return { ...p, gwXP: 0, gwOpp: "", gwVenue: "", gwFDR: 3 };
+    const teamId = p.teamId;
+    const f = fixtures.find(fi => fi.event === gw && (fi.team_h === teamId || fi.team_a === teamId));
+    if (!f) return { ...p, gwXP: (p.totalXP || 0) / 12, gwOpp: "N/A", gwVenue: "?", gwFDR: 3 };
+    const isHome = f.team_h === teamId;
+    const oppId = isHome ? f.team_a : f.team_h;
+    const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
+    const res = VG.computeFixtureXP(p.id, oppId, isHome, fdr);
+    return {
+      ...p,
+      gwXP: +res.xp.toFixed(2),
+      gwOpp: VG.teams[oppId]?.short_name || "?",
+      gwVenue: isHome ? "H" : "A",
+      gwFDR: fdr
+    };
+  });
+
+  // Group by position, sort by gwXP desc
+  const byPos = { 1: [], 2: [], 3: [], 4: [] };
+  gwXP.forEach(p => byPos[p.positionId].push(p));
+  Object.values(byPos).forEach(arr => arr.sort((a, b) => b.gwXP - a.gwXP));
+
+  // Try all valid formations, pick the one with highest total GW xP
+  const formations = [
+    [3, 4, 3], [3, 5, 2], [4, 3, 3], [4, 4, 2], [4, 5, 1], [5, 3, 2], [5, 4, 1]
+  ];
+  let bestFormation = null, bestGWXP = -1;
+  formations.forEach(([defN, midN, fwdN]) => {
+    if (byPos[2].length < defN || byPos[3].length < midN || byPos[4].length < fwdN) return;
+    let xp = byPos[1][0]?.gwXP || 0;
+    for (let i = 0; i < defN; i++) xp += byPos[2][i].gwXP;
+    for (let i = 0; i < midN; i++) xp += byPos[3][i].gwXP;
+    for (let i = 0; i < fwdN; i++) xp += byPos[4][i].gwXP;
+    if (xp > bestGWXP) { bestGWXP = xp; bestFormation = { DEF: defN, MID: midN, FWD: fwdN }; }
+  });
+  if (!bestFormation) bestFormation = { DEF: 4, MID: 4, FWD: 2 };
+
+  // Build starting XI and bench
+  const starting = [];
+  const bench = [];
+  starting.push(byPos[1][0]);
+  if (byPos[1][1]) bench.push(byPos[1][1]);
+
+  [2, 3, 4].forEach(pos => {
+    const n = bestFormation[VG.POSITIONS[pos]];
+    byPos[pos].forEach((p, i) => {
+      if (i < n) starting.push(p); else bench.push(p);
+    });
+  });
+
+  // Ensure 11 starters
+  while (starting.length < 11 && bench.length > 0) starting.push(bench.shift());
+  while (starting.length < 11) starting.push(bench.shift());
+
+  const cap = [...starting].filter(p => p.positionId !== 1).sort((a, b) => b.gwXP - a.gwXP);
+  const gwTotalXP = +starting.reduce((s, p) => s + (p.gwXP || 0), 0).toFixed(2);
+  const gwBenchXP = +bench.reduce((s, p) => s + (p.gwXP || 0), 0).toFixed(2);
+
+  return {
+    gw,
+    formation: bestFormation,
+    starting: starting.slice(0, 11),
+    bench: bench.slice(0, 4),
+    gwTotalXP,
+    gwBenchXP,
+    gotCap: cap.slice(0, 2),
+    dgwPlayers: gwXP.filter(p => {
+      const f = fixtures.filter(fi => fi.event === gw && (fi.team_h === p.teamId || fi.team_a === p.teamId));
+      return f.length >= 2;
+    }).map(p => p.id)
+  };
+};
+
 // ── Optimizer: maximize total xP within budget ──────────────────────────
-VG.optimizeDraft = (players, budget = 100) => {
+VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12) => {
   const target = { 1: 2, 2: 5, 3: 5, 4: 3 };
   const squad = [];
   let spent = 0;
@@ -423,16 +501,23 @@ VG.optimizeDraft = (players, budget = 100) => {
   while (starting.length < 11 && bench.length > 0) starting.push(bench.shift());
   bench.sort((a, b) => a.positionId - b.positionId || b.totalXP - a.totalXP);
 
-  const totalXP = +starting.reduce((s, p) => s + (p.totalXP || 0), 0).toFixed(1);
-  const benchXP = +bench.reduce((s, p) => s + (p.totalXP || 0), 0).toFixed(1);
+  // Per-GW picks: best XI/formation/captain for each GW in the horizon
+  const gwPicks = [];
+  for (let gw = startGW; gw < startGW + nGWs; gw++) {
+    gwPicks.push(VG.computePerGWPicks(squad, gw, fixtures));
+  }
+
+  const totalXP = +gwPicks.reduce((s, g) => s + g.gwTotalXP, 0).toFixed(1);
+  const benchXP = +gwPicks.reduce((s, g) => s + g.gwBenchXP, 0).toFixed(1);
 
   return {
     mode: "draft",
-    squad, starting: starting.slice(0, 11), bench: bench.slice(0, 4),
-    formation: bestFormation,
+    squad, starting: gwPicks[0]?.starting || starting.slice(0, 11), bench: gwPicks[0]?.bench || bench.slice(0, 4),
+    formation: gwPicks[0]?.formation || bestFormation,
     totalCost: +spent.toFixed(1), budgetRemaining: +(budget - spent).toFixed(1),
     totalXP, benchXP,
-    gotCap: [...starting].filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2)
+    gotCap: gwPicks[0]?.gotCap || [...starting].filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2),
+    gwPicks
   };
 };
 
@@ -475,20 +560,166 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers) => {
   };
 };
 
-// ── Chip Advice ───────────────────────────────────────────────────────
-VG.evaluateChips = (starting, bench, gw, fixtures) => {
-  const capXP = Math.max(...starting.map(p => p.totalXP || 0), 0);
-  const benchXP = bench.reduce((s, p) => s + (p.totalXP || 0), 0);
-  const gwFix = fixtures.filter(f => f.event === gw);
-  const teamCounts = {};
-  gwFix.forEach(f => { teamCounts[f.team_h] = (teamCounts[f.team_h] || 0) + 1; teamCounts[f.team_a] = (teamCounts[f.team_a] || 0) + 1; });
-  const isDGW = Object.values(teamCounts).some(c => c >= 2);
-  const isBGW = gwFix.length === 0;
+// ── Chip Engine: multi-GW lookahead with DGW/BGW detection ──────────────
+VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
+  if (!gwPicks || gwPicks.length === 0) {
+    return {
+      triple_captain: { recommend: false, reason: "No GW data", bestGW: null, score: 0 },
+      bench_boost: { recommend: false, reason: "No GW data", bestGW: null, score: 0 },
+      wildcard: { recommend: false, reason: "No GW data", bestGW: null, score: 0 },
+      free_hit: { recommend: false, reason: "No GW data", bestGW: null, score: 0 },
+      gwScores: []
+    };
+  }
+
+  const gwScores = gwPicks.map(gp => {
+    const gw = gp.gw;
+    const gwFix = fixtures.filter(f => f.event === gw);
+
+    // DGW/BGW detection
+    const teamFixCount = {};
+    gwFix.forEach(f => {
+      teamFixCount[f.team_h] = (teamFixCount[f.team_h] || 0) + 1;
+      teamFixCount[f.team_a] = (teamFixCount[f.team_a] || 0) + 1;
+    });
+    const dgwTeams = Object.entries(teamFixCount).filter(([, c]) => c >= 2).map(([t]) => parseInt(t));
+    const isDGW = dgwTeams.length > 0;
+    const isBGW = gwFix.length < 10;
+
+    // Captain analysis
+    const cap = gp.gotCap?.[0];
+    const capGWXP = cap?.gwXP || 0;
+    const capIsDGW = cap ? dgwTeams.includes(cap.teamId) : false;
+    const capFDR = cap?.gwFDR || 3;
+    const capAvgFDR = gwFix.length > 0
+      ? gwFix.reduce((s, f) => s + (f.team_h_difficulty || 3) + (f.team_a_difficulty || 3), 0) / (gwFix.length * 2)
+      : 3;
+
+    // Bench analysis
+    const benchXP = gp.gwBenchXP || 0;
+    const benchDGWCount = gp.bench?.filter(p => dgwTeams.includes(p.teamId)).length || 0;
+    const benchAvgXP = gp.bench?.length > 0 ? benchXP / gp.bench.length : 0;
+
+    // ── TC Score ──
+    // High when: captain has high xP, DGW with easy fixtures
+    let tcScore = 0;
+    if (cap) {
+      tcScore = capGWXP * 10;
+      if (capIsDGW) tcScore *= 2.0;
+      if (capFDR <= 2) tcScore *= 1.4;
+      else if (capFDR <= 3) tcScore *= 1.1;
+      else if (capFDR >= 4) tcScore *= 0.7;
+    }
+
+    // ── BB Score ──
+    // High when: bench xP is high, bench players have DGW
+    let bbScore = benchXP * 8;
+    if (benchDGWCount >= 2) bbScore *= 2.0;
+    else if (benchDGWCount >= 1) bbScore *= 1.4;
+    if (benchAvgXP >= 5) bbScore *= 1.3;
+
+    // ── WC Score ──
+    // Moderate score in early GWs (squad still settling), higher when many underperformers
+    let wcScore = 0;
+    if (gw <= 4) wcScore = 30; // early season WC is common
+    // Check if many squad players have bad fixtures this GW
+    const badFixCount = squad.filter(p => {
+      const f = fixtures.find(fi => fi.event === gw && (fi.team_h === p.teamId || fi.team_a === p.teamId));
+      if (!f) return false;
+      const isH = f.team_h === p.teamId;
+      const fdr = isH ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
+      return fdr >= 4;
+    }).length;
+    if (badFixCount >= 5) wcScore += badFixCount * 5;
+
+    // ── FH Score ──
+    // High on BGW (many blanking), or when DGW allows loading up on DGW players
+    let fhScore = 0;
+    if (isBGW) {
+      const blankingTeams = Object.keys(VG.teams).map(Number).filter(t => !teamFixCount[t] || teamFixCount[t] === 0);
+      fhScore = 40 + blankingTeams.length * 8;
+    }
+    if (isDGW && dgwTeams.length >= 6) {
+      fhScore = Math.max(fhScore, 25 + dgwTeams.length * 5);
+    }
+
+    return {
+      gw,
+      isDGW, isBGW, dgwTeams,
+      tcScore: +tcScore.toFixed(1),
+      bbScore: +bbScore.toFixed(1),
+      wcScore: +wcScore.toFixed(1),
+      fhScore: +fhScore.toFixed(1),
+      capName: cap?.name || "",
+      capGWXP,
+      capIsDGW,
+      capFDR,
+      benchXP,
+      benchDGWCount
+    };
+  });
+
+  // Find best GW for each chip
+  const bestGW = (key) => gwScores.reduce((best, g) => g[key] > best[key] ? g : best, gwScores[0]);
+  const tcBest = bestGW("tcScore");
+  const bbBest = bestGW("bbScore");
+  const wcBest = bestGW("wcScore");
+  const fhBest = bestGW("fhScore");
+
+  // Thresholds for recommendation
+  const TC_THRESHOLD = 50;
+  const BB_THRESHOLD = 40;
+  const WC_THRESHOLD = 35;
+  const FH_THRESHOLD = 35;
+
   return {
-    triple_captain: { recommend: capXP >= 12.0 || isDGW, reason: "Cap xP " + capXP.toFixed(1) + (isDGW ? " + DGW" : "") },
-    bench_boost: { recommend: benchXP >= 12.0, reason: "Bench xP " + benchXP.toFixed(1) },
-    free_hit: { recommend: isBGW, reason: isBGW ? "Blank GW" : "No trigger" },
-    wildcard: { recommend: false, reason: "Hold" }
+    triple_captain: {
+      recommend: tcBest.tcScore >= TC_THRESHOLD,
+      bestGW: tcBest.gw,
+      score: tcBest.tcScore,
+      reason: tcBest.tcScore >= TC_THRESHOLD
+        ? `GW${tcBest.gw}: ${tcBest.capName} ${tcBest.capIsDGW ? "(DGW!) " : ""}xP ${tcBest.capGWXP.toFixed(1)} · FDR ${tcBest.capFDR}`
+        : `Best: GW${tcBest.gw} (${tcBest.capName} xP ${tcBest.capGWXP.toFixed(1)}) — hold for better window`,
+      tip: tcBest.capIsDGW
+        ? "Double Gameweek captain — high ceiling play"
+        : tcBest.capFDR <= 2
+        ? "Easy fixture for captain — decent TC window"
+        : "Consider waiting for a DGW with an easier captain fixture"
+    },
+    bench_boost: {
+      recommend: bbBest.bbScore >= BB_THRESHOLD,
+      bestGW: bbBest.gw,
+      score: bbBest.bbScore,
+      reason: bbBest.bbScore >= BB_THRESHOLD
+        ? `GW${bbBest.gw}: Bench xP ${bbBest.benchXP.toFixed(1)}${bbBest.benchDGWCount >= 2 ? ` · ${bbBest.benchDGWCount} DGW players` : ""}`
+        : `Best: GW${bbBest.gw} (bench xP ${bbBest.benchXP.toFixed(1)}) — bench too weak`,
+      tip: bbBest.benchDGWCount >= 2
+        ? "Multiple bench players have double fixtures — ideal BB window"
+        : "Bench lacks DGW coverage; wait for a week where your bench doubles"
+    },
+    wildcard: {
+      recommend: wcBest.wcScore >= WC_THRESHOLD,
+      bestGW: wcBest.gw,
+      score: wcBest.wcScore,
+      reason: wcBest.wcScore >= WC_THRESHOLD
+        ? `GW${wcBest.gw}: ${wcBest.wcScore >= 50 ? "Early season restructuring" : "Multiple bad fixtures for squad"}`
+        : `Best: GW${wcBest.gw} — squad looks solid, hold WC`,
+      tip: wcBest.gw <= 4
+        ? "Early season WC lets you react to form changes after initial fixtures"
+        : "Use WC when 4+ players have tough fixtures or key injuries emerge"
+    },
+    free_hit: {
+      recommend: fhBest.fhScore >= FH_THRESHOLD,
+      bestGW: fhBest.gw,
+      score: fhBest.fhScore,
+      reason: fhBest.fhScore >= FH_THRESHOLD
+        ? `GW${fhBest.gw}: ${fhBest.isBGW ? "Blank GW — many teams out" : `DGW with ${fhBest.dgwTeams?.length || 0} double teams`}`
+        : `Best: GW${fhBest.gw} — no strong BGW/DGW trigger`,
+      tip: fhBest.isBGW
+        ? "Blank Gameweek — use FH to field 11 without hits"
+        : "FH most valuable on BGWs; hold unless desperate for DGW loading"
+    },
+    gwScores
   };
 };
 
@@ -626,10 +857,15 @@ VG.render.metricCard = (label, value, color) =>
 VG.render.chipCard = (label, color, advice) => {
   const active = advice.recommend ? " active" : "";
   const textColor = advice.recommend ? "#00ff87" : "#555";
+  const bestGWText = advice.bestGW ? `Best: GW${advice.bestGW}` : "";
+  const scoreBar = advice.score > 0 ? `<div class="chip-score-bar"><div class="chip-score-fill" style="width:${Math.min(advice.score / 1.2, 100)}%;background:${advice.recommend ? color : '#334155'}"></div></div>` : '';
   return `<div class="chip${active}" style="border-color:${advice.recommend ? color : 'rgba(255,255,255,0.06)'}">
-    <div class="chip-label" style="color:${color}">${label}</div>
-    <div class="chip-action" style="color:${textColor}">${advice.recommend ? "PLAY" : "Hold"}</div>
-    <div class="chip-reason">${advice.reason}</div></div>`;
+    <div class="chip-header"><div class="chip-label" style="color:${color}">${label}</div><div class="chip-action" style="color:${textColor}">${advice.recommend ? "PLAY" : "Hold"}</div></div>
+    <div class="chip-reason">${advice.reason}</div>
+    ${scoreBar}
+    <div class="chip-timing" style="color:#64748b;">${bestGWText}</div>
+    ${advice.tip ? `<div class="chip-tip" style="color:#94a3b8;font-size:0.65rem;margin-top:4px;font-style:italic;">💡 ${advice.tip}</div>` : ''}
+  </div>`;
 };
 
 VG.render.ticker = (ticker, startGW, nGWs) => {
