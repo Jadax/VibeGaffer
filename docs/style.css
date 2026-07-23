@@ -237,3 +237,19 @@ a { color: #00ff87; text-decoration: none; }
 .tip-title { font-weight: 700; font-size: 0.82rem; color: #e2e8f0; margin-bottom: 6px; }
 .tip-text { font-size: 0.78rem; color: #94a3b8; line-height: 1.5; }
 .tip-source { font-size: 0.65rem; color: #475569; margin-top: 8px; font-style: italic; }
+
+/* ── Strategy Comparison ────────────────────────────────────── */
+.strategy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
+.strategy-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 14px; transition: border-color 0.2s; }
+.strategy-card.active { border-color: #00ff87; background: rgba(0,255,135,0.03); }
+.strategy-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.strategy-icon { font-size: 1.2rem; }
+.strategy-name { font-weight: 700; font-size: 0.85rem; color: #e2e8f0; }
+.strategy-desc { font-size: 0.65rem; color: #64748b; margin-bottom: 10px; }
+.strategy-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+.strategy-stat { display: flex; flex-direction: column; }
+.strategy-stat .label { font-size: 0.55rem; color: #475569; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+.strategy-stat .value { font-size: 0.82rem; font-weight: 700; color: #00ff87; }
+.strategy-players { border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px; }
+.strategy-player { font-size: 0.7rem; color: #94a3b8; padding: 2px 0; display: flex; justify-content: space-between; }
+.strategy-player .pos { color: #64748b; font-size: 0.6rem; }

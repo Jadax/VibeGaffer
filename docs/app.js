@@ -112,7 +112,7 @@ VG.buildMaps = (data) => {
   VG.currentGW = data.events.find(e => e.is_current)?.id || data.events.find(e => e.is_next)?.id || 1;
 };
 
-// ── xP Engine: proper FPL scoring model ──────────────────────────────────
+// ── xP Engine: enhanced with xG/xA, form trends, opponent defense ──────
 VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const p = VG.players[pid];
   if (!p) return { xp: 0, mins: 0, cs: 0, goal: 0, assist: 0, bonus: 0 };
@@ -138,6 +138,12 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const creativity = parseFloat(p.creativity || "0");
   const threat = parseFloat(p.threat || "0");
 
+  // xG/xA from FPL API (season totals, pre-computed by FPL)
+  const xG = parseFloat(p.expected_goals || "0");
+  const xA = parseFloat(p.expected_assists || "0");
+  const xGI = parseFloat(p.expected_goal_involvements || "0");
+  const xGC = parseFloat(p.expected_goals_conceded || "0");
+
   // Minutes probability
   const gamesPlayed = starts || Math.max(1, Math.ceil(mins / 80));
   const avgMins = gamesPlayed > 0 ? mins / gamesPlayed : 0;
@@ -159,10 +165,19 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const dataConfidence = Math.min(1.0, gamesPlayed / Math.max(seasonGames * 0.5, 10));
   const confidenceMult = 0.5 + 0.5 * dataConfidence;
 
-  // Per-90 rates
+  // ── Per-90 rates: use xG/xA when available (better than raw goals/assists) ──
   const nineties = mins > 0 ? mins / 90 : 1;
+
+  // xG per 90 is a better predictor than actual goals per 90
+  const xGPer90 = xG / Math.max(nineties, 0.1);
+  const xAPer90 = xA / Math.max(nineties, 0.1);
   const goalsPer90 = goals / nineties;
   const assistsPer90 = assists / nineties;
+
+  // Blend: 60% xG/xA (expectation-based) + 40% actual (outcome-based)
+  const projGoalsPer90Raw = 0.6 * xGPer90 + 0.4 * goalsPer90;
+  const projAssistsPer90Raw = 0.6 * xAPer90 + 0.4 * assistsPer90;
+
   const csRate = cleanSheets / Math.max(gamesPlayed, 1);
   const savesPerGame = saves / Math.max(gamesPlayed, 1);
   const bonusPerGame = bonus / Math.max(gamesPlayed, 1);
@@ -171,51 +186,67 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const ownGoalsPerGame = ownGoals / Math.max(gamesPlayed, 1);
   const penMissPerGame = penMiss / Math.max(gamesPlayed, 1);
 
-  // Fixture difficulty multipliers
+  // ── Form trend: positive trend = rising form, negative = declining ──
+  const formVsPPG = ppg > 0 ? form / ppg : 1.0;
+  const trendMult = Math.min(Math.max(0.8 + 0.2 * formVsPPG, 0.7), 1.3);
+
+  // ── Fixture difficulty multipliers ──
   const fdrMult = { 1: 1.35, 2: 1.15, 3: 1.00, 4: 0.85, 5: 0.65 };
   const attMult = fdrMult[fdr] || 1.0;
   const defMult = fdrMult[6 - (fdr || 3)] || 1.0;
 
-  // Team strength adjustment
+  // ── Team strength adjustment ──
   const teamId = p.team;
   const team = VG.teams[teamId];
   const opp = VG.teams[oppTeamId];
   let teamStrMult = 1.0;
+  let oppDefStr = 1.0;
   if (team && opp) {
     const teamStr = (team.strength_overall_home + team.strength_overall_away) / 2;
     const oppStr = (opp.strength_overall_home + opp.strength_overall_away) / 2;
     teamStrMult = 0.85 + 0.30 * ((teamStr - oppStr + 3) / 6);
+    // Opponent defensive strength (affects goals conceded / clean sheets)
+    const oppDef = (opp.strength_defence_home + opp.strength_defence_away) / 2;
+    oppDefStr = 0.7 + 0.6 * ((oppDef - 600) / 400); // normalized around ~800
   }
 
-  // Projected rates (blend historical + form-adjusted)
-  const projGoalsPer90 = goalsPer90 * attMult * teamStrMult * confidenceMult + 0.05 * (1 - confidenceMult);
-  const projAssistsPer90 = assistsPer90 * attMult * teamStrMult * confidenceMult + 0.03 * (1 - confidenceMult);
+  // ── Projected rates ──
+  const projGoalsPer90 = projGoalsPer90Raw * attMult * teamStrMult * trendMult * confidenceMult + 0.05 * (1 - confidenceMult);
+  const projAssistsPer90 = projAssistsPer90Raw * attMult * teamStrMult * trendMult * confidenceMult + 0.03 * (1 - confidenceMult);
 
-  // Clean sheet probability by position and FDR
+  // ── Clean sheet probability: use xGC for opponent attacking threat ──
   const baseCSPos = { 1: 0.35, 2: 0.30, 3: 0.08, 4: 0 };
   const baseCS = (baseCSPos[pos] || 0) * defMult * teamStrMult;
-  const projCS = Math.min(Math.max(baseCS * confidenceMult + csRate * confidenceMult * defMult, 0), 0.70);
+  // xGC per game: higher = more goals conceded = lower CS chance
+  const xGCPerGame = xGC / Math.max(gamesPlayed, 1);
+  const xGCImpact = Math.max(0.5, 1.0 - xGCPerGame * 0.05); // penalize high xGC
+  const projCS = Math.min(Math.max(baseCS * confidenceMult * xGCImpact + csRate * confidenceMult * defMult, 0), 0.70);
 
-  // Goal probability (per fixture)
+  // ── Goal probability (per fixture) ──
   const projGoals = Math.min(projGoalsPer90 * (isHome ? 1.10 : 1.0), 0.85);
-  // Assist probability (per fixture)
+  // ── Assist probability (per fixture) ──
   const projAssists = Math.min(projAssistsPer90 * (isHome ? 1.10 : 1.0), 0.85);
 
-  // Bonus probability (rough: based on ICT + form)
-  const projBonus = Math.min(bonusPerGame * confidenceMult + (pos === 3 || pos === 4 ? 0.15 : 0.08), 1.0);
+  // ── Bonus probability: blend ICT, xGI, and form ──
+  const ictPerGame = ict / Math.max(gamesPlayed, 1);
+  const xGIPerGame = xGI / Math.max(gamesPlayed, 1);
+  const bonusBase = bonusPerGame * confidenceMult;
+  const ictBonus = Math.min(ictPerGame / 15, 0.4); // ICT normalization
+  const xgiBonus = Math.min(xGIPerGame / 0.7, 0.3); // xGI normalization
+  const projBonus = Math.min(bonusBase + ictBonus + xgiBonus + (pos === 3 || pos === 4 ? 0.10 : 0.05), 1.0);
 
-  // FPL scoring
+  // ── FPL scoring ──
   const GOAL_PTS = { 1: 6, 2: 6, 3: 5, 4: 4 };
   const ASSIST_PTS = 3;
   const CS_PTS = { 1: 4, 2: 4, 3: 1, 4: 0 };
-  const APPEARANCE_PTS = 2; // 60+ mins
+  const APPEARANCE_PTS = 2;
 
-  // xP calculation per fixture
+  // ── xP calculation per fixture ──
   const xpAppearance = minsProb * APPEARANCE_PTS;
   const xpCS = projCS * (CS_PTS[pos] || 0);
   const xpGoals = projGoals * (GOAL_PTS[pos] || 4);
   const xpAssists = projAssists * ASSIST_PTS;
-  const xpBonus = projBonus * 1.5; // avg ~1.5 pts from bonus when awarded
+  const xpBonus = projBonus * 1.5;
   const xpSaves = pos === 1 ? Math.min(savesPerGame / 3, 1.0) * 3 * defMult * confidenceMult : 0;
   const xpNegative = minsProb * (yellowsPerGame * 1 + redsPerGame * 3 + ownGoalsPerGame * 2 + penMissPerGame * 2);
 
@@ -265,6 +296,13 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   }
 
   const price = p.now_cost / 10;
+  const xG = parseFloat(p.expected_goals || "0");
+  const xA = parseFloat(p.expected_assists || "0");
+  const xGI = parseFloat(p.expected_goal_involvements || "0");
+  const form = parseFloat(p.form || "0");
+  const ppg = parseFloat(p.points_per_game || "0");
+  const formVsPPG = ppg > 0 ? form / ppg : 1.0;
+
   return {
     totalXP: +totalXP.toFixed(2),
     gwDetails,
@@ -277,12 +315,16 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
       teamId,
       teamName: VG.teams[teamId]?.short_name || "",
       price,
-      form: Math.max(parseFloat(p.form || "0"), parseFloat(p.points_per_game || "0"), 0),
+      form: Math.max(form, ppg, 0),
       totalPoints: parseInt(p.total_points || "0"),
       ict: parseFloat(p.ict_index || "0"),
       ownership: parseFloat(p.selected_by_percent || "0"),
       xpPerPrice: 0,
       totalXP: +totalXP.toFixed(2),
+      xG: +xG.toFixed(2),
+      xA: +xA.toFixed(2),
+      xGI: +xGI.toFixed(2),
+      trend: +formVsPPG.toFixed(2),
       status: p.status,
       news: p.news || ""
     }
@@ -404,26 +446,39 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
   };
 
   // Phase 1: Fill all 15 slots — pick top-value player at each position
-  const byValue = [...players].sort((a, b) => b.xpPerPrice - a.xpPerPrice);
+  // Reserve £4m per remaining slot so we don't run out of budget
+  const sortBy = (a, b) => (b._sortBy || b.xpPerPrice) - (a._sortBy || a.xpPerPrice);
+  const byValue = [...players].sort(sortBy);
   [1, 2, 3, 4].forEach(pos => {
     for (const p of byValue) {
       if (squad.filter(s => s.positionId === pos).length >= target[pos]) break;
       if (p.positionId !== pos) continue;
       if (inSquad.has(p.id)) continue;
       if ((clubCounts[p.teamId] || 0) >= 3) continue;
-      if (spent + p.price > budget + 0.1) continue;
+      const slotsLeft = 15 - squad.length - 1;
+      const reserve = slotsLeft * 4.5;
+      if (spent + p.price + reserve > budget + 0.1) continue;
       addPlayer(p);
     }
   });
 
-  // Phase 2: Fill any remaining slots
+  // Phase 2: Fill any remaining slots with cheapest available by position
   if (squad.length < 15) {
-    for (const p of byValue) {
+    const posNeeded = {};
+    [1, 2, 3, 4].forEach(pos => {
+      const need = target[pos] - squad.filter(s => s.positionId === pos).length;
+      if (need > 0) posNeeded[pos] = need;
+    });
+    const fillers = [...players].sort((a, b) => a.price - b.price);
+    for (const p of fillers) {
       if (squad.length >= 15) break;
       if (inSquad.has(p.id)) continue;
+      if (!posNeeded[p.positionId]) continue;
       if ((clubCounts[p.teamId] || 0) >= 3) continue;
       if (spent + p.price > budget + 0.1) continue;
       addPlayer(p);
+      posNeeded[p.positionId]--;
+      if (posNeeded[p.positionId] <= 0) delete posNeeded[p.positionId];
     }
   }
 
@@ -519,6 +574,39 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
     gotCap: gwPicks[0]?.gotCap || [...starting].filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2),
     gwPicks
   };
+};
+
+// ── Multi-Strategy: Balanced, Premium Heavy, Best Value ────────────────
+VG.STRATEGIES = {
+  balanced: { name: "Balanced", desc: "Maximize total xP within budget", icon: "⚖️" },
+  premium: { name: "Premium Heavy", desc: "Stack elite players, accept weaker bench", icon: "💎" },
+  value: { name: "Best Value", desc: "Maximize xP per £m, find hidden gems", icon: "💰" }
+};
+
+VG.optimizeStrategies = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12) => {
+  const results = {};
+
+  // Balanced: standard optimizer — sorts by xpPerPrice, upgrades by totalXP
+  results.balanced = VG.optimizeDraft(players, budget, fixtures, startGW, nGWs);
+
+  // Premium Heavy: sort by totalXP (not xpPerPrice) — picks best players first, accepts premium stack
+  const premiumPlayers = players.map(p => ({
+    ...p,
+    _sortBy: p.totalXP * 1.3
+  }));
+  results.premium = VG.optimizeDraft(premiumPlayers, budget, fixtures, startGW, nGWs);
+  results.premium.strategy = "premium";
+
+  // Best Value: cap max price at £8m, force cheap build, sort by xpPerPrice
+  const maxPrice = 8;
+  const valuePlayers = players.filter(p => p.price <= maxPrice).map(p => ({
+    ...p,
+    _sortBy: p.xpPerPrice * 1.5
+  }));
+  results.value = VG.optimizeDraft(valuePlayers, budget, fixtures, startGW, nGWs);
+  results.value.strategy = "value";
+
+  return results;
 };
 
 VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers) => {
