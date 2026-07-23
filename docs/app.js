@@ -108,6 +108,54 @@ VG.buildMaps = (data) => {
     VG.playersByTeam[p.team].push(p.id);
   });
   data.teams.forEach(t => { VG.teams[t.id] = t; });
+
+  // Pre-season fallback: estimate team strengths from 2025/26 final standings
+  // FPL API uses ~600-1000 range; 800 = average team
+  const fallbackStrengths = {
+    'Arsenal':     { att_h: 1200, att_a: 1150, def_h: 1250, def_a: 1200, ov_h: 1230, ov_a: 1180 },
+    'Man City':    { att_h: 1170, att_a: 1120, def_h: 1130, def_a: 1080, ov_h: 1150, ov_a: 1100 },
+    'Liverpool':   { att_h: 1170, att_a: 1120, def_h: 1150, def_a: 1100, ov_h: 1160, ov_a: 1110 },
+    'Chelsea':     { att_h: 1130, att_a: 1080, def_h: 1090, def_a: 1040, ov_h: 1110, ov_a: 1060 },
+    'Aston Villa': { att_h: 1100, att_a: 1050, def_h: 1080, def_a: 1030, ov_h: 1090, ov_a: 1040 },
+    'Newcastle':   { att_h: 1100, att_a: 1050, def_h: 1110, def_a: 1060, ov_h: 1100, ov_a: 1050 },
+    'Brighton':    { att_h: 1080, att_a: 1030, def_h: 1050, def_a: 1000, ov_h: 1070, ov_a: 1020 },
+    'Bournemouth': { att_h: 1050, att_a: 1000, def_h: 1030, def_a: 980,  ov_h: 1040, ov_a: 990  },
+    'Crystal Palace':{ att_h: 1030, att_a: 980,  def_h: 1050, def_a: 1000, ov_h: 1040, ov_a: 990  },
+    'Fulham':      { att_h: 1020, att_a: 970,  def_h: 1020, def_a: 970,  ov_h: 1020, ov_a: 970  },
+    'Brentford':   { att_h: 1020, att_a: 970,  def_h: 1000, def_a: 950,  ov_h: 1010, ov_a: 960  },
+    'Man Utd':     { att_h: 1070, att_a: 1020, def_h: 1000, def_a: 950,  ov_h: 1040, ov_a: 990  },
+    'Tottenham':   { att_h: 1070, att_a: 1020, def_h: 980,  def_a: 930,  ov_h: 1030, ov_a: 980  },
+    'Wolves':      { att_h: 980,  att_a: 930,  def_h: 950,  def_a: 900,  ov_h: 970,  ov_a: 920  },
+    'West Ham':    { att_h: 1000, att_a: 950,  def_h: 950,  def_a: 900,  ov_h: 980,  ov_a: 930  },
+    'Everton':     { att_h: 950,  att_a: 900,  def_h: 980,  def_a: 930,  ov_h: 960,  ov_a: 910  },
+    'Nottm Forest':{ att_h: 1000, att_a: 950,  def_h: 1020, def_a: 970,  ov_h: 1010, ov_a: 960  },
+    'Leeds':       { att_h: 950,  att_a: 900,  def_h: 920,  def_a: 870,  ov_h: 940,  ov_a: 890  },
+    'Burnley':     { att_h: 910,  att_a: 860,  def_h: 920,  def_a: 870,  ov_h: 910,  ov_a: 860  },
+    'Sunderland':  { att_h: 910,  att_a: 860,  def_h: 900,  def_a: 850,  ov_h: 910,  ov_a: 860  }
+  };
+
+  data.teams.forEach(t => {
+    if (t.strength_defence_home === 0 || t.strength_overall_home === 0) {
+      const fb = fallbackStrengths[t.name];
+      if (fb) {
+        t.strength_attack_home = fb.att_h;
+        t.strength_attack_away = fb.att_a;
+        t.strength_defence_home = fb.def_h;
+        t.strength_defence_away = fb.def_a;
+        t.strength_overall_home = fb.ov_h;
+        t.strength_overall_away = fb.ov_a;
+      } else {
+        // Default for any unknown team
+        t.strength_attack_home = 1100;
+        t.strength_attack_away = 1050;
+        t.strength_defence_home = 1100;
+        t.strength_defence_away = 1050;
+        t.strength_overall_home = 1100;
+        t.strength_overall_away = 1050;
+      }
+    }
+  });
+
   VG.gwData = data.events;
   VG.currentGW = data.events.find(e => e.is_current)?.id || data.events.find(e => e.is_next)?.id || 1;
 };
@@ -204,10 +252,12 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   if (team && opp) {
     const teamStr = (team.strength_overall_home + team.strength_overall_away) / 2;
     const oppStr = (opp.strength_overall_home + opp.strength_overall_away) / 2;
-    teamStrMult = 0.85 + 0.30 * ((teamStr - oppStr + 3) / 6);
+    // Normalize: strength range ~800-1200, midpoint ~1000; diff/100 gives ~-2 to +2
+    const strDiff = (teamStr - oppStr) / 100;
+    teamStrMult = Math.min(Math.max(0.80 + 0.15 * strDiff, 0.65), 1.35);
     // Opponent defensive strength (affects goals conceded / clean sheets)
     const oppDef = (opp.strength_defence_home + opp.strength_defence_away) / 2;
-    oppDefStr = 0.7 + 0.6 * ((oppDef - 600) / 400); // normalized around ~800
+    oppDefStr = Math.min(Math.max(0.70 + 0.30 * ((oppDef - 1000) / 200), 0.5), 1.3);
   }
 
   // ── Projected rates ──
@@ -255,7 +305,8 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   }
 
   // ── Captain ceiling bonus: FWD/MID have higher haul potential for captain ──
-  const captainBonus = (pos === 4) ? 1.15 : (pos === 3) ? 1.10 : 1.0;
+  // Premium MIDs (>£9m) get extra boost as they're captain-viable
+  const captainBonus = (pos === 4) ? 1.15 : (pos === 3) ? (price > 9 ? 1.18 : 1.08) : 1.0;
 
   // ── xP calculation per fixture ──
   const xpAppearance = minsProb * APPEARANCE_PTS;
