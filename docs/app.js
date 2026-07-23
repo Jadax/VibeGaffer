@@ -241,6 +241,22 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const CS_PTS = { 1: 4, 2: 4, 3: 1, 4: 0 };
   const APPEARANCE_PTS = 2;
 
+  // ── DEFCON estimation (Defensive Contribution Points) ──
+  // DEFCON = 2pts for reaching thresholds of: clearances + blocks + interceptions + tackles
+  // CBs dominate DEFCON; estimate from position, minutes, team defense, and clean sheet rate
+  let defconXP = 0;
+  if (pos === 2) { // CBs dominate DEFCON (~1.4 pts/game avg for top CBs)
+    const defconBase = 1.1;
+    const teamDefStr = team ? ((team.strength_defence_home + team.strength_defence_away) / 2 / 800) : 0.8;
+    const minutesBonus = Math.min(minsProb, 0.95);
+    defconXP = defconBase * teamDefStr * minutesBonus * confidenceMult * defMult;
+  } else if (pos === 3) { // DEF MIDs get partial DEFCON
+    defconXP = 0.4 * minsProb * confidenceMult * defMult;
+  }
+
+  // ── Captain ceiling bonus: FWD/MID have higher haul potential for captain ──
+  const captainBonus = (pos === 4) ? 1.15 : (pos === 3) ? 1.10 : 1.0;
+
   // ── xP calculation per fixture ──
   const xpAppearance = minsProb * APPEARANCE_PTS;
   const xpCS = projCS * (CS_PTS[pos] || 0);
@@ -248,9 +264,10 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const xpAssists = projAssists * ASSIST_PTS;
   const xpBonus = projBonus * 1.5;
   const xpSaves = pos === 1 ? Math.min(savesPerGame / 3, 1.0) * 3 * defMult * confidenceMult : 0;
+  const xpDEFCON = defconXP * 2; // DEFCON awards 2pts per threshold
   const xpNegative = minsProb * (yellowsPerGame * 1 + redsPerGame * 3 + ownGoalsPerGame * 2 + penMissPerGame * 2);
 
-  const totalXP = xpAppearance + xpCS + xpGoals + xpAssists + xpBonus + xpSaves - xpNegative;
+  const totalXP = (xpAppearance + xpCS + xpGoals + xpAssists + xpBonus + xpSaves + xpDEFCON - xpNegative) * captainBonus;
 
   return {
     xp: Math.max(totalXP, 0.1),
@@ -259,8 +276,9 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
     goalProb: projGoals,
     assistProb: projAssists,
     bonusProb: projBonus,
+    defconProb: defconXP,
     fdr,
-    xpComponents: { xpAppearance, xpCS, xpGoals, xpAssists, xpBonus, xpSaves, xpNegative }
+    xpComponents: { xpAppearance, xpCS, xpGoals, xpAssists, xpBonus, xpSaves, xpDEFCON, xpNegative }
   };
 };
 
@@ -423,101 +441,118 @@ VG.computePerGWPicks = (squad, gw, fixtures) => {
 // ── Optimizer: maximize total xP within budget ──────────────────────────
 VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12) => {
   const target = { 1: 2, 2: 5, 3: 5, 4: 3 };
-  const squad = [];
-  let spent = 0;
-  const clubCounts = {};
-  const inSquad = new Set();
+  let bestSquad = null, bestStrategyXP = -1, bestSpent = 0;
 
-  const addPlayer = (p) => {
-    squad.push({ ...p });
-    spent += p.price;
-    clubCounts[p.teamId] = (clubCounts[p.teamId] || 0) + 1;
-    inSquad.add(p.id);
-  };
+  // Try multiple starting strategies to find global optimum
+  const strategies = ['value', 'xp', 'mixed'];
+  
+  for (const strategy of strategies) {
+    const squad = [];
+    let spent = 0;
+    const clubCounts = {};
+    const inSquad = new Set();
 
-  const canAdd = (p, posOverride) => {
-    const pos = posOverride || p.positionId;
-    if (inSquad.has(p.id)) return false;
-    const posCount = squad.filter(s => s.positionId === pos).length;
-    if (posCount >= (target[pos] || 0)) return false;
-    if ((clubCounts[p.teamId] || 0) >= 3) return false;
-    if (spent + p.price > budget + 0.1) return false;
-    return true;
-  };
+    const addPlayer = (p) => {
+      squad.push({ ...p });
+      spent += p.price;
+      clubCounts[p.teamId] = (clubCounts[p.teamId] || 0) + 1;
+      inSquad.add(p.id);
+    };
 
-  // Phase 1: Fill all 15 slots — pick top-value player at each position
-  // Reserve £4m per remaining slot so we don't run out of budget
-  const sortBy = (a, b) => (b._sortBy || b.xpPerPrice) - (a._sortBy || a.xpPerPrice);
-  const byValue = [...players].sort(sortBy);
-  [1, 2, 3, 4].forEach(pos => {
-    for (const p of byValue) {
-      if (squad.filter(s => s.positionId === pos).length >= target[pos]) break;
-      if (p.positionId !== pos) continue;
-      if (inSquad.has(p.id)) continue;
-      if ((clubCounts[p.teamId] || 0) >= 3) continue;
-      const slotsLeft = 15 - squad.length - 1;
-      const reserve = slotsLeft * 4.5;
-      if (spent + p.price + reserve > budget + 0.1) continue;
-      addPlayer(p);
+    // Phase 1: Fill all 15 slots based on strategy
+    let byValue;
+    if (strategy === 'value') {
+      byValue = [...players].sort((a, b) => (b._sortBy || b.xpPerPrice) - (a._sortBy || a.xpPerPrice));
+    } else if (strategy === 'xp') {
+      byValue = [...players].sort((a, b) => b.totalXP - a.totalXP);
+    } else { // mixed
+      byValue = [...players].sort((a, b) => {
+        const scoreA = (a._sortBy || a.xpPerPrice) * 0.5 + (a.totalXP / 10) * 0.5;
+        const scoreB = (b._sortBy || b.xpPerPrice) * 0.5 + (b.totalXP / 10) * 0.5;
+        return scoreB - scoreA;
+      });
     }
-  });
 
-  // Phase 2: Fill any remaining slots with cheapest available by position
-  if (squad.length < 15) {
-    const posNeeded = {};
     [1, 2, 3, 4].forEach(pos => {
-      const need = target[pos] - squad.filter(s => s.positionId === pos).length;
-      if (need > 0) posNeeded[pos] = need;
+      for (const p of byValue) {
+        if (squad.filter(s => s.positionId === pos).length >= target[pos]) break;
+        if (p.positionId !== pos) continue;
+        if (inSquad.has(p.id)) continue;
+        if ((clubCounts[p.teamId] || 0) >= 3) continue;
+        const slotsLeft = 15 - squad.length - 1;
+        const reserve = slotsLeft * 4.5;
+        if (spent + p.price + reserve > budget + 0.1) continue;
+        addPlayer(p);
+      }
     });
-    const fillers = [...players].sort((a, b) => a.price - b.price);
-    for (const p of fillers) {
-      if (squad.length >= 15) break;
-      if (inSquad.has(p.id)) continue;
-      if (!posNeeded[p.positionId]) continue;
-      if ((clubCounts[p.teamId] || 0) >= 3) continue;
-      if (spent + p.price > budget + 0.1) continue;
-      addPlayer(p);
-      posNeeded[p.positionId]--;
-      if (posNeeded[p.positionId] <= 0) delete posNeeded[p.positionId];
+
+    // Phase 2: Fill remaining slots with cheapest available
+    if (squad.length < 15) {
+      const posNeeded = {};
+      [1, 2, 3, 4].forEach(pos => {
+        const need = target[pos] - squad.filter(s => s.positionId === pos).length;
+        if (need > 0) posNeeded[pos] = need;
+      });
+      const fillers = [...players].sort((a, b) => a.price - b.price);
+      for (const p of fillers) {
+        if (squad.length >= 15) break;
+        if (inSquad.has(p.id)) continue;
+        if (!posNeeded[p.positionId]) continue;
+        if ((clubCounts[p.teamId] || 0) >= 3) continue;
+        if (spent + p.price > budget + 0.1) continue;
+        addPlayer(p);
+        posNeeded[p.positionId]--;
+        if (posNeeded[p.positionId] <= 0) delete posNeeded[p.positionId];
+      }
+    }
+
+    // Phase 3: Aggressively upgrade with remaining budget
+    const remaining = () => +(budget - spent).toFixed(1);
+    for (let pass = 0; pass < 12; pass++) {
+      if (remaining() < 0.1) break;
+      let improved = false;
+      const indices = Array.from({ length: squad.length }, (_, i) => i);
+      indices.sort((a, b) => squad[a].totalXP - squad[b].totalXP);
+      for (const i of indices) {
+        if (remaining() < 0.1) break;
+        const cur = squad[i];
+        let bestCand = null, bestGain = 0;
+        for (const p of players) {
+          if (inSquad.has(p.id)) continue;
+          if (p.positionId !== cur.positionId) continue;
+          const costDiff = +(p.price - cur.price).toFixed(1);
+          if (costDiff <= 0 || costDiff > remaining()) continue;
+          if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== cur.teamId) continue;
+          const gain = p.totalXP - cur.totalXP;
+          if (gain > bestGain) { bestGain = gain; bestCand = p; }
+        }
+        if (bestCand && bestGain > 0) {
+          const costDiff = +(bestCand.price - cur.price).toFixed(1);
+          inSquad.delete(cur.id);
+          inSquad.add(bestCand.id);
+          if (bestCand.teamId !== cur.teamId) {
+            clubCounts[cur.teamId] = (clubCounts[cur.teamId] || 1) - 1;
+            clubCounts[bestCand.teamId] = (clubCounts[bestCand.teamId] || 0) + 1;
+          }
+          squad[i] = { ...bestCand };
+          spent += costDiff;
+          improved = true;
+        }
+      }
+      if (!improved) break;
+    }
+
+    // Evaluate this squad's total XP
+    const totalXP = squad.reduce((s, p) => s + p.totalXP, 0);
+    if (totalXP > bestStrategyXP && squad.length === 15) {
+      bestStrategyXP = totalXP;
+      bestSquad = [...squad];
+      bestSpent = spent;
     }
   }
 
-  // Phase 3: Aggressively upgrade with remaining budget — maximize total xP
-  const remaining = () => +(budget - spent).toFixed(1);
-  for (let pass = 0; pass < 8; pass++) {
-    if (remaining() < 0.1) break;
-    let improved = false;
-    // Sort squad by totalXP ascending (upgrade cheapest/weakest first)
-    const indices = Array.from({ length: squad.length }, (_, i) => i);
-    indices.sort((a, b) => squad[a].totalXP - squad[b].totalXP);
-    for (const i of indices) {
-      if (remaining() < 0.1) break;
-      const cur = squad[i];
-      let bestCand = null, bestGain = 0;
-      for (const p of players) {
-        if (inSquad.has(p.id)) continue;
-        if (p.positionId !== cur.positionId) continue;
-        const costDiff = +(p.price - cur.price).toFixed(1);
-        if (costDiff <= 0 || costDiff > remaining()) continue;
-        if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== cur.teamId) continue;
-        const gain = p.totalXP - cur.totalXP;
-        if (gain > bestGain) { bestGain = gain; bestCand = p; }
-      }
-      if (bestCand && bestGain > 0) {
-        const costDiff = +(bestCand.price - cur.price).toFixed(1);
-        inSquad.delete(cur.id);
-        inSquad.add(bestCand.id);
-        if (bestCand.teamId !== cur.teamId) {
-          clubCounts[cur.teamId] = (clubCounts[cur.teamId] || 1) - 1;
-          clubCounts[bestCand.teamId] = (clubCounts[bestCand.teamId] || 0) + 1;
-        }
-        squad[i] = { ...bestCand };
-        spent += costDiff;
-        improved = true;
-      }
-    }
-    if (!improved) break;
-  }
+  const squad = bestSquad;
+  const spent = bestSpent;
 
   // Select starting XI: pick the highest xP player at each position for the formation
   const byPos = { 1: [], 2: [], 3: [], 4: [] };
