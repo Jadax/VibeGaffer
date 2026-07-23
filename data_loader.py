@@ -1,0 +1,288 @@
+"""
+VibeGaffer | data_loader.py
+Multi-source data ingestion module for FPL optimization.
+Fetches from official FPL API, Vaastav archive, Olbauday Elo, and Martgra momentum.
+All fetchers are wrapped with @st.cache_data (TTL=3600s) to prevent re-fetching
+during active sessions and minimize API rate-limit hits.
+
+Author: Tushant Sharma | Astraiva
+"""
+
+import requests
+import pandas as pd
+import numpy as np
+import streamlit as st
+from io import StringIO
+from typing import Optional, Dict, Any
+
+# ---------------------------------------------------------------------------
+# API base URLs for all data sources
+# ---------------------------------------------------------------------------
+FPL_BASE = "https://fantasy.premierleague.com/api"
+VAASTAV_BASE = "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data"
+OLBAUDAY_BASE = "https://raw.githubusercontent.com/olbauday/FPL-Core-Insights/main"
+MARTGRA_BASE = "https://raw.githubusercontent.com/martgra/fpl-timeseries-data/main"
+
+# Cache duration in seconds — keeps API calls fast and avoids rate-limiting
+CACHE_TTL = 3600
+
+# Maps FPL element_type integer to human-readable position name
+POSITION_MAP = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+
+
+# ============================================================================
+# FPL Official API — Bootstrap Static
+# ============================================================================
+
+@st.cache_data(ttl=CACHE_TTL)
+def fetch_bootstrap_static() -> Dict[str, Any]:
+    """Fetch the FPL bootstrap-static endpoint containing all players, teams,
+       gameweek info, and meta-data for the current season."""
+    try:
+        resp = requests.get(f"{FPL_BASE}/bootstrap-static/", timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        st.error(f"Failed to fetch FPL bootstrap data: {e}")
+        return {}
+
+
+# ============================================================================
+# Player & Team DataFrames
+# ============================================================================
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_players_df() -> pd.DataFrame:
+    """Return a pandas DataFrame of all FPL players with position names,
+       full names, and prices converted from integer (x10) to millions."""
+    data = fetch_bootstrap_static()
+    if not data or "elements" not in data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data["elements"])
+    df["position_name"] = df["element_type"].map(POSITION_MAP)
+    df["full_name"] = df["first_name"] + " " + df["second_name"]
+    # FPL stores prices as integers (e.g. 85 = 8.5m)
+    df["now_cost"] = df["now_cost"] / 10.0
+    df["selling_price"] = df["selling_price"] / 10.0 if "selling_price" in df.columns else df["now_cost"]
+    return df
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_teams_df() -> pd.DataFrame:
+    """Return a DataFrame of all 20 Premier League teams with strength ratings."""
+    data = fetch_bootstrap_static()
+    if not data or "teams" not in data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data["teams"])
+    df = df[["id", "name", "short_name", "strength", "strength_overall_home",
+             "strength_overall_away", "strength_attack_home", "strength_attack_away",
+             "strength_defence_home", "strength_defence_away"]]
+    return df
+
+
+# ============================================================================
+# Fixtures
+# ============================================================================
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_fixtures_df() -> pd.DataFrame:
+    """Fetch all fixtures for the current season with difficulty ratings."""
+    try:
+        resp = requests.get(f"{FPL_BASE}/fixtures/", timeout=15)
+        resp.raise_for_status()
+        fixtures = resp.json()
+        df = pd.DataFrame(fixtures)
+        if df.empty:
+            return df
+        df = df[["id", "event", "finished", "kickoff_time", "team_h", "team_a",
+                  "team_h_difficulty", "team_a_difficulty", "team_h_score",
+                  "team_a_score"]]
+        df.rename(columns={
+            "team_h": "home_team_id",
+            "team_a": "away_team_id",
+            "team_h_difficulty": "home_fdr",
+            "team_a_difficulty": "away_fdr"
+        }, inplace=True)
+        return df
+    except Exception as e:
+        st.error(f"Failed to fetch fixtures: {e}")
+        return pd.DataFrame()
+
+
+# ============================================================================
+# User Squad Data
+# ============================================================================
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_user_team_info(team_id: int) -> Dict[str, Any]:
+    """Fetch team meta-data from FPL API: name, rank, bank balance."""
+    if not team_id or team_id <= 0:
+        return {}
+    try:
+        resp = requests.get(f"{FPL_BASE}/entry/{team_id}/", timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        st.error(f"Failed to fetch team {team_id}: {e}")
+        return {}
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_user_picks(team_id: int, gameweek: int) -> Dict[str, Any]:
+    """Fetch a user's squad picks and captain/vice selections for a given GW."""
+    if not team_id or team_id <= 0:
+        return {}
+    try:
+        resp = requests.get(f"{FPL_BASE}/entry/{team_id}/event/{gameweek}/picks/", timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        st.error(f"Failed to fetch picks for team {team_id} GW{gameweek}: {e}")
+        return {}
+
+
+# ============================================================================
+# Player Detail Queries
+# ============================================================================
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_player_history(player_id: int) -> pd.DataFrame:
+    """Fetch a player's historical GW-by-GW performance data."""
+    try:
+        resp = requests.get(f"{FPL_BASE}/element-summary/{player_id}/", timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if "history" in data and data["history"]:
+            return pd.DataFrame(data["history"])
+        return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_upcoming_fixtures_for_player(player_id: int, n_fixtures: int = 5) -> pd.DataFrame:
+    """Fetch a player's upcoming fixtures from the FPL element-summary endpoint."""
+    try:
+        resp = requests.get(f"{FPL_BASE}/element-summary/{player_id}/", timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if "fixtures" in data and data["fixtures"]:
+            df = pd.DataFrame(data["fixtures"])
+            return df.head(n_fixtures)
+        return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+# ============================================================================
+# Open-Source GitHub Data Sources
+# ============================================================================
+
+@st.cache_data(ttl=CACHE_TTL)
+def fetch_github_csv(url: str) -> pd.DataFrame:
+    """Generic fetcher for CSV files hosted on GitHub raw content URLs.
+       Returns empty DataFrame on failure with a warning."""
+    try:
+        resp = requests.get(url, timeout=20)
+        resp.raise_for_status()
+        return pd.read_csv(StringIO(resp.text))
+    except Exception as e:
+        st.warning(f"GitHub source unavailable ({url}): {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def fetch_vaastav_historical(season: str = "2024-25") -> pd.DataFrame:
+    """Fetch historical player data from the Vaastav FPL archive.
+       Provides baseline minutes and performance metrics per season."""
+    url = f"{VAASTAV}/{season}/players_raw.csv"
+    return fetch_github_csv(url)
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def fetch_olbauday_elo() -> pd.DataFrame:
+    """Fetch team Elo ratings from the Olbauday FPL-Core-Insights repo."""
+    url = f"{OLBAUDAY_BASE}/data/team_elo.csv"
+    return fetch_github_csv(url)
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def fetch_martgra_momentum() -> pd.DataFrame:
+    """Fetch player momentum trends from the Martgra time-series dataset."""
+    url = f"{MARTGRA_BASE}/data/player_momentum.csv"
+    return fetch_github_csv(url)
+
+
+# ============================================================================
+# Derived Data Structures
+# ============================================================================
+
+@st.cache_data(ttl=CACHE_TTL)
+def build_fixture_difficulty_map(fixtures_df: pd.DataFrame, teams_df: pd.DataFrame) -> Dict[int, Dict[int, int]]:
+    """Build a nested dict: {gameweek: {team_id: fdr}} for fast FDR lookups."""
+    if fixtures_df.empty or teams_df.empty:
+        return {}
+    fdr_map = {}
+    for _, row in fixtures_df.iterrows():
+        gw = row.get("event")
+        if gw is None:
+            continue
+        gw = int(gw)
+        if gw not in fdr_map:
+            fdr_map[gw] = {}
+        home_id = int(row["home_team_id"])
+        away_id = int(row["away_team_id"])
+        home_fdr = int(row.get("home_fdr", 3))
+        away_fdr = int(row.get("away_fdr", 3))
+        fdr_map[gw][home_id] = home_fdr
+        fdr_map[gw][away_id] = away_fdr
+    return fdr_map
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_current_gameweek() -> int:
+    """Determine the current active gameweek from bootstrap event data."""
+    data = fetch_bootstrap_static()
+    if not data:
+        return 1
+    events = data.get("events", [])
+    for ev in events:
+        if ev.get("is_current"):
+            return ev["id"]
+    return 1
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_squad_with_details(team_id: int, gameweek: int) -> pd.DataFrame:
+    """Merge a user's squad picks with full player data for a given GW."""
+    picks_data = get_user_picks(team_id, gameweek)
+    players_df = get_players_df()
+    if not picks_data or "picks" not in picks_data or players_df.empty:
+        return pd.DataFrame()
+    picks = picks_data["picks"]
+    picks_df = pd.DataFrame(picks)
+    merged = picks_df.merge(players_df, left_on="element", right_on="id", how="left")
+    merged = merged.sort_values("position")
+    return merged
+
+
+# ============================================================================
+# System Status Monitor
+# ============================================================================
+
+def get_data_status() -> Dict[str, str]:
+    """Quick connectivity check for all data sources.
+       Returns status dict for the Streamlit sidebar status panel."""
+    status = {}
+    try:
+        resp = requests.get(f"{FPL_BASE}/bootstrap-static/", timeout=5)
+        status["FPL API"] = "Connected" if resp.status_code == 200 else "Error"
+    except Exception:
+        status["FPL API"] = "Offline"
+    try:
+        resp = requests.get(f"{FPL_BASE}/fixtures/", timeout=5)
+        status["Fixtures"] = "Connected" if resp.status_code == 200 else "Error"
+    except Exception:
+        status["Fixtures"] = "Offline"
+    status["Cache"] = "Active (TTL=3600s)"
+    return status
