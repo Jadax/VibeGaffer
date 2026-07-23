@@ -59,51 +59,55 @@ APPEARANCE_POINTS = 2.0
 @st.cache_data(ttl=CACHE_TTL)
 def compute_player_form(player_id: int, n_games: int = 5) -> Dict[str, float]:
     """
-    Calculate a player's recent form over the last n_games.
-    Falls back to FPL bootstrap fields (form, points_per_game, minutes, total_points)
-    when GW-by-GW history is empty OR all zeros (pre-season carryover from last season).
+    Calculate a player's recent form. Uses FPL bootstrap fields as the
+    PRIMARY source (always current, always relevant). The element-summary
+    endpoint returns last season's data which is stale and misleading
+    for a new season's predictions.
+
+    Bootstrap fields used:
+      - 'form': FPL's own recent form metric (most predictive)
+      - 'points_per_game': season average points
+      - 'minutes': total minutes played
+      - 'total_points': total FPL points
+      - 'starts': number of starts
+      - 'now_cost': player price (used as value signal)
+
     Returns points per game, average minutes, number of starts, and total points.
     """
-    history = get_player_history(player_id)
-    if not history.empty:
-        recent = history.tail(n_games)
-        total_pts = recent["total_points"].sum() if "total_points" in recent.columns else 0
-        total_mins = recent["minutes"].sum() if "minutes" in recent.columns else 0
-        n = len(recent)
-        starts = int((recent["minutes"].ge(60)).sum()) if "minutes" in recent.columns else 0
-        # If the recent history has meaningful data (season has started), use it.
-        # The FPL API includes last season's history which is all zeros pre-season —
-        # detect that and fall through to bootstrap fallback.
-        if total_pts > 0 or total_mins > 0:
-            return {
-                "form_ppg": float(total_pts / max(n, 1)),
-                "minutes_avg": float(total_mins / max(n, 1)),
-                "starts": starts,
-                "total_points": int(total_pts)
-            }
-        # else: fall through to bootstrap fallback below
-
-    # Fallback: use FPL bootstrap fields for pre-season / no-history players
+    # Always use bootstrap data — it's always current and correctly reflects
+    # the player's expected performance for the upcoming season.
     players_df = get_players_df()
     if not players_df.empty:
         match = players_df[players_df["id"] == player_id]
         if not match.empty:
             row = match.iloc[0]
+            # Get FPL's 'form' (recent form metric, e.g. "5.5")
             try:
-                form_ppg = float(row.get("form", 0) or 0)
+                fpl_form = float(row.get("form", 0) or 0)
             except (ValueError, TypeError):
-                form_ppg = 0.0
+                fpl_form = 0.0
+            # Get points_per_game (season average)
             try:
                 ppg = float(row.get("points_per_game", 0) or 0)
             except (ValueError, TypeError):
                 ppg = 0.0
-            # Use the higher of 'form' (recent) and 'points_per_game' (season avg)
-            form_ppg = max(form_ppg, ppg)
+            # Use the higher of FPL form and season PPG
+            # FPL form is more recent and predictive for upcoming GWs
+            form_ppg = max(fpl_form, ppg)
+            if form_ppg == 0:
+                form_ppg = ppg  # Fallback to PPG if form is empty
+            # Get total minutes for minutes probability calculation
             try:
                 total_mins = int(row.get("minutes", 0) or 0)
             except (ValueError, TypeError):
                 total_mins = 0
-            minutes_avg = float(total_mins) / 38.0  # Approx across season
+            # Estimate average minutes per game
+            # Use max(1, total_mins/38) to avoid division by zero
+            games_played = max(1, int(row.get("starts", 0) or 0) + int(row.get("starts", 0) or 0))
+            minutes_avg = float(total_mins) / 38.0
+            # If player has very few minutes, estimate from starts
+            if total_mins == 0 and int(row.get("starts", 0) or 0) > 0:
+                minutes_avg = 75.0  # Assume ~75 min/start for active players
             try:
                 total_points = int(row.get("total_points", 0) or 0)
             except (ValueError, TypeError):
@@ -122,27 +126,11 @@ def compute_player_form(player_id: int, n_games: int = 5) -> Dict[str, float]:
 @st.cache_data(ttl=CACHE_TTL)
 def compute_momentum_score(player_id: int) -> float:
     """
-    Compute a weighted momentum score from last 3 GWs.
-    First attempts to use the Martgra momentum dataset;
-    falls back to a weighted sum of recent FPL points (weights: 0.5, 0.3, 0.2).
-    For pre-season, falls back to FPL's 'form' field from bootstrap.
+    Compute a momentum score. Uses FPL bootstrap 'form' field as the
+    primary source (always current). The element-summary history returns
+    last season's data which is stale for new-season predictions.
     """
-    momentum_df = fetch_martgra_momentum()
-    if not momentum_df.empty and "player_id" in momentum_df.columns:
-        row = momentum_df[momentum_df["player_id"] == player_id]
-        if not row.empty and "momentum" in row.columns:
-            return float(row.iloc[0]["momentum"])
-
-    # Fallback: weighted sum of last 3 gameweek points
-    history = get_player_history(player_id)
-    if not history.empty and len(history) >= 3:
-        last3 = history.tail(3)["total_points"].values if "total_points" in history.columns else [0, 0, 0]
-        # Skip if all zeros (pre-season carryover from last season)
-        if any(v > 0 for v in last3):
-            weights = [0.5, 0.3, 0.2]
-            return float(sum(v * w for v, w in zip(last3, weights)))
-
-    # Pre-season fallback: use FPL bootstrap 'form' as momentum proxy
+    # Use FPL bootstrap 'form' directly — it's FPL's own recent form metric
     players_df = get_players_df()
     if not players_df.empty:
         match = players_df[players_df["id"] == player_id]
@@ -151,7 +139,6 @@ def compute_momentum_score(player_id: int) -> float:
                 return float(match.iloc[0].get("form", 0) or 0)
             except (ValueError, TypeError):
                 pass
-
     return 0.0
 
 

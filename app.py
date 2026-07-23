@@ -421,6 +421,11 @@ def inject_css():
         padding: 16px;
         text-align: center;
         transition: all 0.3s ease;
+        height: 130px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
     }
     .chip-card.active {
         border-color: rgba(0,255,135,0.4);
