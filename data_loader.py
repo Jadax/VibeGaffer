@@ -14,6 +14,8 @@ import numpy as np
 import streamlit as st
 from io import StringIO
 from typing import Optional, Dict, Any
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # ---------------------------------------------------------------------------
 # API base URLs for all data sources
@@ -31,6 +33,45 @@ POSITION_MAP = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 
 
 # ============================================================================
+# Shared HTTP Session — User-Agent + Retry Logic
+# ============================================================================
+#
+# FPL occasionally blocks cloud-provider IPs (returning 503). The official
+# FPL web app sends a browser User-Agent, so we mimic that. The retry
+# adapter handles transient 5xx errors with exponential backoff.
+# ---------------------------------------------------------------------------
+
+def _build_session() -> requests.Session:
+    """Create a requests Session with browser User-Agent and retry logic."""
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive"
+    })
+    retry = Retry(
+        total=3,
+        backoff_factor=1.0,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["GET"]
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+# Module-level session — reused across calls
+_SESSION = _build_session()
+
+
+# ============================================================================
 # FPL Official API — Bootstrap Static
 # ============================================================================
 
@@ -39,7 +80,7 @@ def fetch_bootstrap_static() -> Dict[str, Any]:
     """Fetch the FPL bootstrap-static endpoint containing all players, teams,
        gameweek info, and meta-data for the current season."""
     try:
-        resp = requests.get(f"{FPL_BASE}/bootstrap-static/", timeout=15)
+        resp = _SESSION.get(f"{FPL_BASE}/bootstrap-static/", timeout=20)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -88,7 +129,7 @@ def get_teams_df() -> pd.DataFrame:
 def get_fixtures_df() -> pd.DataFrame:
     """Fetch all fixtures for the current season with difficulty ratings."""
     try:
-        resp = requests.get(f"{FPL_BASE}/fixtures/", timeout=15)
+        resp = _SESSION.get(f"{FPL_BASE}/fixtures/", timeout=15)
         resp.raise_for_status()
         fixtures = resp.json()
         df = pd.DataFrame(fixtures)
@@ -119,7 +160,7 @@ def get_user_team_info(team_id: int) -> Dict[str, Any]:
     if not team_id or team_id <= 0:
         return {}
     try:
-        resp = requests.get(f"{FPL_BASE}/entry/{team_id}/", timeout=15)
+        resp = _SESSION.get(f"{FPL_BASE}/entry/{team_id}/", timeout=15)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -133,7 +174,7 @@ def get_user_picks(team_id: int, gameweek: int) -> Dict[str, Any]:
     if not team_id or team_id <= 0:
         return {}
     try:
-        resp = requests.get(f"{FPL_BASE}/entry/{team_id}/event/{gameweek}/picks/", timeout=15)
+        resp = _SESSION.get(f"{FPL_BASE}/entry/{team_id}/event/{gameweek}/picks/", timeout=15)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -149,7 +190,7 @@ def get_user_picks(team_id: int, gameweek: int) -> Dict[str, Any]:
 def get_player_history(player_id: int) -> pd.DataFrame:
     """Fetch a player's historical GW-by-GW performance data."""
     try:
-        resp = requests.get(f"{FPL_BASE}/element-summary/{player_id}/", timeout=15)
+        resp = _SESSION.get(f"{FPL_BASE}/element-summary/{player_id}/", timeout=15)
         resp.raise_for_status()
         data = resp.json()
         if "history" in data and data["history"]:
@@ -163,7 +204,7 @@ def get_player_history(player_id: int) -> pd.DataFrame:
 def get_upcoming_fixtures_for_player(player_id: int, n_fixtures: int = 5) -> pd.DataFrame:
     """Fetch a player's upcoming fixtures from the FPL element-summary endpoint."""
     try:
-        resp = requests.get(f"{FPL_BASE}/element-summary/{player_id}/", timeout=15)
+        resp = _SESSION.get(f"{FPL_BASE}/element-summary/{player_id}/", timeout=15)
         resp.raise_for_status()
         data = resp.json()
         if "fixtures" in data and data["fixtures"]:
@@ -183,7 +224,7 @@ def fetch_github_csv(url: str) -> pd.DataFrame:
     """Generic fetcher for CSV files hosted on GitHub raw content URLs.
        Returns empty DataFrame on failure with a warning."""
     try:
-        resp = requests.get(url, timeout=20)
+        resp = _SESSION.get(url, timeout=20)
         resp.raise_for_status()
         return pd.read_csv(StringIO(resp.text))
     except Exception as e:
@@ -274,7 +315,7 @@ def get_squad_with_details(team_id: int, gameweek: int) -> pd.DataFrame:
 def fetch_live_data(gameweek: int) -> pd.DataFrame:
     """Fetch live GW element data (transfers, captain %, live points)."""
     try:
-        resp = requests.get(f"{FPL_BASE}/event/{gameweek}/live/", timeout=10)
+        resp = _SESSION.get(f"{FPL_BASE}/event/{gameweek}/live/", timeout=10)
         resp.raise_for_status()
         data = resp.json()
         if "elements" not in data:
@@ -399,12 +440,12 @@ def get_data_status() -> Dict[str, str]:
        Returns status dict for the Streamlit sidebar status panel."""
     status = {}
     try:
-        resp = requests.get(f"{FPL_BASE}/bootstrap-static/", timeout=5)
+        resp = _SESSION.get(f"{FPL_BASE}/bootstrap-static/", timeout=5)
         status["FPL API"] = "Connected" if resp.status_code == 200 else "Error"
     except Exception:
         status["FPL API"] = "Offline"
     try:
-        resp = requests.get(f"{FPL_BASE}/fixtures/", timeout=5)
+        resp = _SESSION.get(f"{FPL_BASE}/fixtures/", timeout=5)
         status["Fixtures"] = "Connected" if resp.status_code == 200 else "Error"
     except Exception:
         status["Fixtures"] = "Offline"

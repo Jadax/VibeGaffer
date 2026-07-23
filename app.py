@@ -58,6 +58,18 @@ def inject_css():
     /* Full page dark bg */
     .stApp { background: radial-gradient(ellipse at top, #0f0f23 0%, #08080f 70%); }
 
+    /* ---- Hide Streamlit chrome (top bar, GitHub link, Share, etc.) ---- */
+    #MainMenu { visibility: hidden !important; }
+    header [data-testid="stToolbar"] { display: none !important; }
+    [data-testid="stToolbar"] { display: none !important; }
+    [data-testid="stDecoration"] { display: none !important; }
+    [data-testid="stStatusWidget"] { display: none !important; }
+    .viewerBadge_link__qRIco,
+    .viewerBadge_container__r5tak,
+    [class*="viewerBadge"] { display: none !important; }
+    footer { visibility: hidden !important; }
+    [data-testid="stFooter"] { display: none !important; }
+
     /* Sidebar */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0c0c1d 0%, #08080f 100%);
