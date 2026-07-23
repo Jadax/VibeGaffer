@@ -60,24 +60,58 @@ APPEARANCE_POINTS = 2.0
 def compute_player_form(player_id: int, n_games: int = 5) -> Dict[str, float]:
     """
     Calculate a player's recent form over the last n_games.
+    Falls back to FPL bootstrap fields (form, points_per_game, minutes, total_points)
+    when GW-by-GW history is empty (pre-season or new signups).
     Returns points per game, average minutes, number of starts, and total points.
     """
     history = get_player_history(player_id)
-    if history.empty:
-        return {"form_ppg": 0.0, "minutes_avg": 0.0, "starts": 0, "total_points": 0}
+    if not history.empty:
+        recent = history.tail(n_games)
+        total_pts = recent["total_points"].sum() if "total_points" in recent.columns else 0
+        total_mins = recent["minutes"].sum() if "minutes" in recent.columns else 0
+        n = len(recent)
+        starts = int((recent["minutes"].ge(60)).sum()) if "minutes" in recent.columns else 0
+        return {
+            "form_ppg": float(total_pts / max(n, 1)),
+            "minutes_avg": float(total_mins / max(n, 1)),
+            "starts": starts,
+            "total_points": int(total_pts)
+        }
 
-    recent = history.tail(n_games)
-    total_pts = recent["total_points"].sum() if "total_points" in recent.columns else 0
-    total_mins = recent["minutes"].sum() if "minutes" in recent.columns else 0
-    n = len(recent)
-    starts = int((recent["minutes"].ge(60)).sum()) if "minutes" in recent.columns else 0
+    # Fallback: use FPL bootstrap fields for pre-season / no-history players
+    players_df = get_players_df()
+    if not players_df.empty:
+        match = players_df[players_df["id"] == player_id]
+        if not match.empty:
+            row = match.iloc[0]
+            try:
+                form_ppg = float(row.get("form", 0) or 0)
+            except (ValueError, TypeError):
+                form_ppg = 0.0
+            try:
+                ppg = float(row.get("points_per_game", 0) or 0)
+            except (ValueError, TypeError):
+                ppg = 0.0
+            # Use the higher of 'form' (recent) and 'points_per_game' (season avg)
+            form_ppg = max(form_ppg, ppg)
+            try:
+                total_mins = int(row.get("minutes", 0) or 0)
+            except (ValueError, TypeError):
+                total_mins = 0
+            minutes_avg = float(total_mins) / 38.0  # Approx across season
+            try:
+                total_points = int(row.get("total_points", 0) or 0)
+            except (ValueError, TypeError):
+                total_points = 0
+            starts = int(row.get("starts", 0) or 0)
+            return {
+                "form_ppg": form_ppg,
+                "minutes_avg": minutes_avg,
+                "starts": starts,
+                "total_points": total_points
+            }
 
-    return {
-        "form_ppg": float(total_pts / max(n, 1)),
-        "minutes_avg": float(total_mins / max(n, 1)),
-        "starts": starts,
-        "total_points": int(total_pts)
-    }
+    return {"form_ppg": 0.0, "minutes_avg": 0.0, "starts": 0, "total_points": 0}
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -86,6 +120,7 @@ def compute_momentum_score(player_id: int) -> float:
     Compute a weighted momentum score from last 3 GWs.
     First attempts to use the Martgra momentum dataset;
     falls back to a weighted sum of recent FPL points (weights: 0.5, 0.3, 0.2).
+    For pre-season, falls back to FPL's 'form' field from bootstrap.
     """
     momentum_df = fetch_martgra_momentum()
     if not momentum_df.empty and "player_id" in momentum_df.columns:
@@ -95,13 +130,22 @@ def compute_momentum_score(player_id: int) -> float:
 
     # Fallback: weighted sum of last 3 gameweek points
     history = get_player_history(player_id)
-    if history.empty or len(history) < 3:
-        return 0.0
+    if not history.empty and len(history) >= 3:
+        last3 = history.tail(3)["total_points"].values if "total_points" in history.columns else [0, 0, 0]
+        weights = [0.5, 0.3, 0.2]
+        return float(sum(v * w for v, w in zip(last3, weights)))
 
-    last3 = history.tail(3)["total_points"].values if "total_points" in history.columns else [0, 0, 0]
-    weights = [0.5, 0.3, 0.2]
-    momentum = sum(v * w for v, w in zip(last3, weights))
-    return float(momentum)
+    # Pre-season fallback: use FPL bootstrap 'form' as momentum proxy
+    players_df = get_players_df()
+    if not players_df.empty:
+        match = players_df[players_df["id"] == player_id]
+        if not match.empty:
+            try:
+                return float(match.iloc[0].get("form", 0) or 0)
+            except (ValueError, TypeError):
+                pass
+
+    return 0.0
 
 
 # ============================================================================
