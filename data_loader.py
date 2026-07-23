@@ -323,8 +323,11 @@ def build_fixture_difficulty_map(fixtures_df: pd.DataFrame, teams_df: pd.DataFra
             fdr_map[gw] = {}
         home_id = int(row["home_team_id"])
         away_id = int(row["away_team_id"])
-        home_fdr = int(row.get("home_fdr", 3))
-        away_fdr = int(row.get("away_fdr", 3))
+        # FDR can be None for pre-season fixtures — default to 3 (neutral)
+        home_raw = row.get("home_fdr")
+        away_raw = row.get("away_fdr")
+        home_fdr = int(home_raw) if home_raw is not None and not pd.isna(home_raw) else 3
+        away_fdr = int(away_raw) if away_raw is not None and not pd.isna(away_raw) else 3
         fdr_map[gw][home_id] = home_fdr
         fdr_map[gw][away_id] = away_fdr
     return fdr_map
@@ -469,7 +472,9 @@ def build_fixture_ticker(start_gw: int, n_gws: int = 8) -> pd.DataFrame:
                 continue
             fix = fix.iloc[0]
             is_home = int(fix["home_team_id"]) == tid
-            fdr = int(fix["home_fdr"]) if is_home else int(fix["away_fdr"])
+            # FDR can be None for pre-season fixtures — default to 3 (neutral)
+            raw_fdr = fix["home_fdr"] if is_home else fix["away_fdr"]
+            fdr = int(raw_fdr) if raw_fdr is not None and not pd.isna(raw_fdr) else 3
             opp_id = int(fix["away_team_id"]) if is_home else int(fix["home_team_id"])
             opp_name = ""
             opp_row = teams_df[teams_df["id"] == opp_id]

@@ -58,7 +58,7 @@ def inject_css():
     /* Full page dark bg */
     .stApp { background: radial-gradient(ellipse at top, #0f0f23 0%, #08080f 70%); }
 
-    /* ---- Hide Streamlit chrome (top bar, GitHub link, Share, etc.) ---- */
+    /* ---- Hide Streamlit chrome (top bar, GitHub link, Share, Manage app, etc.) ---- */
     #MainMenu { visibility: hidden !important; }
     header [data-testid="stToolbar"] { display: none !important; }
     [data-testid="stToolbar"] { display: none !important; }
@@ -69,6 +69,11 @@ def inject_css():
     [class*="viewerBadge"] { display: none !important; }
     footer { visibility: hidden !important; }
     [data-testid="stFooter"] { display: none !important; }
+    /* Hide the "Manage app" button shown on Streamlit Cloud error pages */
+    [data-testid="stAppDeployButton"] { display: none !important; }
+    [data-testid="baseButton-headerNoPadding"] { display: none !important; }
+    .stAppDeployButton { display: none !important; }
+    a[href*="streamlit.io"] { display: none !important; }
 
     /* Sidebar */
     [data-testid="stSidebar"] {

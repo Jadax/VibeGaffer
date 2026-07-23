@@ -313,7 +313,9 @@ def compute_multi_gw_xp(
         gw = int(fix["event"])
         is_home = int(fix["home_team_id"]) == player_team_id
         opp_id = int(fix["away_team_id"]) if is_home else int(fix["home_team_id"])
-        fdr = int(fix["home_fdr"]) if is_home else int(fix["away_fdr"])
+        # FDR can be None for fixtures before the season starts — default to 3 (neutral)
+        raw_fdr = fix["home_fdr"] if is_home else fix["away_fdr"]
+        fdr = int(raw_fdr) if raw_fdr is not None and not pd.isna(raw_fdr) else 3
 
         result = compute_fixture_xp(player_row, opp_id, is_home, fdr, team_elo, player_team_id)
 
