@@ -68,9 +68,30 @@ VG.fetch = async (url, label) => {
   throw new Error(label + " failed: " + (lastErr?.message || "all routes timed out"));
 };
 
-// ── Data Loading ──────────────────────────────────────────────────────────
-VG.loadBootstrap = () => VG.fetch(VG.FPL + "/bootstrap-static/", "bootstrap");
-VG.loadFixtures = () => VG.fetch(VG.FPL + "/fixtures/", "fixtures");
+// ── Data Loading (local cache first, API fallback) ──────────────────────────
+VG.loadBootstrap = async () => {
+  // 1. Try local cache (committed by GitHub Action every 15 min)
+  try {
+    const r = await fetch("data/bootstrap.json", { cache: "no-cache" });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.elements) return j;
+    }
+  } catch {}
+  // 2. Fall back to live API via proxies
+  return VG.fetch(VG.FPL + "/bootstrap-static/", "bootstrap");
+};
+
+VG.loadFixtures = async () => {
+  try {
+    const r = await fetch("data/fixtures.json", { cache: "no-cache" });
+    if (r.ok) {
+      const j = await r.json();
+      if (Array.isArray(j) && j.length > 0) return j;
+    }
+  } catch {}
+  return VG.fetch(VG.FPL + "/fixtures/", "fixtures");
+};
 
 VG.loadSquad = async (tid, gw) => {
   const [info, picks] = await Promise.all([

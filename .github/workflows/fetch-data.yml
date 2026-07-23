@@ -1,0 +1,60 @@
+name: Fetch FPL Data
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # Every 15 minutes
+  workflow_dispatch:          # Manual trigger from GitHub UI
+  push:
+    paths:
+      - '.github/workflows/fetch-data.yml'  # Rerun when workflow changes
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch FPL bootstrap-static
+        run: |
+          mkdir -p docs/data
+          curl -sL -o docs/data/bootstrap.json \
+            -H "User-Agent: Mozilla/5.0 (compatible; VibeGaffer/1.0)" \
+            "https://fantasy.premierleague.com/api/bootstrap-static/" 2>/dev/null || \
+          curl -sL -o docs/data/bootstrap.json \
+            "https://corsproxy.io/?$(printf '%s' 'https://fantasy.premierleague.com/api/bootstrap-static/')" 2>/dev/null || \
+          curl -sL -o docs/data/bootstrap.json \
+            "https://api.allorigins.win/raw?url=https%3A%2F%2Ffantasy.premierleague.com%2Fapi%2Fbootstrap-static%2F" 2>/dev/null || true
+
+      - name: Fetch FPL fixtures
+        run: |
+          curl -sL -o docs/data/fixtures.json \
+            -H "User-Agent: Mozilla/5.0 (compatible; VibeGaffer/1.0)" \
+            "https://fantasy.premierleague.com/api/fixtures/" 2>/dev/null || \
+          curl -sL -o docs/data/fixtures.json \
+            "https://corsproxy.io/?$(printf '%s' 'https://fantasy.premierleague.com/api/fixtures/')" 2>/dev/null || true
+
+      - name: Validate JSON
+        run: |
+          python3 -c "
+          import json, sys
+          for f in ['docs/data/bootstrap.json', 'docs/data/fixtures.json']:
+            with open(f) as fh:
+              data = json.load(fh)
+              if 'elements' in data: print(f'OK: {len(data[\"elements\"])} players')
+              elif isinstance(data, list): print(f'OK: {len(data)} fixtures')
+              else: print(f'WARN: unexpected format in {f}')
+          "
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "data: auto-fetch FPL data [skip ci]"
+            git push
+          fi
