@@ -77,7 +77,10 @@ VG.loadBootstrap = async () => {
       const j = await r.json();
       if (j && j.elements) return j;
     }
-  } catch {}
+    console.warn("[VG] Local bootstrap.json returned", r.status, "- falling back to API");
+  } catch(e) {
+    console.warn("[VG] Local bootstrap.json fetch failed:", e.message, "- falling back to API");
+  }
   // 2. Fall back to live API via proxies
   return VG.fetch(VG.FPL + "/bootstrap-static/", "bootstrap");
 };
@@ -89,7 +92,10 @@ VG.loadFixtures = async () => {
       const j = await r.json();
       if (Array.isArray(j) && j.length > 0) return j;
     }
-  } catch {}
+    console.warn("[VG] Local fixtures.json returned", r.status, "- falling back to API");
+  } catch(e) {
+    console.warn("[VG] Local fixtures.json fetch failed:", e.message, "- falling back to API");
+  }
   return VG.fetch(VG.FPL + "/fixtures/", "fixtures");
 };
 
@@ -127,7 +133,7 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr, eloDiff) => {
   const fplForm = Math.max(form, ppg, 0.5);
   const mins = parseInt(p.minutes || "0");
   const starts = parseInt(p.starts || "0");
-  const minsAvg = mins > 0 ? mins / Math.max(starts, 19) : (starts > 0 ? 75 : 0);
+  const minsAvg = mins > 0 ? mins / Math.max(starts, 1) : (starts > 0 ? 75 : 0);
   const minsProb = minsAvg >= 80 ? 0.95 : minsAvg >= 60 ? 0.80 : minsAvg >= 45 ? 0.60 : minsAvg >= 30 ? 0.40 : minsAvg >= 15 ? 0.20 : 0.50;
 
   const fdrMult = VG.FDR_MULT[fdr] || 1.0;
@@ -178,7 +184,7 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures, eloMap) => {
   return {
     totalXP: +totalXP.toFixed(2),
     gwDetails,
-    info: { id: p.id, name: p.first_name + " " + p.second_name, position: VG.POSITIONS[p.element_type], teamId, price: p.now_cost / 10, form: Math.max(form, ppg, 0), xpPerPrice: 0 }
+    info: { id: p.id, name: p.first_name + " " + p.second_name, position: VG.POSITIONS[p.element_type], teamId, price: p.now_cost / 10, form: Math.max(form, ppg, 0), xpPerPrice: 0, totalXP: +totalXP.toFixed(2) }
   };
 };
 
@@ -242,6 +248,39 @@ VG.optimizeDraft = (players, budget = 100) => {
     squad.push(p);
     spent += p.price;
     clubCounts[club] = (clubCounts[club] || 0) + 1;
+  }
+
+  // Phase 3: upgrade cheapest players with remaining budget — maximize total xP
+  let remaining = +(budget - spent).toFixed(1);
+  if (remaining > 0.5) {
+    for (let pass = 0; pass < 3; pass++) {
+      if (remaining < 0.5) break;
+      for (let i = squad.length - 1; i >= 0 && remaining > 0.5; i--) {
+        const cur = squad[i];
+        const curPos = cur.positionId || parseInt(VG.players[cur.id]?.element_type);
+        const curTotalXP = cur.totalXP || (cur.xpPerPrice * cur.price) || 0;
+        let bestCand = null, bestGain = 0;
+        for (const p of sorted) {
+          if (squad.includes(p)) continue;
+          const candPos = p.positionId || parseInt(VG.players[p.id]?.element_type);
+          if (candPos !== curPos) continue;
+          const candTotalXP = p.totalXP || (p.xpPerPrice * p.price) || 0;
+          const costDiff = +(p.price - cur.price).toFixed(1);
+          if (costDiff <= 0 || costDiff > remaining) continue;
+          const candClub = p.teamId || VG.players[p.id]?.team;
+          const clubCount = squad.filter((s, j) => j !== i && (s.teamId || VG.players[s.id]?.team) === candClub).length;
+          if (clubCount >= 3) continue;
+          const gain = candTotalXP - curTotalXP;
+          if (gain > bestGain) { bestGain = gain; bestCand = p; }
+        }
+        if (bestCand) {
+          const costDiff = +(bestCand.price - cur.price).toFixed(1);
+          squad[i] = bestCand;
+          remaining -= costDiff;
+          spent += costDiff;
+        }
+      }
+    }
   }
 
   // Select starting XI

@@ -17,7 +17,7 @@
     <h1>⚽ VibeGaffer</h1>
     <p><span style="color:#7c3aed;font-weight:700;">Astraiva</span> · Tushant Sharma · FPL Intelligence Engine</p>
   </div>
-  <div><span class="badge pulse-glow">v2.2 LIVE</span></div>
+  <div><span class="badge pulse-glow">v2.3 LIVE</span></div>
 </div>
 
 <div class="container">
@@ -103,7 +103,7 @@
 </div>
 
 <div class="footer">
-  <strong>VibeGaffer</strong> v2.2 · &copy; 2025 <strong style="color:#7c3aed;">Astraiva</strong> · Built by <strong style="color:#ddd;">Tushant Sharma</strong>
+  <strong>VibeGaffer</strong> v2.3 · &copy; 2025 <strong style="color:#7c3aed;">Astraiva</strong> · Built by <strong style="color:#ddd;">Tushant Sharma</strong>
 </div>
 
 <script>
@@ -117,8 +117,8 @@ VG.switchTab = (name) => {
 
 VG.init = async () => {
   const el = id => document.getElementById(id);
-  // Populate GW selector
   VG._retries = 0;
+  el("status").innerHTML = '<span style="color:#ffc107;">●</span> Loading data...';
   try {
     VG.bootstrapData = await VG.loadBootstrap();
     VG.buildMaps(VG.bootstrapData);
@@ -130,9 +130,10 @@ VG.init = async () => {
     }
     el("status").innerHTML = '<span style="color:#00ff87;">●</span> ' + VG.bootstrapData.elements.length + ' players · GW' + VG.currentGW;
   } catch(e) {
+    console.error("[VG] init failed:", e);
     VG._retries++;
     const secs = Math.min(VG._retries * 3, 30);
-    el("status").innerHTML = '<span style="color:#ff4757;">●</span> API unreachable (attempt ' + VG._retries + ') — retrying in ' + secs + 's';
+    el("status").innerHTML = '<span style="color:#ff4757;">●</span> Load failed (attempt ' + VG._retries + ') — retrying in ' + secs + 's';
     setTimeout(VG.init, secs * 1000);
   }
 };
@@ -232,8 +233,8 @@ VG.run = async () => {
       const c = result.starting[0];
       const v = result.starting[1];
       html += `<div class="section-title">🏅 Captaincy</div><div class="captain-row">`;
-      html += `<div class="captain-card pulse-glow"><div class="cap-tag" style="color:#ffc107;">★ CAPTAIN</div><div class="cap-name">${c.name}</div><div class="cap-stat">${c.position || ""} · xP <span style="color:#00ff87;">${(c.xpPerPrice || 0).toFixed(1)}</span></div></div>`;
-      html += `<div class="vice-card"><div class="cap-tag" style="color:#06b6d4;">☆ VICE</div><div class="cap-name">${v.name}</div><div class="cap-stat">${v.position || ""} · xP <span style="color:#06b6d4;">${(v.xpPerPrice || 0).toFixed(1)}</span></div></div>`;
+      html += `<div class="captain-card pulse-glow"><div class="cap-tag" style="color:#ffc107;">★ CAPTAIN</div><div class="cap-name">${c.name}</div><div class="cap-stat">${c.position || ""} · xP <span style="color:#00ff87;">${(c.totalXP || c.xpPerPrice * c.price || 0).toFixed(1)}</span> · xP/£ <span style="color:#00cc6a;">${(c.xpPerPrice || 0).toFixed(1)}</span></div></div>`;
+      html += `<div class="vice-card"><div class="cap-tag" style="color:#06b6d4;">☆ VICE</div><div class="cap-name">${v.name}</div><div class="cap-stat">${v.position || ""} · xP <span style="color:#06b6d4;">${(v.totalXP || v.xpPerPrice * v.price || 0).toFixed(1)}</span> · xP/£ <span style="color:#0891b2;">${(v.xpPerPrice || 0).toFixed(1)}</span></div></div>`;
       html += `</div>`;
     }
 
@@ -272,6 +273,7 @@ VG.run = async () => {
     VG.preloadTabs(gw, horizon);
 
   } catch(e) {
+    console.error("[VG] run failed:", e);
     VG._runRetries = (VG._runRetries || 0) + 1;
     if (VG._runRetries < 3) {
       el("squadContent").innerHTML = `<div class="vg-loader"><div class="vg-loader-spinner"></div><div class="vg-loader-text">Retrying... (attempt ${VG._runRetries}/3)</div></div>`;
@@ -285,40 +287,55 @@ VG.run = async () => {
 
 // ── Preload other tabs ────────────────────────────────────────────────────
 VG.preloadTabs = async (gw, horizon) => {
-  // Fixtures
-  const tickerData = VG.buildFixtureTicker(gw, 8, VG.allFixtures);
-  document.getElementById("fixtureContent").innerHTML = VG.render.ticker(tickerData, gw, 8);
-
-  // Price changes
+  // Fixtures (synchronous, always works)
   try {
-    const risks = await VG.getPriceRisk();
-    let ph = '<div class="price-grid"><div><h4 style="color:#00ff87;">🔺 Likely Risers</h4>';
-    const rising = risks.filter(r => r.risk === "rising" || r.risk === "likely_rise").slice(0, 10);
-    const falling = risks.filter(r => r.risk === "falling" || r.risk === "likely_fall").slice(0, 10);
-    if (rising.length === 0) ph += '<p style="color:#777;">No clear risers</p>';
-    rising.forEach(r => {
-      ph += `<div class="price-rise-card"><strong>${r.name}</strong> <span class="risk-badge rise">${r.risk.replace('_',' ')}</span><br><span style="color:#777;font-size:0.7rem;">${r.pos} · £${r.price.toFixed(1)}m · +${(r.net||0).toLocaleString()} net</span></div>`;
-    });
-    ph += '</div><div><h4 style="color:#ff4757;">🔻 Likely Fallers</h4>';
-    if (falling.length === 0) ph += '<p style="color:#777;">No clear fallers</p>';
-    falling.forEach(r => {
-      ph += `<div class="price-fall-card"><strong>${r.name}</strong> <span class="risk-badge fall">${r.risk.replace('_',' ')}</span><br><span style="color:#777;font-size:0.7rem;">${r.pos} · £${r.price.toFixed(1)}m · ${(r.net||0).toLocaleString()} net</span></div>`;
-    });
-    ph += '</div></div>';
-    document.getElementById("priceContent").innerHTML = ph;
+    const tickerData = VG.buildFixtureTicker(gw, 8, VG.allFixtures);
+    document.getElementById("fixtureContent").innerHTML = VG.render.ticker(tickerData, gw, 8);
   } catch(e) {
+    console.warn("[VG] Fixture ticker failed:", e);
+    document.getElementById("fixtureContent").innerHTML = '<p style="color:#777;">Fixture data unavailable</p>';
+  }
+
+  // Price changes — skip if pre-season (no live GW data)
+  try {
+    const isPreseason = !VG.gwData || VG.gwData.every(g => !g.is_current);
+    if (isPreseason) {
+      document.getElementById("priceContent").innerHTML = '<p style="color:#777;">Price changes available once the season starts.</p>';
+    } else {
+      const risks = await VG.getPriceRisk();
+      let ph = '<div class="price-grid"><div><h4 style="color:#00ff87;">🔺 Likely Risers</h4>';
+      const rising = risks.filter(r => r.risk === "rising" || r.risk === "likely_rise").slice(0, 10);
+      const falling = risks.filter(r => r.risk === "falling" || r.risk === "likely_fall").slice(0, 10);
+      if (rising.length === 0) ph += '<p style="color:#777;">No clear risers</p>';
+      rising.forEach(r => {
+        ph += `<div class="price-rise-card"><strong>${r.name}</strong> <span class="risk-badge rise">${r.risk.replace('_',' ')}</span><br><span style="color:#777;font-size:0.7rem;">${r.pos} · £${r.price.toFixed(1)}m · +${(r.net||0).toLocaleString()} net</span></div>`;
+      });
+      ph += '</div><div><h4 style="color:#ff4757;">🔻 Likely Fallers</h4>';
+      if (falling.length === 0) ph += '<p style="color:#777;">No clear fallers</p>';
+      falling.forEach(r => {
+        ph += `<div class="price-fall-card"><strong>${r.name}</strong> <span class="risk-badge fall">${r.risk.replace('_',' ')}</span><br><span style="color:#777;font-size:0.7rem;">${r.pos} · £${r.price.toFixed(1)}m · ${(r.net||0).toLocaleString()} net</span></div>`;
+      });
+      ph += '</div></div>';
+      document.getElementById("priceContent").innerHTML = ph;
+    }
+  } catch(e) {
+    console.warn("[VG] Price risk failed:", e);
     document.getElementById("priceContent").innerHTML = '<p style="color:#777;">Price data unavailable (try during live GW)</p>';
   }
 
   // Differentials
-  if (VG.allXP) {
-    const diffs = VG.allXP.filter(p => (p.ownership || 100) <= 5).sort((a, b) => (b.xpPerPrice || 0) - (a.xpPerPrice || 0)).slice(0, 20);
-    let dh = '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>xP</th><th>xP/£m</th><th>Own%</th></tr>';
-    diffs.forEach(p => {
-      dh += `<tr><td style="color:#fff;">${p.name}</td><td>${p.position}</td><td>£${p.price.toFixed(1)}m</td><td>${p.totalXP || (p.xpPerPrice||0).toFixed(1)}</td><td>${(p.xpPerPrice||0).toFixed(2)}</td><td>${(p.ownership||0).toFixed(1)}%</td></tr>`;
-    });
-    dh += '</table>';
-    document.getElementById("diffContent").innerHTML = dh;
+  try {
+    if (VG.allXP) {
+      const diffs = VG.allXP.filter(p => (p.ownership || 100) <= 5).sort((a, b) => (b.xpPerPrice || 0) - (a.xpPerPrice || 0)).slice(0, 20);
+      let dh = '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>xP</th><th>xP/£m</th><th>Own%</th></tr>';
+      diffs.forEach(p => {
+        dh += `<tr><td style="color:#fff;">${p.name}</td><td>${p.position}</td><td>£${p.price.toFixed(1)}m</td><td>${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice||0).toFixed(2)}</td><td>${(p.ownership||0).toFixed(1)}%</td></tr>`;
+      });
+      dh += '</table>';
+      document.getElementById("diffContent").innerHTML = dh;
+    }
+  } catch(e) {
+    console.warn("[VG] Differentials failed:", e);
   }
 };
 
