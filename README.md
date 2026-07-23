@@ -90,19 +90,49 @@ pip install -r requirements.txt
 
 ## Running the Application
 
-### Terminal 1: Start the Backend (FastAPI)
+### Option 1: Streamlit Cloud (Free, Instant Domain — Recommended)
 
+1. Push this repo to your GitHub
+2. Go to **[share.streamlit.io](https://share.streamlit.io)** → sign in with GitHub
+3. Click **"New app"** → repo `Jadax/VibeGaffer` → branch `main` → main file `app.py`
+4. Click **Deploy** — your app is live at `https://vibegaffer.streamlit.app`
+
+Or from this repo directly:
+[![Deploy to Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/deploy?repository=Jadax/VibeGaffer&branch=main&mainModule=app.py)
+
+> **Custom domain**: In Streamlit Cloud app settings, add your own domain (e.g. `vibegaffer.com`) and set a CNAME record to `custom-domains.streamlit.app`.
+
+### Option 2: Local (Development)
+
+**Terminal 1 — Backend:**
 ```bash
 uvicorn backend:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Terminal 2: Start the Frontend (Streamlit)
-
+**Terminal 2 — Frontend:**
 ```bash
 streamlit run app.py --server.port 8501
 ```
 
 Then open **http://localhost:8501** in your browser.
+
+### Option 3: Docker (Any Cloud — Railway, Render, Fly.io, AWS)
+
+```bash
+docker compose up --build -d
+# Frontend → http://localhost:8501
+# Backend  → http://localhost:8000
+```
+
+Works on any Docker host (Railway, Render, Fly.io, DigitalOcean, AWS ECS) with custom domain support.
+
+### Option 4: Instant Public URL via ngrok
+
+```bash
+pip install pyngrok
+ngrok http 8501
+# Gives you a public URL like https://abc123.ngrok.io
+```
 
 ---
 
