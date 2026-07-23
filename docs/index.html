@@ -17,7 +17,7 @@
     <h1>⚽ VibeGaffer</h1>
     <p><span style="color:#7c3aed;font-weight:700;">Astraiva</span> · Tushant Sharma · FPL Intelligence Engine</p>
   </div>
-  <div><span class="badge pulse-glow">v2.0 LIVE</span></div>
+  <div><span class="badge pulse-glow">v2.1 LIVE</span></div>
 </div>
 
 <div class="container">
@@ -103,7 +103,7 @@
 </div>
 
 <div class="footer">
-  <strong>VibeGaffer</strong> v2.0 · &copy; 2025 <strong style="color:#7c3aed;">Astraiva</strong> · Built by <strong style="color:#ddd;">Tushant Sharma</strong>
+  <strong>VibeGaffer</strong> v2.1 · &copy; 2025 <strong style="color:#7c3aed;">Astraiva</strong> · Built by <strong style="color:#ddd;">Tushant Sharma</strong>
 </div>
 
 <script>
@@ -272,7 +272,14 @@ VG.run = async () => {
     VG.preloadTabs(gw, horizon);
 
   } catch(e) {
-    el("squadContent").innerHTML = `<div style="background:rgba(255,71,87,0.1);border:1px solid rgba(255,71,87,0.3);border-radius:12px;padding:20px;text-align:center;color:#ff4757;"><strong>Error:</strong> ${e.message}<br><span style="font-size:0.8rem;color:#aaa;">Check your internet and try again.</span></div>`;
+    VG._runRetries = (VG._runRetries || 0) + 1;
+    if (VG._runRetries < 3) {
+      el("squadContent").innerHTML = `<div class="vg-loader"><div class="vg-loader-spinner"></div><div class="vg-loader-text">Retrying... (attempt ${VG._runRetries}/3)</div></div>`;
+      setTimeout(() => VG.run(), 3000);
+    } else {
+      el("squadContent").innerHTML = `<div style="background:rgba(255,71,87,0.1);border:1px solid rgba(255,71,87,0.3);border-radius:12px;padding:20px;text-align:center;color:#ff4757;"><strong>Error:</strong> ${e.message}<br><span style="font-size:0.8rem;color:#aaa;">Check your internet and try again.</span></div>`;
+      VG._runRetries = 0;
+    }
   }
 };
 

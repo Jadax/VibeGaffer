@@ -27,8 +27,9 @@ VG.cache = {
   set(k, d) { localStorage.setItem("vg_" + k, JSON.stringify({ d, t: Date.now() })); }
 };
 
-// ── Fetcher (browser direct + CORS proxy fallback) ─────────────────────────
+// ── Fetcher (direct first, then CORS proxy fallback) ─────────────────────────
 VG.PROXIES = [
+  { fn: (url) => url, name: "direct" },
   { fn: (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url), name: "allorigins" },
   { fn: (url) => "https://corsproxy.io/?" + encodeURIComponent(url), name: "corsproxy" },
   { fn: (url) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url), name: "codetabs" },
@@ -37,23 +38,34 @@ VG.PROXIES = [
 VG.fetch = async (url, label) => {
   const c = VG.cache.get(url);
   if (c) return c;
-  document.getElementById("status").innerHTML = '<span style="color:#ffc107;">●</span> Fetching ' + (label || "data") + '...';
+  const setStatus = (t) => document.getElementById("status").innerHTML = t;
+  setStatus('<span style="color:#ffc107;">●</span> Fetching ' + (label || "data") + '...');
   let lastErr = null;
   for (const proxy of VG.PROXIES) {
     try {
+      setStatus('<span style="color:#ffc107;">●</span> ' + (label || "data") + ' via ' + proxy.name + '...');
       const proxyUrl = proxy.fn(url);
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 12000);
-      const r = await fetch(proxyUrl, { signal: ctrl.signal, cache: "no-cache" });
+      const timer = setTimeout(() => ctrl.abort(), 20000);
+      const r = await fetch(proxyUrl, {
+        signal: ctrl.signal,
+        cache: "no-cache",
+        headers: proxy.name === "direct" ? {} : undefined
+      });
       clearTimeout(timer);
       if (!r.ok) { lastErr = new Error(proxy.name + " returned " + r.status); continue; }
       const txt = await r.text();
-      const j = JSON.parse(txt);
+      let j;
+      try { j = JSON.parse(txt); } catch { j = { contents: txt }; }
+      if (j.contents && typeof j.contents === "string") {
+        try { j = JSON.parse(j.contents); } catch { /* raw text */ }
+      }
       VG.cache.set(url, j);
       return j;
     } catch(e) { lastErr = e; }
   }
-  throw new Error(label + " failed: " + (lastErr?.message || "all proxies timed out"));
+  setStatus('<span style="color:#ff4757;">●</span> ' + label + ' failed after all attempts');
+  throw new Error(label + " failed: " + (lastErr?.message || "all routes timed out"));
 };
 
 // ── Data Loading ──────────────────────────────────────────────────────────
