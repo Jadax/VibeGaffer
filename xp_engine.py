@@ -61,7 +61,7 @@ def compute_player_form(player_id: int, n_games: int = 5) -> Dict[str, float]:
     """
     Calculate a player's recent form over the last n_games.
     Falls back to FPL bootstrap fields (form, points_per_game, minutes, total_points)
-    when GW-by-GW history is empty (pre-season or new signups).
+    when GW-by-GW history is empty OR all zeros (pre-season carryover from last season).
     Returns points per game, average minutes, number of starts, and total points.
     """
     history = get_player_history(player_id)
@@ -71,12 +71,17 @@ def compute_player_form(player_id: int, n_games: int = 5) -> Dict[str, float]:
         total_mins = recent["minutes"].sum() if "minutes" in recent.columns else 0
         n = len(recent)
         starts = int((recent["minutes"].ge(60)).sum()) if "minutes" in recent.columns else 0
-        return {
-            "form_ppg": float(total_pts / max(n, 1)),
-            "minutes_avg": float(total_mins / max(n, 1)),
-            "starts": starts,
-            "total_points": int(total_pts)
-        }
+        # If the recent history has meaningful data (season has started), use it.
+        # The FPL API includes last season's history which is all zeros pre-season —
+        # detect that and fall through to bootstrap fallback.
+        if total_pts > 0 or total_mins > 0:
+            return {
+                "form_ppg": float(total_pts / max(n, 1)),
+                "minutes_avg": float(total_mins / max(n, 1)),
+                "starts": starts,
+                "total_points": int(total_pts)
+            }
+        # else: fall through to bootstrap fallback below
 
     # Fallback: use FPL bootstrap fields for pre-season / no-history players
     players_df = get_players_df()
@@ -132,8 +137,10 @@ def compute_momentum_score(player_id: int) -> float:
     history = get_player_history(player_id)
     if not history.empty and len(history) >= 3:
         last3 = history.tail(3)["total_points"].values if "total_points" in history.columns else [0, 0, 0]
-        weights = [0.5, 0.3, 0.2]
-        return float(sum(v * w for v, w in zip(last3, weights)))
+        # Skip if all zeros (pre-season carryover from last season)
+        if any(v > 0 for v in last3):
+            weights = [0.5, 0.3, 0.2]
+            return float(sum(v * w for v, w in zip(last3, weights)))
 
     # Pre-season fallback: use FPL bootstrap 'form' as momentum proxy
     players_df = get_players_df()

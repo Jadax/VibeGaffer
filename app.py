@@ -626,7 +626,15 @@ def render_recommendation_banner(result: Dict[str, Any]):
 
     cols = st.columns(4)
     with cols[0]:
-        st.metric("Mode", "🧬 Draft Squad" if mode == "draft" else "🔄 Transfer Advisor")
+        mode_label = "Draft" if mode == "draft" else "Transfer"
+        mode_color = "#00ff87" if mode == "draft" else "#7c3aed"
+        st.markdown(f"""
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+                    border-radius: 12px; padding: 12px 16px;">
+            <div style="color: #888; font-size: 0.8rem; font-weight: 500;">MODE</div>
+            <div style="color: {mode_color}; font-size: 1.4rem; font-weight: 800; margin-top: 2px;">{mode_label}</div>
+        </div>
+        """, unsafe_allow_html=True)
     with cols[1]:
         st.metric("Transfers", len(result.get("transfers_in", [])))
     with cols[2]:
