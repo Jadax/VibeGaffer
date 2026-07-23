@@ -267,6 +267,130 @@ def get_squad_with_details(team_id: int, gameweek: int) -> pd.DataFrame:
 
 
 # ============================================================================
+# Live Gameweek Data & Price Changes
+# ============================================================================
+
+@st.cache_data(ttl=300)  # 5-min cache for live data
+def fetch_live_data(gameweek: int) -> pd.DataFrame:
+    """Fetch live GW element data (transfers, captain %, live points)."""
+    try:
+        resp = requests.get(f"{FPL_BASE}/event/{gameweek}/live/", timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if "elements" not in data:
+            return pd.DataFrame()
+        live = pd.DataFrame(data["elements"])
+        return live
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_price_change_risks() -> pd.DataFrame:
+    """
+    Predict players likely to rise or fall in price based on net transfers.
+    Merges bootstrap player data with live GW transfer counts to estimate
+    who is approaching a price change threshold.
+    FPL uses ~net transfers to trigger nightly price changes.
+    """
+    players = get_players_df()
+    current_gw = get_current_gameweek()
+    if players.empty or current_gw < 1:
+        return pd.DataFrame()
+
+    live = fetch_live_data(current_gw)
+    if live.empty:
+        return pd.DataFrame()
+
+    # Merge live transfer data with player info
+    merged = players.merge(live, left_on="id", right_on="id", how="inner")
+
+    # Net transfers: (transfers_in - transfers_out) from this GW
+    if "transfers_balance" in merged.columns:
+        merged["net_transfers"] = merged["transfers_balance"].fillna(0).astype(int)
+    elif "transfers_in_event" in merged.columns and "transfers_out_event" in merged.columns:
+        merged["net_transfers"] = (
+            merged["transfers_in_event"].fillna(0).astype(int) -
+            merged["transfers_out_event"].fillna(0).astype(int)
+        )
+    else:
+        merged["net_transfers"] = 0
+
+    # FPL nightly change threshold: ~15,000-30,000 net transfers for a rise
+    RISE_THRESHOLD = 15000
+    FALL_THRESHOLD = -8000
+
+    merged["risk"] = "stable"
+    merged.loc[merged["net_transfers"] >= RISE_THRESHOLD * 0.7, "risk"] = "likely_rise"
+    merged.loc[merged["net_transfers"] >= RISE_THRESHOLD, "risk"] = "rising_tonight"
+    merged.loc[merged["net_transfers"] <= FALL_THRESHOLD * 0.7, "risk"] = "likely_fall"
+    merged.loc[merged["net_transfers"] <= FALL_THRESHOLD, "risk"] = "falling_tonight"
+
+    cols = ["id", "full_name", "position_name", "now_cost", "selected_by_percent",
+            "net_transfers", "risk"]
+    available = [c for c in cols if c in merged.columns]
+    return merged[available].sort_values("net_transfers", ascending=False)
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_player_ownership_df() -> pd.DataFrame:
+    """Return players with ownership % from bootstrap static data."""
+    players = get_players_df()
+    if players.empty:
+        return pd.DataFrame()
+    cols = ["id", "full_name", "position_name", "now_cost",
+            "selected_by_percent", "total_points", "form", "team"]
+    available = [c for c in cols if c in players.columns]
+    return players[available]
+
+
+# ============================================================================
+# Fixture Difficulty Ticker
+# ============================================================================
+
+@st.cache_data(ttl=CACHE_TTL)
+def build_fixture_ticker(start_gw: int, n_gws: int = 8) -> pd.DataFrame:
+    """
+    Build a fixture difficulty ticker grid for all 20 teams over the next n_gws.
+    Returns a DataFrame with columns: team, GW1_fdr, GW2_fdr, ..., GWn_fdr.
+    FDR values are color-coded: 1-2=green, 3=gray, 4-5=red.
+    """
+    fixtures_df = get_fixtures_df()
+    teams_df = get_teams_df()
+    if fixtures_df.empty or teams_df.empty:
+        return pd.DataFrame()
+
+    ticker = {}
+    for _, team in teams_df.iterrows():
+        tid = int(team["id"])
+        tname = team.get("short_name", team.get("name", f"T{tid}"))
+        row = {"Team": tname, "team_id": tid}
+        for gw in range(start_gw, start_gw + n_gws):
+            fix = fixtures_df[
+                ((fixtures_df["home_team_id"] == tid) |
+                 (fixtures_df["away_team_id"] == tid)) &
+                (fixtures_df["event"] == gw)
+            ]
+            if fix.empty:
+                row[f"GW{gw}"] = 0  # Blank
+                continue
+            fix = fix.iloc[0]
+            is_home = int(fix["home_team_id"]) == tid
+            fdr = int(fix["home_fdr"]) if is_home else int(fix["away_fdr"])
+            opp_id = int(fix["away_team_id"]) if is_home else int(fix["home_team_id"])
+            opp_name = ""
+            opp_row = teams_df[teams_df["id"] == opp_id]
+            if not opp_row.empty:
+                opp_name = opp_row.iloc[0].get("short_name", f"T{opp_id}")
+            row[f"GW{gw}"] = fdr
+            row[f"GW{gw}_opp"] = opp_name
+            row[f"GW{gw}_h"] = "H" if is_home else "A"
+        ticker[tname] = row
+
+    return pd.DataFrame.from_dict(ticker, orient="index").reset_index(drop=True)
+
+
+# ============================================================================
 # System Status Monitor
 # ============================================================================
 

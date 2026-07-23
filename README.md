@@ -136,6 +136,26 @@ Then open **http://localhost:8501** in your browser.
 - Only recommends a -4 pt hit if net xP gain over 3 GWs exceeds +4.0 pts
 - Evaluates 0, 1, and 2-transfer plans simultaneously
 
+### Player Comparison (Radar Chart)
+- Compare up to 3 players side-by-side
+- Spider/radar chart: Total xP, Form PPG, Minutes, Price, xP/£m, Avg FDR
+- Stat comparison table with next fixtures
+
+### Price Change Predictor
+- Predict which players will rise/fall in price tonight
+- Based on net transfer data from FPL live endpoint
+- Separate "Likely Risers" and "Likely Fallers" panels
+
+### Fixture Difficulty Ticker
+- Color-coded 8-GW fixture grid for all 20 Premier League teams
+- Green = easy, Gray = neutral, Red = hard
+- Shows opponent and home/away for each gameweek
+
+### Differential Picks
+- Find low-ownership (<5%) high-xP players
+- Ideal for gaining rank against template teams
+- Sorted by total xP descending with ownership %, xP/£m, minutes probability
+
 ---
 
 ## API Endpoints

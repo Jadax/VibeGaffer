@@ -382,6 +382,53 @@ def compute_all_players_xp(
 
 
 # ============================================================================
+# Differential Picks Finder
+# ============================================================================
+
+def get_differential_picks(
+    start_gw: int,
+    n_gws: int = 3,
+    max_ownership: float = 5.0,
+    min_xp: float = 10.0
+) -> pd.DataFrame:
+    """
+    Find high-xP, low-ownership differential players.
+    Filters players with:
+      - Ownership <= max_ownership% (default 5%)
+      - Total xP >= min_xp over the horizon
+      - Available (not injured/loaned)
+    Returns sorted by xP descending.
+    """
+    xp_df = compute_all_players_xp(start_gw, n_gws)
+    if xp_df.empty:
+        return pd.DataFrame()
+
+    from data_loader import get_player_ownership_df
+    ownership = get_player_ownership_df()
+    if ownership.empty:
+        return pd.DataFrame()
+
+    merged = xp_df.merge(
+        ownership[["id", "selected_by_percent", "form"]],
+        on="id", how="inner"
+    )
+
+    # Filter for differentials
+    diffs = merged[
+        (merged["selected_by_percent"].astype(float) <= max_ownership) &
+        (merged["total_xp"] >= min_xp)
+    ].copy()
+
+    diffs["ownership"] = diffs["selected_by_percent"].astype(float)
+    diffs["vfm_rank"] = diffs["xp_per_price"].rank(ascending=False)
+
+    cols = ["id", "name", "position", "team_id", "price", "total_xp",
+            "xp_per_price", "ownership", "minutes_prob", "form_ppg"]
+    available = [c for c in cols if c in diffs.columns]
+    return diffs[available].sort_values("total_xp", ascending=False).head(20)
+
+
+# ============================================================================
 # Formatting Utilities
 # ============================================================================
 
