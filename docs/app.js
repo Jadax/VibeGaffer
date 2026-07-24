@@ -512,19 +512,24 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
 
     // Phase 1a: Seed with must-have premiums (highest xP per position)
     // This ensures expensive captains like Haaland/Saka aren't priced out by budget reserve
-    const seeds = [1, 2, 3, 4].map(function(pos) {
-      return players.filter(function(p) { return p.positionId === pos && !inSquad.has(p.id); })
-        .sort(function(a, b) { return b.totalXP - a.totalXP; })[0];
-    }).filter(Boolean);
-    seeds.forEach(function(p) {
+    // For MIDs, seed top 2 (e.g. Saka + Bruno) since they're captain-viable
+    const seeds = [];
+    [1, 2, 3, 4].forEach(function(pos) {
+      const candidates = players.filter(function(p) { return p.positionId === pos && !inSquad.has(p.id); })
+        .sort(function(a, b) { return b.totalXP - a.totalXP; });
+      seeds.push(candidates[0]);
+      if (pos === 3 && candidates[1]) seeds.push(candidates[1]);
+    });
+    seeds.filter(Boolean).forEach(function(p) {
       const slotsLeft = 15 - squad.length - 1;
-      const reserve = slotsLeft * 4.5;
+      const reserve = slotsLeft * 3.5;
       if (spent + p.price + reserve <= budget + 0.1 && (clubCounts[p.teamId] || 0) < 3) {
         addPlayer(p);
       }
     });
 
-    // Phase 1b: Fill remaining slots based on strategy
+    // Phase 1b: Fill remaining slots in a single value-sorted pass (all positions together)
+    // This ensures premium MIDs like Bruno aren't excluded just because DEFs are filled first
     let byValue;
     if (strategy === 'value') {
       byValue = [...players].sort((a, b) => (b._sortBy || b.xpPerPrice) - (a._sortBy || a.xpPerPrice));
@@ -538,36 +543,49 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
       });
     }
 
+    // Compute minimum cost per remaining position for budget safety
+    const minCostPerPos = { 1: 4.0, 2: 4.0, 3: 4.5, 4: 4.5 };
+    const posNeeded1b = {};
     [1, 2, 3, 4].forEach(pos => {
-      for (const p of byValue) {
-        if (squad.filter(s => s.positionId === pos).length >= target[pos]) break;
-        if (p.positionId !== pos) continue;
-        if (inSquad.has(p.id)) continue;
-        if ((clubCounts[p.teamId] || 0) >= 3) continue;
-        const slotsLeft = 15 - squad.length - 1;
-        const reserve = slotsLeft * 4.5;
-        if (spent + p.price + reserve > budget + 0.1) continue;
-        addPlayer(p);
-      }
+      const need = target[pos] - squad.filter(s => s.positionId === pos).length;
+      if (need > 0) posNeeded1b[pos] = need;
     });
 
-    // Phase 2: Fill remaining slots with cheapest available
+    for (const p of byValue) {
+      const posKey = p.positionId;
+      if (!posNeeded1b[posKey] || posNeeded1b[posKey] <= 0) continue;
+      if (inSquad.has(p.id)) continue;
+      if ((clubCounts[p.teamId] || 0) >= 3) continue;
+      // Reserve minimum cost for all remaining unfilled position slots
+      let reserveForOthers = 0;
+      Object.keys(posNeeded1b).forEach(function(pk) {
+        const pid = parseInt(pk);
+        const extra = pid === posKey ? posNeeded1b[pk] - 1 : posNeeded1b[pk];
+        reserveForOthers += extra * (minCostPerPos[pid] || 4.0);
+      });
+      if (spent + p.price + reserveForOthers > budget + 0.1) continue;
+      addPlayer(p);
+      posNeeded1b[posKey]--;
+      if (posNeeded1b[posKey] <= 0) delete posNeeded1b[posKey];
+    }
+
+    // Phase 2: Fill remaining slots with cheapest available (no reserve, just budget)
     if (squad.length < 15) {
-      const posNeeded = {};
+      const posNeeded2 = {};
       [1, 2, 3, 4].forEach(pos => {
         const need = target[pos] - squad.filter(s => s.positionId === pos).length;
-        if (need > 0) posNeeded[pos] = need;
+        if (need > 0) posNeeded2[pos] = need;
       });
       const fillers = [...players].sort((a, b) => a.price - b.price);
       for (const p of fillers) {
         if (squad.length >= 15) break;
         if (inSquad.has(p.id)) continue;
-        if (!posNeeded[p.positionId]) continue;
+        if (!posNeeded2[p.positionId]) continue;
         if ((clubCounts[p.teamId] || 0) >= 3) continue;
         if (spent + p.price > budget + 0.1) continue;
         addPlayer(p);
-        posNeeded[p.positionId]--;
-        if (posNeeded[p.positionId] <= 0) delete posNeeded[p.positionId];
+        posNeeded2[p.positionId]--;
+        if (posNeeded2[p.positionId] <= 0) delete posNeeded2[p.positionId];
       }
     }
 
@@ -681,6 +699,9 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
   }
 
   const squad = bestSquad;
+  if (!squad || squad.length < 11) {
+    return { mode: "draft", squad: [], starting: [], bench: [], formation: { DEF: 4, MID: 4, FWD: 2 }, totalCost: 0, budgetRemaining: budget, totalXP: 0, benchXP: 0, gotCap: [], gwPicks: [] };
+  }
   const spent = bestSpent;
 
   // Select starting XI: pick the highest xP player at each position for the formation
