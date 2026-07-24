@@ -181,16 +181,28 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const totalPts = parseInt(p.total_points || "0");
   const ppg = parseFloat(p.points_per_game || "0");
   const form = parseFloat(p.form || "0");
-  const ict = parseFloat(p.ict_index || "0");
+  const bps = parseInt(p.bps || "0");
+
+  // ICT components (position-specific for bonus prediction)
   const influence = parseFloat(p.influence || "0");
   const creativity = parseFloat(p.creativity || "0");
   const threat = parseFloat(p.threat || "0");
 
-  // xG/xA from FPL API (season totals, pre-computed by FPL)
+  // xG/xA from FPL API
   const xG = parseFloat(p.expected_goals || "0");
   const xA = parseFloat(p.expected_assists || "0");
   const xGI = parseFloat(p.expected_goal_involvements || "0");
   const xGC = parseFloat(p.expected_goals_conceded || "0");
+
+  // Pre-computed per-90 rates from FPL (more accurate than manual calculation)
+  const xGPer90API = parseFloat(p.expected_goals_per_90 || "0");
+  const xAPer90API = parseFloat(p.expected_assists_per_90 || "0");
+  const csPer90API = parseFloat(p.clean_sheets_per_90 || "0");
+  const defConPer90 = parseFloat(p.defensive_contribution_per_90 || "0");
+
+  // FPL's own expected points signals
+  const epNext = parseFloat(p.ep_next || "0");
+  const valueForm = parseFloat(p.value_form || "0");
 
   // Minutes probability
   const gamesPlayed = starts || Math.max(1, Math.ceil(mins / 80));
@@ -208,21 +220,19 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
     minsProb = 0.45;
   }
 
-  // Confidence adjustment: more data = more reliable
+  // Confidence adjustment
   const seasonGames = 38;
   const dataConfidence = Math.min(1.0, gamesPlayed / Math.max(seasonGames * 0.5, 10));
   const confidenceMult = 0.5 + 0.5 * dataConfidence;
 
-  // ── Per-90 rates: use xG/xA when available (better than raw goals/assists) ──
+  // ── Per-90 rates: prefer FPL pre-computed per-90, fall back to manual ──
   const nineties = mins > 0 ? mins / 90 : 1;
-
-  // xG per 90 is a better predictor than actual goals per 90
-  const xGPer90 = xG / Math.max(nineties, 0.1);
-  const xAPer90 = xA / Math.max(nineties, 0.1);
+  const xGPer90 = xGPer90API > 0 ? xGPer90API : xG / Math.max(nineties, 0.1);
+  const xAPer90 = xAPer90API > 0 ? xAPer90API : xA / Math.max(nineties, 0.1);
   const goalsPer90 = goals / nineties;
   const assistsPer90 = assists / nineties;
 
-  // Blend: 60% xG/xA (expectation-based) + 40% actual (outcome-based)
+  // Blend: 60% xG/xA + 40% actual
   const projGoalsPer90Raw = 0.6 * xGPer90 + 0.4 * goalsPer90;
   const projAssistsPer90Raw = 0.6 * xAPer90 + 0.4 * assistsPer90;
 
@@ -233,57 +243,89 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const redsPerGame = reds / Math.max(gamesPlayed, 1);
   const ownGoalsPerGame = ownGoals / Math.max(gamesPlayed, 1);
   const penMissPerGame = penMiss / Math.max(gamesPlayed, 1);
+  const bpsPerGame = bps / Math.max(gamesPlayed, 1);
 
-  // ── Form trend: positive trend = rising form, negative = declining ──
+  // ── Enhanced form: blend form/ppg trend with ep_next signal ──
   const formVsPPG = ppg > 0 ? form / ppg : 1.0;
-  const trendMult = Math.min(Math.max(0.8 + 0.2 * formVsPPG, 0.7), 1.3);
+  const epNextSignal = epNext > 0 && ppg > 0 ? Math.min(epNext / ppg, 1.5) : 1.0;
+  const valueFormBoost = valueForm > 0 ? Math.min(1.0 + valueForm * 0.02, 1.15) : 1.0;
+  // 60% form trend + 25% FPL ep_next + 15% value form
+  const rawTrend = 0.6 * formVsPPG + 0.25 * epNextSignal + 0.15 * valueFormBoost;
+  const trendMult = Math.min(Math.max(0.80 + 0.20 * rawTrend, 0.70), 1.30);
 
   // ── Fixture difficulty multipliers ──
   const fdrMult = { 1: 1.35, 2: 1.15, 3: 1.00, 4: 0.85, 5: 0.65 };
   const attMult = fdrMult[fdr] || 1.0;
   const defMult = fdrMult[6 - (fdr || 3)] || 1.0;
 
-  // ── Team strength adjustment ──
+  // ── Position-specific team strength (attack vs defence, not just overall) ──
   const teamId = p.team;
   const team = VG.teams[teamId];
   const opp = VG.teams[oppTeamId];
-  let teamStrMult = 1.0;
+  let attStrMult = 1.0;
+  let defStrMult = 1.0;
   let oppDefStr = 1.0;
+  let oppAttStr = 1.0;
   if (team && opp) {
-    const teamStr = (team.strength_overall_home + team.strength_overall_away) / 2;
-    const oppStr = (opp.strength_overall_home + opp.strength_overall_away) / 2;
-    // Normalize: strength range ~800-1200, midpoint ~1000; diff/100 gives ~-2 to +2
-    const strDiff = (teamStr - oppStr) / 100;
-    teamStrMult = Math.min(Math.max(0.80 + 0.15 * strDiff, 0.65), 1.35);
-    // Opponent defensive strength (affects goals conceded / clean sheets)
-    const oppDef = (opp.strength_defence_home + opp.strength_defence_away) / 2;
-    oppDefStr = Math.min(Math.max(0.70 + 0.30 * ((oppDef - 1000) / 200), 0.5), 1.3);
+    // Attacking: team's attack vs opponent's defence
+    const teamAtt = isHome ? team.strength_attack_home : team.strength_attack_away;
+    const oppDef = isHome ? opp.strength_defence_away : opp.strength_defence_home;
+    attStrMult = Math.min(Math.max(0.80 + 0.15 * ((teamAtt - oppDef) / 100), 0.65), 1.35);
+
+    // Defensive: team's defence vs opponent's attack
+    const teamDef = isHome ? team.strength_defence_home : team.strength_defence_away;
+    const oppAtt = isHome ? opp.strength_attack_away : opp.strength_attack_home;
+    defStrMult = Math.min(Math.max(0.80 + 0.15 * ((teamDef - oppAtt) / 100), 0.65), 1.35);
+
+    // Opponent defensive strength (for clean sheets / goals conceded)
+    const oppDefAvg = (opp.strength_defence_home + opp.strength_defence_away) / 2;
+    oppDefStr = Math.min(Math.max(0.70 + 0.30 * ((oppDefAvg - 1000) / 200), 0.5), 1.3);
+
+    // Opponent attacking strength (for clean sheet penalty)
+    const oppAttAvg = (opp.strength_attack_home + opp.strength_attack_away) / 2;
+    oppAttStr = Math.min(Math.max(0.70 + 0.30 * ((oppAttAvg - 1000) / 200), 0.5), 1.3);
   }
 
   // ── Projected rates ──
-  const projGoalsPer90 = projGoalsPer90Raw * attMult * teamStrMult * trendMult * confidenceMult + 0.05 * (1 - confidenceMult);
-  const projAssistsPer90 = projAssistsPer90Raw * attMult * teamStrMult * trendMult * confidenceMult + 0.03 * (1 - confidenceMult);
+  const projGoalsPer90 = projGoalsPer90Raw * attMult * attStrMult * trendMult * confidenceMult + 0.05 * (1 - confidenceMult);
+  const projAssistsPer90 = projAssistsPer90Raw * attMult * attStrMult * trendMult * confidenceMult + 0.03 * (1 - confidenceMult);
 
-  // ── Clean sheet probability: use xGC for opponent attacking threat ──
+  // ── Clean sheet: use opponent defence strength + API cs_per_90 + xGC ──
   const baseCSPos = { 1: 0.35, 2: 0.30, 3: 0.08, 4: 0 };
-  const baseCS = (baseCSPos[pos] || 0) * defMult * teamStrMult;
-  // xGC per game: higher = more goals conceded = lower CS chance
+  const baseCS = (baseCSPos[pos] || 0) * defMult * defStrMult;
   const xGCPerGame = xGC / Math.max(gamesPlayed, 1);
-  const xGCImpact = Math.max(0.5, 1.0 - xGCPerGame * 0.05); // penalize high xGC
-  const projCS = Math.min(Math.max(baseCS * confidenceMult * xGCImpact + csRate * confidenceMult * defMult, 0), 0.70);
+  const xGCImpact = Math.max(0.5, 1.0 - xGCPerGame * 0.05);
+  const csRatePer90 = csPer90API > 0 ? csPer90API : csRate;
+  // Apply opponent defensive weakness: weak defence = easier clean sheet
+  // Apply opponent attacking strength: strong attack = harder clean sheet
+  const oppDefFactor = (oppDefStr + (1.6 - oppAttStr)) / 2;
+  const projCS = Math.min(Math.max(
+    baseCS * confidenceMult * xGCImpact * oppDefFactor
+    + csRatePer90 * confidenceMult * defMult * oppDefFactor,
+    0), 0.70);
 
-  // ── Goal probability (per fixture) ──
-  const projGoals = Math.min(projGoalsPer90 * (isHome ? 1.10 : 1.0), 0.85);
-  // ── Assist probability (per fixture) ──
-  const projAssists = Math.min(projAssistsPer90 * (isHome ? 1.10 : 1.0), 0.85);
+  // ── Goal / assist probability ──
+  const homeBoost = 1.15;
+  const projGoals = Math.min(projGoalsPer90 * (isHome ? homeBoost : 1.0), 0.85);
+  const projAssists = Math.min(projAssistsPer90 * (isHome ? homeBoost : 1.0), 0.85);
 
-  // ── Bonus probability: blend ICT, xGI, and form ──
-  const ictPerGame = ict / Math.max(gamesPlayed, 1);
+  // ── Bonus: use BPS (strongest predictor) + position-specific ICT + xGI ──
+  const bpsPerGameNorm = bpsPerGame / 40;
+  const influencePerGame = influence / Math.max(gamesPlayed, 1);
+  const creativityPerGame = creativity / Math.max(gamesPlayed, 1);
+  const threatPerGame = threat / Math.max(gamesPlayed, 1);
+  let ictBonus = 0;
+  if (pos === 1 || pos === 2) {
+    ictBonus = Math.min(influencePerGame / 30, 0.3);
+  } else if (pos === 3) {
+    ictBonus = Math.min((influencePerGame + creativityPerGame) / 60, 0.3);
+  } else {
+    ictBonus = Math.min((threatPerGame + creativityPerGame) / 60, 0.3);
+  }
   const xGIPerGame = xGI / Math.max(gamesPlayed, 1);
+  const xgiBonus = Math.min(xGIPerGame / 0.7, 0.3);
   const bonusBase = bonusPerGame * confidenceMult;
-  const ictBonus = Math.min(ictPerGame / 15, 0.4); // ICT normalization
-  const xgiBonus = Math.min(xGIPerGame / 0.7, 0.3); // xGI normalization
-  const projBonus = Math.min(bonusBase + ictBonus + xgiBonus + (pos === 3 || pos === 4 ? 0.10 : 0.05), 1.0);
+  const projBonus = Math.min(bonusBase + bpsPerGameNorm * 0.5 + ictBonus + xgiBonus + (pos === 3 || pos === 4 ? 0.10 : 0.05), 0.70);
 
   // ── FPL scoring ──
   const GOAL_PTS = { 1: 6, 2: 6, 3: 5, 4: 4 };
@@ -291,21 +333,27 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const CS_PTS = { 1: 4, 2: 4, 3: 1, 4: 0 };
   const APPEARANCE_PTS = 2;
 
-  // ── DEFCON estimation (Defensive Contribution Points) ──
-  // DEFCON = 2pts for reaching thresholds of: clearances + blocks + interceptions + tackles
-  // CBs dominate DEFCON; estimate from position, minutes, team defense, and clean sheet rate
+  // ── DEFCON: use API defensive_contribution_per_90 when available ──
   let defconXP = 0;
-  if (pos === 2) { // CBs dominate DEFCON (~1.4 pts/game avg for top CBs)
-    const defconBase = 1.1;
-    const teamDefStr = team ? ((team.strength_defence_home + team.strength_defence_away) / 2 / 800) : 0.8;
-    const minutesBonus = Math.min(minsProb, 0.95);
-    defconXP = defconBase * teamDefStr * minutesBonus * confidenceMult * defMult;
-  } else if (pos === 3) { // DEF MIDs get partial DEFCON
-    defconXP = 0.4 * minsProb * confidenceMult * defMult;
+  if (pos === 2) {
+    if (defConPer90 > 0) {
+      const dcPerFixture = defConPer90 * (mins / 90);
+      defconXP = Math.min(dcPerFixture / 6, 2.5) * minsProb * confidenceMult * defMult * defStrMult;
+    } else {
+      const defconBase = 1.1;
+      const teamDefStr = team ? ((team.strength_defence_home + team.strength_defence_away) / 2 / 800) : 0.8;
+      defconXP = defconBase * teamDefStr * minsProb * confidenceMult * defMult;
+    }
+  } else if (pos === 3) {
+    if (defConPer90 > 0) {
+      const dcPerFixture = defConPer90 * (mins / 90);
+      defconXP = Math.min(dcPerFixture / 8, 1.5) * minsProb * confidenceMult * defMult;
+    } else {
+      defconXP = 0.4 * minsProb * confidenceMult * defMult;
+    }
   }
 
-  // ── Captain ceiling bonus: FWD/MID have higher haul potential for captain ──
-  // Premium MIDs (>£9m) get extra boost as they're captain-viable
+  // ── Captain ceiling bonus ──
   const captainBonus = (pos === 4) ? 1.15 : (pos === 3) ? (price > 9 ? 1.18 : 1.08) : 1.0;
 
   // ── xP calculation per fixture ──
@@ -315,7 +363,7 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const xpAssists = projAssists * ASSIST_PTS;
   const xpBonus = projBonus * 1.5;
   const xpSaves = pos === 1 ? Math.min(savesPerGame / 3, 1.0) * 3 * defMult * confidenceMult : 0;
-  const xpDEFCON = defconXP * 2; // DEFCON awards 2pts per threshold
+  const xpDEFCON = defconXP * 2;
   const xpNegative = minsProb * (yellowsPerGame * 1 + redsPerGame * 3 + ownGoalsPerGame * 2 + penMissPerGame * 2);
 
   const totalXP = (xpAppearance + xpCS + xpGoals + xpAssists + xpBonus + xpSaves + xpDEFCON - xpNegative) * captainBonus;
@@ -346,10 +394,16 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   const gwDetails = [];
 
   if (upcoming.length === 0) {
-    // Pre-season / no fixtures: estimate from form and ppg
+    // Pre-season / no fixtures: use best available signal
     const ppg = parseFloat(p.points_per_game || "0");
     const form = parseFloat(p.form || "0");
-    totalXP = nGWs * Math.max(ppg, form, 1.0) * 0.6;
+    const epNext = parseFloat(p.ep_next || "0");
+    const valueForm = parseFloat(p.value_form || "0");
+    // ep_next is FPL's own xP — best signal when available
+    const base = epNext > 0 ? epNext : Math.max(ppg, form, 1.0);
+    // value_form bonus: high value form = undervalued
+    const vfBonus = valueForm > 0 ? 1.0 + valueForm * 0.01 : 1.0;
+    totalXP = nGWs * base * 0.6 * vfBonus;
   } else {
     upcoming.forEach(f => {
       const isHome = f.team_h === teamId;
@@ -371,6 +425,9 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   const form = parseFloat(p.form || "0");
   const ppg = parseFloat(p.points_per_game || "0");
   const formVsPPG = ppg > 0 ? form / ppg : 1.0;
+  const epNext = parseFloat(p.ep_next || "0");
+  const bps = parseInt(p.bps || "0");
+  const defConPer90 = parseFloat(p.defensive_contribution_per_90 || "0");
 
   return {
     totalXP: +totalXP.toFixed(2),
@@ -394,6 +451,9 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
       xA: +xA.toFixed(2),
       xGI: +xGI.toFixed(2),
       trend: +formVsPPG.toFixed(2),
+      epNext,
+      bps,
+      defconPer90: +defConPer90.toFixed(2),
       status: p.status,
       news: p.news || ""
     }
