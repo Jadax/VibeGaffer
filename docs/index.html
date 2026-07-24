@@ -386,18 +386,25 @@ VG.preloadTabs = async (gw, horizon) => {
 
   try {
     if (VG.allXP) {
-      // Enhanced differentials: low ownership + high xP + positive trend
+      // Differential score: xP * trend * ownership discount (lower ownership = higher score)
       const xpThreshold = VG.allXP.length > 50 ? VG.allXP[Math.floor(VG.allXP.length * 0.25)]?.totalXP || 5 : 5;
-      const diffs = VG.allXP.filter(p => p.position !== 'GK' && (p.ownership || 100) <= 5 && p.totalXP >= xpThreshold && (p.trend || 1) >= 0.8)
-        .sort((a, b) => (b.totalXP * (b.trend || 1)) - (a.totalXP * (a.trend || 1)))
+      const diffs = VG.allXP
+        .filter(p => p.position !== 'GK' && (p.ownership || 100) <= 10 && p.totalXP >= xpThreshold)
+        .map(p => {
+          const ownDiscount = Math.max(0.1, 1.0 - (p.ownership || 0) / 50);
+          const diffScore = (p.totalXP || 0) * (p.trend || 1) * ownDiscount;
+          return { ...p, diffScore };
+        })
+        .sort((a, b) => b.diffScore - a.diffScore)
         .slice(0, 20);
-      let dh = '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>xG</th><th>xA</th><th>Trend</th><th>Own%</th></tr>';
-      diffs.forEach(p => {
-        const trendIcon = (p.trend || 1) >= 1.1 ? '📈' : (p.trend || 1) <= 0.9 ? '📉' : '➡️';
-        dh += `<tr><td style="color:#e2e8f0;">${p.name}</td><td>${p.position}</td><td>${p.teamName}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.xG || 0).toFixed(1)}</td><td>${(p.xA || 0).toFixed(1)}</td><td>${trendIcon} ${(p.trend || 1).toFixed(2)}</td><td>${(p.ownership || 0).toFixed(1)}%</td></tr>`;
+      let dh = '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>ep_next</th><th>BPS</th><th>DEF/90</th><th>Own%</th><th>Diff Score</th></tr>';
+      diffs.forEach((p, i) => {
+        const rank = i + 1;
+        const ownColor = (p.ownership || 0) <= 2 ? '#00ff87' : (p.ownership || 0) <= 5 ? '#fbbf24' : '#94a3b8';
+        dh += `<tr><td style="color:#e2e8f0;">${rank}. ${p.name}</td><td>${p.position}</td><td>${p.teamName}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td>${(p.bps || 0)}</td><td>${(p.defconPer90 || 0).toFixed(2)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
       });
       dh += '</table>';
-      if (diffs.length === 0) dh = '<p style="color:#475569;">No differentials found matching criteria (low ownership + high xP + positive trend)</p>';
+      if (diffs.length === 0) dh = '<p style="color:#475569;">No differentials found matching criteria (low ownership + high xP)</p>';
       document.getElementById("diffContent").innerHTML = dh;
     }
   } catch(e) {
@@ -417,9 +424,9 @@ VG.renderComparison = () => {
   if (selected.length < 2) { document.getElementById("compareTable").innerHTML = ""; return; }
   const colors = ['#00ff87', '#7c3aed', '#fbbf24'];
   const datasets = [];
-  const allLabels = ["Total xP", "xP/£m", "Form", "xG", "xA", "ICT", "Own%"];
+  const allLabels = ["Total xP", "xP/£m", "Form", "xG", "xA", "ICT", "BPS", "ep_next", "Own%"];
 
-  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>Form</th><th>xG</th><th>xA</th></tr>';
+  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>Form</th><th>xG</th><th>xA</th><th>BPS</th><th>ep_next</th><th>DEF/90</th></tr>';
   selected.forEach((name, i) => {
     const p = VG.allXP.find(x => x.name === name);
     if (!p) return;
@@ -429,10 +436,10 @@ VG.renderComparison = () => {
     const displayForm = Math.max(form, ppg);
     datasets.push({
       label: name,
-      data: [(p.totalXP || 0).toFixed(1), (p.xpPerPrice || 0).toFixed(1), displayForm.toFixed(1), (p.xG || 0).toFixed(1), (p.xA || 0).toFixed(1), (p.ict || 0).toFixed(1), (p.ownership || 0).toFixed(0)],
+      data: [(p.totalXP || 0).toFixed(1), (p.xpPerPrice || 0).toFixed(1), displayForm.toFixed(1), (p.xG || 0).toFixed(1), (p.xA || 0).toFixed(1), (p.ict || 0).toFixed(1), (p.bps || 0), (p.epNext || 0).toFixed(1), (p.ownership || 0).toFixed(0)],
       borderColor: colors[i], backgroundColor: colors[i] + "18", borderWidth: 2, pointRadius: 3
     });
-    tableHtml += `<tr><td style="color:#e2e8f0;">${name}</td><td>${p.position}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${displayForm.toFixed(1)}</td><td>${(p.xG || 0).toFixed(1)}</td><td>${(p.xA || 0).toFixed(1)}</td></tr>`;
+    tableHtml += `<tr><td style="color:#e2e8f0;">${name}</td><td>${p.position}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${displayForm.toFixed(1)}</td><td>${(p.xG || 0).toFixed(1)}</td><td>${(p.xA || 0).toFixed(1)}</td><td>${(p.bps || 0)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td>${(p.defconPer90 || 0).toFixed(2)}</td></tr>`;
   });
   tableHtml += '</table>';
   document.getElementById("compareTable").innerHTML = tableHtml;

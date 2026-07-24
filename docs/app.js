@@ -392,6 +392,7 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
 
   let totalXP = 0;
   const gwDetails = [];
+  const aggComponents = { xpAppearance: 0, xpCS: 0, xpGoals: 0, xpAssists: 0, xpBonus: 0, xpSaves: 0, xpDEFCON: 0, xpNegative: 0 };
 
   if (upcoming.length === 0) {
     // Pre-season / no fixtures: use best available signal
@@ -415,6 +416,9 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
       res.venue = isHome ? "H" : "A";
       gwDetails.push(res);
       totalXP += res.xp;
+      if (res.xpComponents) {
+        Object.keys(aggComponents).forEach(k => { aggComponents[k] += res.xpComponents[k] || 0; });
+      }
     });
   }
 
@@ -431,6 +435,7 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
 
   return {
     totalXP: +totalXP.toFixed(2),
+    xpComponents: aggComponents,
     gwDetails,
     info: {
       id: pid,
@@ -466,6 +471,7 @@ VG.computeAllXP = (startGW, nGWs, fixtures) => {
     if (p.status !== "a" || p.now_cost <= 0) return;
     const xp = VG.computeMultiGWXP(p.id, startGW, nGWs, fixtures);
     xp.info.xpPerPrice = +(xp.totalXP / Math.max(xp.info.price, 4.0)).toFixed(2);
+    xp.info.xpComponents = xp.xpComponents;
     results.push(xp.info);
   });
   return results.sort((a, b) => b.totalXP - a.totalXP);
