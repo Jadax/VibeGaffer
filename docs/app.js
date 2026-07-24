@@ -510,7 +510,21 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
       inSquad.add(p.id);
     };
 
-    // Phase 1: Fill all 15 slots based on strategy
+    // Phase 1a: Seed with must-have premiums (highest xP per position)
+    // This ensures expensive captains like Haaland/Saka aren't priced out by budget reserve
+    const seeds = [1, 2, 3, 4].map(function(pos) {
+      return players.filter(function(p) { return p.positionId === pos && !inSquad.has(p.id); })
+        .sort(function(a, b) { return b.totalXP - a.totalXP; })[0];
+    }).filter(Boolean);
+    seeds.forEach(function(p) {
+      const slotsLeft = 15 - squad.length - 1;
+      const reserve = slotsLeft * 4.5;
+      if (spent + p.price + reserve <= budget + 0.1 && (clubCounts[p.teamId] || 0) < 3) {
+        addPlayer(p);
+      }
+    });
+
+    // Phase 1b: Fill remaining slots based on strategy
     let byValue;
     if (strategy === 'value') {
       byValue = [...players].sort((a, b) => (b._sortBy || b.xpPerPrice) - (a._sortBy || a.xpPerPrice));
@@ -591,6 +605,70 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
         }
       }
       if (!improved) break;
+    }
+
+    // Phase 4: Cross-position rebalancing via iterative best-swap
+    // For each pair of squad players, find the best replacement pair that improves total xP
+    // Protect top-xP player in each position (captain candidates)
+    const topByPos = {};
+    squad.forEach(function(p) {
+      if (!topByPos[p.positionId] || p.totalXP > topByPos[p.positionId].totalXP) {
+        topByPos[p.positionId] = p;
+      }
+    });
+    const protectedIds = new Set(Object.values(topByPos).map(function(p) { return p.id; }));
+
+    for (let pass = 0; pass < 3; pass++) {
+      let bestMove = null, bestNetGain = 0;
+      for (let i = 0; i < squad.length; i++) {
+        for (let j = i + 1; j < squad.length; j++) {
+          const sA = squad[i], sB = squad[j];
+          // Don't swap out the top-xP player in each position (captain candidates)
+          if (protectedIds.has(sA.id) || protectedIds.has(sB.id)) continue;
+          // Find best replacement for sA in same position
+          let bestA = null, bestAGain = -Infinity;
+          for (const p of players) {
+            if (inSquad.has(p.id)) continue;
+            if (p.positionId !== sA.positionId) continue;
+            if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== sA.teamId) continue;
+            const gain = p.totalXP - sA.totalXP;
+            if (gain > bestAGain) { bestAGain = gain; bestA = { p, gain: gain }; }
+          }
+          if (!bestA) continue;
+          // Find best replacement for sB in same position, fitting remaining budget
+          for (const p of players) {
+            if (inSquad.has(p.id) || p.id === bestA.p.id) continue;
+            if (p.positionId !== sB.positionId) continue;
+            if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== sB.teamId) continue;
+            const costDiffB = +(p.price - sB.price).toFixed(1);
+            const totalCost = +(bestA.p.price - sA.price + costDiffB).toFixed(1);
+            if (totalCost > remaining()) continue;
+            const netGain = bestAGain + (p.totalXP - sB.totalXP);
+            if (netGain > bestNetGain) {
+              bestNetGain = netGain;
+              bestMove = { i, j, newA: bestA.p, newB: p };
+            }
+          }
+        }
+      }
+      if (bestMove && bestNetGain > 0.5) {
+        const { i, j, newA, newB } = bestMove;
+        const sA = squad[i], sB = squad[j];
+        const costDiff = +(newA.price - sA.price + newB.price - sB.price).toFixed(1);
+        clubCounts[sA.teamId] = (clubCounts[sA.teamId] || 1) - 1;
+        clubCounts[sB.teamId] = (clubCounts[sB.teamId] || 1) - 1;
+        inSquad.delete(sA.id);
+        inSquad.delete(sB.id);
+        inSquad.add(newA.id);
+        inSquad.add(newB.id);
+        clubCounts[newA.teamId] = (clubCounts[newA.teamId] || 0) + 1;
+        clubCounts[newB.teamId] = (clubCounts[newB.teamId] || 0) + 1;
+        squad[i] = { ...newA };
+        squad[j] = { ...newB };
+        spent = +(spent + costDiff).toFixed(1);
+      } else {
+        break;
+      }
     }
 
     // Evaluate this squad's total XP
