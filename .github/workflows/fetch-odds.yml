@@ -2,7 +2,7 @@ name: Fetch Bookmaker Odds
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Once per day at 6 AM UTC (~30 req/month)
+    - cron: '0 */6 * * *'  # Every 6 hours — guard skips most runs
   workflow_dispatch:
 
 jobs:
@@ -15,18 +15,67 @@ jobs:
         with:
           ref: main
 
+      - name: Check if odds fetch needed
+        id: check
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          if [ -z "$ODDS_API_KEY" ]; then
+            echo "No ODDS_API_KEY secret set — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python3 -c "
+          import json, time, sys, os
+
+          # Load bootstrap to find next GW deadline
+          try:
+              bootstrap = json.load(open('docs/data/bootstrap.json'))
+          except:
+              print('Cannot read bootstrap.json — skipping')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('skip=true\n')
+              sys.exit(0)
+
+          now = int(time.time())
+          events = bootstrap.get('events', [])
+
+          # Find the next unfinished GW (current or upcoming)
+          next_deadline = None
+          next_gw_id = None
+          for ev in events:
+              if not ev.get('finished') and not ev.get('is_previous'):
+                  next_deadline = ev.get('deadline_time_epoch')
+                  next_gw_id = ev.get('id')
+                  break
+
+          if not next_deadline:
+              print('No upcoming GW found — skipping')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('skip=true\n')
+              sys.exit(0)
+
+          hours_until = (next_deadline - now) / 3600
+          print(f'Next GW{next_gw_id} deadline in {hours_until:.1f}h')
+
+          if hours_until > 30 or hours_until < 0:
+              print(f'Outside fetch window (need <=30h, got {hours_until:.1f}h) — skipping')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('skip=true\n')
+              sys.exit(0)
+
+          print(f'Inside fetch window — will fetch odds')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('skip=false\n')
+          " || echo "skip=true" >> "$GITHUB_OUTPUT"
+
       - name: Fetch odds from The-Odds-API
+        if: steps.check.outputs.skip != 'true'
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
           mkdir -p docs/data
-          if [ -z "$ODDS_API_KEY" ]; then
-            echo "No ODDS_API_KEY secret set — skipping odds fetch"
-            exit 0
-          fi
-
-          # Single request returns ALL upcoming PL fixtures with odds
-          # Free tier: 500 req/month, this uses 1
           curl -sL -o /tmp/odds_raw.json \
             "https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?apiKey=${ODDS_API_KEY}&regions=uk&markets=h2h,spreads,totals&bookmakers=bet365,pinnacle,betfair_ex_uk"
 
@@ -38,7 +87,6 @@ jobs:
           python3 -c "
           import json, sys, os
 
-          # Validate response
           try:
               with open('/tmp/odds_raw.json') as f:
                   odds_data = json.load(f)
@@ -49,7 +97,6 @@ jobs:
               print(f'Invalid JSON: {e}')
               sys.exit(0)
 
-          # Load FPL teams for name mapping
           try:
               bootstrap = json.load(open('docs/data/bootstrap.json'))
               team_map = {}
@@ -59,7 +106,6 @@ jobs:
           except:
               team_map = {}
 
-          # Common betting name -> FPL short_name aliases
           aliases = {
               'manchester city': 'MCI', 'man city': 'MCI', 'city': 'MCI',
               'manchester united': 'MUN', 'man utd': 'MUN', 'manchester utd': 'MUN',
@@ -127,6 +173,7 @@ jobs:
           "
 
       - name: Commit and push if changed
+        if: steps.check.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

@@ -9,7 +9,7 @@ This file provides context for AI models working on the VibeGaffer codebase.
 - **Live URL**: https://jadax.github.io/VibeGaffer/
 - **Data**: Auto-fetched every 15 min via GitHub Actions cron → `docs/data/*.json`
 - **ILP Solver**: highs-js (HiGHS WASM) loaded from CDN, falls back to greedy
-- **Odds**: The-Odds-API free tier (500 req/month), fetched daily by separate cron → `docs/data/odds.json`
+- **Odds**: The-Odds-API free tier (500 req/month), fetched once per GW when deadline is within 30h → `docs/data/odds.json`
 
 ## Critical Files
 
