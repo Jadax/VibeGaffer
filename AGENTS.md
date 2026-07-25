@@ -43,12 +43,21 @@ The xP engine computes per-fixture expected points using:
 - BPS for bonus prediction
 - Position-specific ICT (influence for GK/DEF, creativity+threat for MID/FWD)
 - Enhanced form multiplier with ep_next and value_form signals
+- Exponential form weighting: hot streaks amplified (1.3x power), cold streaks dampened (0.7x power)
 - DEFCON calibration to real 2025/26 data
 - Captain ceiling bonus (FWD 1.15x, premium MID 1.18x)
 
 ### Injury-Aware Optimizer (v5.1)
 
 All 6 optimizer phases filter out injured/suspended/unavailable players (`status !== 'a' && status !== 'd'`). Doubtful players are still eligible but should be manually checked by users.
+
+### Minutes Model (v5.1)
+
+Start-rate model using last season data:
+- GK: binary (nailed #1 = 95%, backup = 15-75%)
+- Outfield: `startRate * (1 - subRisk)` with subRisk based on avg mins per start
+- Confidence regression toward league average (72%) for small samples
+- Replaced old simple avgMins bucket model
 
 ## Key Functions in app.js
 
@@ -104,7 +113,7 @@ All 6 optimizer phases filter out injured/suspended/unavailable players (`status
 
 1. **Greedy optimizer**: Can miss global optima (no ILP solver)
 2. **Pre-season data**: Team strengths all 0, form 0.0 — fallback estimates used
-3. **No expected minutes model**: Uses simple 82% fallback
+3. **No bookmaker odds**: External data source needed (not in FPL API)
 4. **Python files are dead code**: `app.py`, `backend.py`, `data_loader.py`, `xp_engine.py`, `optimizer.py` are from old architecture
 
 ## Testing

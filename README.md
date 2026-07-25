@@ -96,6 +96,7 @@ Position-specific, opponent-aware, multi-signal expected points projection:
 - **BPS for bonus**: Raw Bonus Points System score as primary bonus predictor
 - **Position-specific ICT**: GK/DEF use influence; MID uses influence+creativity; FWD uses threat+creativity
 - **Enhanced form**: Blends form/ppg trend (60%) + FPL ep_next (25%) + value_form (15%)
+- **Exponential form weighting**: Hot streaks amplified (1.3x power), cold streaks dampened (0.7x power)
 - **DEFCON calibration**: Defensive contributions calibrated to real 2025/26 data (CBs ~1.4 pts/game)
 - **Captain ceiling bonus**: FWD 1.15x, premium MID 1.18x, budget MID 1.08x
 - **Home advantage**: 1.15x multiplier
@@ -212,7 +213,7 @@ VibeGaffer/
 
 For each player + fixture combination:
 
-1. **Mins probability**: Based on starts/minutes history, team form (home/away boost)
+1. **Mins probability**: Start-rate model using last season data (GK: nailed/backup binary, outfield: startRate * (1 - subRisk)), confidence regression toward league average
 2. **Clean sheet probability**: `baseCS[pos] * defMult * defStrMult * csPer90 * oppDefFactor`
 3. **Goal probability**: `baseGoals[pos] * attackMult * attStrMult * goalsPer90 * oppDefFactor`
 4. **Assist probability**: `baseAssists[pos] * attackMult * creativity * assistsPer90 * oppDefFactor`
@@ -326,10 +327,10 @@ Test coverage:
 - [x] ~~Injury/suspension data integration~~ (v5.1: all optimizer phases filter injured players)
 - [x] ~~Multi-week transfer planning with hit optimization~~ (v5.1: computeTransferPlan)
 - [x] ~~League analyzer~~ (v5.1: analyzeLeague with ownership analysis)
+- [x] ~~Team-specific minutes/rotation model~~ (v5.1: start-rate model with sub risk + confidence regression)
+- [x] ~~Exponential form weighting~~ (v5.1: hot streaks 1.3x power, cold 0.7x power)
 - [ ] ILP solver (PuLP/HiGHS via WebAssembly) for guaranteed global optimum
 - [ ] Bookmaker odds integration (requires external API or data source)
-- [ ] Exponential form weighting when real match data is available
-- [ ] Team-specific minutes/rotation model (currently uses 82% fallback)
 
 ---
 

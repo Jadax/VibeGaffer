@@ -205,26 +205,41 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const epNext = parseFloat(p.ep_next || "0");
   const valueForm = parseFloat(p.value_form || "0");
 
-  // Minutes probability
+  // Minutes probability — start-rate model using last season data
+  const seasonGames = 38;
   const gamesPlayed = starts || Math.max(1, Math.ceil(mins / 80));
   const avgMins = gamesPlayed > 0 ? mins / gamesPlayed : 0;
-  let minsProb;
-  if (mins < 90 || starts === 0) {
-    minsProb = 0.3;
-  } else if (avgMins >= 85) {
-    minsProb = 0.92;
-  } else if (avgMins >= 70) {
-    minsProb = 0.80;
-  } else if (avgMins >= 55) {
-    minsProb = 0.65;
+
+  // Start rate: how often the player started when available
+  // GKs almost always start when in squad; outfield players vary more
+  let startRate;
+  if (pos === 1) {
+    // GK: starts are more binary — either #1 or backup
+    startRate = starts >= 30 ? 0.95 : starts >= 15 ? 0.75 : starts >= 5 ? 0.40 : 0.15;
   } else {
-    minsProb = 0.45;
+    // Outfield: use actual start rate with floor for small samples
+    const effectiveGames = Math.max(gamesPlayed, 5);
+    startRate = Math.min(1.0, starts / Math.max(effectiveGames, 1));
   }
 
-  // Confidence adjustment
-  const seasonGames = 38;
+  // Blend start rate with avg minutes per start (substitution pattern)
+  // High start rate + high avg mins = nailed starter
+  // High start rate + low avg mins = early sub risk
+  const minsPerStart = starts > 0 ? mins / starts : 0;
+  const subRisk = minsPerStart < 60 ? 0.12 : minsPerStart < 75 ? 0.06 : 0;
+  let minsProb = startRate * (1 - subRisk);
+
+  // Floor for players with data, fallback for no data
+  if (mins < 90 || starts === 0) {
+    minsProb = Math.max(minsProb, 0.30);
+  }
+  minsProb = Math.max(0.15, Math.min(0.97, minsProb));
+
+  // Confidence adjustment: low sample = regress toward league average
   const dataConfidence = Math.min(1.0, gamesPlayed / Math.max(seasonGames * 0.5, 10));
   const confidenceMult = 0.5 + 0.5 * dataConfidence;
+  const leagueAvgMinsProb = 0.72; // ~72% of starters play 60+ mins
+  minsProb = minsProb * confidenceMult + leagueAvgMinsProb * (1 - confidenceMult);
 
   // ── Per-90 rates: prefer FPL pre-computed per-90, fall back to manual ──
   const nineties = mins > 0 ? mins / 90 : 1;
@@ -246,12 +261,14 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const penMissPerGame = penMiss / Math.max(gamesPlayed, 1);
   const bpsPerGame = bps / Math.max(gamesPlayed, 1);
 
-  // ── Enhanced form: blend form/ppg trend with ep_next signal ──
+  // ── Enhanced form: exponential weighting to amplify hot/cold streaks ──
   const formVsPPG = ppg > 0 ? form / ppg : 1.0;
   const epNextSignal = epNext > 0 && ppg > 0 ? Math.min(epNext / ppg, 1.5) : 1.0;
   const valueFormBoost = valueForm > 0 ? Math.min(1.0 + valueForm * 0.02, 1.15) : 1.0;
-  // 60% form trend + 25% FPL ep_next + 15% value form
-  const rawTrend = 0.6 * formVsPPG + 0.25 * epNextSignal + 0.15 * valueFormBoost;
+  // Exponential form: hot streaks (form/ppg > 1) amplified, cold streaks penalized more
+  const expForm = formVsPPG > 1.0 ? Math.pow(formVsPPG, 1.3) : Math.pow(formVsPPG, 0.7);
+  // 60% exponential form trend + 25% FPL ep_next + 15% value form
+  const rawTrend = 0.6 * expForm + 0.25 * epNextSignal + 0.15 * valueFormBoost;
   const trendMult = Math.min(Math.max(0.80 + 0.20 * rawTrend, 0.70), 1.30);
 
   // ── Fixture difficulty multipliers ──
