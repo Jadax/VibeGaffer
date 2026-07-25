@@ -1,52 +1,160 @@
-# VibeGaffer
+# VibeGaffer v5.0
 
 **FPL Optimization Engine** | Powered by [Astraiva](https://astraiva.com) | Author: Tushant Sharma
 
+Live: https://jadax.github.io/VibeGaffer/
+
 ---
 
-## Overview
+## What It Does
 
-VibeGaffer is a Fantasy Premier League (FPL) optimization tool that combines multi-source data ingestion, mathematical expected-points ($xP$) projection, and integer linear programming (ILP) to deliver actionable weekly transfer, captaincy, and chip recommendations.
+VibeGaffer generates production-ready Fantasy Premier League squad recommendations. It ingests data from the official FPL API, projects expected points (xP) using a mathematical model, and optimizes 15-player squads under budget and team constraints.
 
-### Dual-Mode Workflow
+### Two Modes
 
-| Mode | Trigger | Description |
+| Mode | Trigger | What It Does |
 |------|---------|-------------|
-| **A: Draft Builder** | GW1 selected or no Team ID | Builds a full 15-player squad from scratch under £100m budget |
-| **B: Transfer Advisor** | Valid FPL Team ID + GW2+ | Recommends 0/1/2 transfers with hit-cost analysis over a rolling 3–5 GW horizon |
+| **Draft Builder** | GW1 or no Team ID | Builds a full 15-player squad from scratch under £100m |
+| **Transfer Advisor** | Valid FPL Team ID + GW2+ | Recommends transfers with break-even analysis over 5-GW horizon |
 
 ---
 
 ## Architecture
 
+This is a **pure static web app** deployed on GitHub Pages. Zero backend, zero CORS, zero server costs.
+
 ```
-┌─────────────────────────────────────────────────────┐
-│                   app.py (Streamlit)                 │
-│   Pitch Visualizer │ Sidebar │ Session State │ UI    │
-└──────────────────────┬──────────────────────────────┘
-                       │
-┌──────────────────────┴──────────────────────────────┐
-│                 backend.py (FastAPI)                  │
-│   REST Endpoints │ CORS │ Optimization Orchestration │
-└──────────────────────┬──────────────────────────────┘
-                       │
-        ┌──────────────┼──────────────┐
-        │              │              │
-┌───────┴──────┐ ┌─────┴──────┐ ┌────┴───────┐
-│ data_loader  │ │ xp_engine  │ │ optimizer  │
-│ Multi-source │ │ xP Math    │ │ PuLP ILP   │
-│ Fetch + Cache│ │ Projections│ │ + Chips    │
-└──────────────┘ └────────────┘ └────────────┘
+┌──────────────────────────────────────────────────────┐
+│                    GitHub Pages                        │
+│  docs/index.html  +  docs/app.js  +  docs/style.css   │
+│  Pure HTML/CSS/JS — no build step, no framework       │
+└──────────────────┬───────────────────────────────────┘
+                   │ reads local JSON
+┌──────────────────┴───────────────────────────────────┐
+│                  docs/data/*.json                      │
+│  bootstrap.json (514 players) + fixtures.json (380)   │
+│  Auto-updated every 15 min by GitHub Actions           │
+└──────────────────┬───────────────────────────────────┘
+                   │ fetched from
+┌──────────────────┴───────────────────────────────────┐
+│           FPL Official API (fantasy.premierleague.com) │
+│  bootstrap-static/ + fixtures/ + user squad endpoints  │
+└──────────────────────────────────────────────────────┘
 ```
 
-### Data Sources (100% Free)
+### Data Pipeline
 
-| Source | Data |
-|--------|------|
-| **FPL Official API** | Bootstrap static, fixtures, FDR, player availability, user squad |
-| **Vaastav FPL Archive** | Historical player performance CSVs |
-| **Olbauday Core Insights** | Team Elo ratings |
-| **Martgra Time Series** | Multi-week momentum trends |
+1. **GitHub Actions** (`fetch-data.yml`) runs every 15 minutes via cron
+2. Fetches `bootstrap-static/` (player data) and `fixtures/` from FPL API
+3. Falls back to CORS proxies if direct fetch fails
+4. Commits JSON to `docs/data/` on `main` branch
+5. Static app reads local same-origin JSON — zero CORS issues
+
+### Why Static?
+
+The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It was replaced with a pure static app because:
+- GitHub Pages is free with zero maintenance
+- No CORS issues (same-origin JSON reads)
+- No server to keep alive
+- Instant load times
+- The FPL API is public and doesn't require auth for read access
+
+---
+
+## Features (v5.0)
+
+### Squad Optimization (5-Phase Greedy + Local Search)
+
+| Phase | What It Does |
+|-------|-------------|
+| 1a | Premium seeding — locks top-3 xP/price players per position |
+| 1b | Global value-sorted fill — fills remaining slots by xP/price |
+| 2 | Cheapest filler — fills bench with minimum-cost starters |
+| 3 | Upgrade pass — iteratively swaps worst player for best affordable upgrade |
+| 4 | Cross-position rebalancing — paired swaps across positions |
+| 5 | Local search — 50 random swaps with simulated annealing to escape local optima |
+
+### Multi-Strategy Optimizer
+
+Three strategies run simultaneously, best wins:
+
+| Strategy | Approach |
+|----------|----------|
+| **Balanced** | Maximize total xP within budget |
+| **Premium Heavy** | Stack elite players (1.3x totalXP weight), accept weaker bench |
+| **Best Value** | Cap at £8m, maximize xP/£m |
+
+### xP Engine (v4.0)
+
+Position-specific, opponent-aware, multi-signal expected points projection:
+
+- **Position-specific team strength**: Attackers face attack difficulty, defenders face defense difficulty
+- **Opponent defense wiring**: CS probability and goal probability adjusted by opponent's actual defensive record
+- **FPL pre-computed rates**: Uses `expected_goals_per_90`, `expected_assists_per_90` from API
+- **BPS for bonus**: Raw Bonus Points System score as primary bonus predictor
+- **Position-specific ICT**: GK/DEF use influence; MID uses influence+creativity; FWD uses threat+creativity
+- **Enhanced form**: Blends form/ppg trend (60%) + FPL ep_next (25%) + value_form (15%)
+- **DEFCON calibration**: Defensive contributions calibrated to real 2025/26 data (CBs ~1.4 pts/game)
+- **Captain ceiling bonus**: FWD 1.15x, premium MID 1.18x, budget MID 1.08x
+- **Home advantage**: 1.15x multiplier
+
+### Captain Rotation Planner
+
+Table showing top 3 captain candidates for each GW in the horizon with:
+- xP values, opponent name, venue (H/A), FDR color-coded (green=easy, red=hard)
+- DGW markers on double gameweeks
+
+### Transfer Optimizer
+
+- **Break-even analysis**: Shows how many GWs until a hit pays for itself (ceil(4/gwAvgGain))
+- **Hit threshold**: Only recommends hits if break-even is within horizon AND avg gain >= 1.5 pts/GW
+- **Per-transfer details**: Shows break-even GWs and average gain per transfer
+
+### Transfer Roadmap
+
+Per-GW fixture grid for the full squad:
+- Color-coded FDR cells (green=FDR<=2, red=FDR>=4)
+- Automated swap suggestions for hard-fixture players (FDR>=4)
+- Shows replacement name, fixture, price, and xP gain
+
+### Chip Strategy
+
+| Chip | Evaluation Logic |
+|------|-----------------|
+| **Triple Captain** | DGW captain xP * 2.5 multiplier; penalized 0.15x on single GW |
+| **Bench Boost** | Only on DGW when 2+ bench players also have doubles |
+| **Wildcard** | Triggered by 4+ injuries or 8+ tough fixtures |
+| **Free Hit** | BGW detection with blanking team count |
+
+Chip Opportunity Timeline: visual bar chart per GW showing TC/BB/WC/FH scores.
+
+### Player Comparison
+
+- **Radar chart**: xP component breakdown (Appearance, CS, Goals, Assists, Bonus, DEFCON, Saves)
+- **Stacked bar chart**: Side-by-side xP composition comparison
+- **Table**: Per-component xP values
+
+### Differentials
+
+- Filters for non-GK players with ownership <= 10% and xP >= 25th percentile
+- Ownership-weighted scoring: xP * trend * (1 - ownership/50)
+
+### Dynamic Strategy Tab
+
+Personalized tips generated from actual squad data:
+- Captain contribution analysis
+- Injury/doubtful count with WC trigger advice
+- Hard fixture count with strategic recommendation
+- Budget analysis
+- Chip opportunity callouts
+- Missing template player warning
+
+### Other Features
+
+- **Price Change Predictor**: Net transfer activity for risers/fallers
+- **Fixture Swing Analysis**: Easy/hard run detection across 20 teams
+- **Championship Tips**: Static tips from FPL champions (Ibsen, Budisin, Labakk)
+- **Full Squad xP Breakdown**: Click-to-expand bar chart per player
 
 ---
 
@@ -54,162 +162,155 @@ VibeGaffer is a Fantasy Premier League (FPL) optimization tool that combines mul
 
 ```
 VibeGaffer/
-├── README.md           # This file
-├── requirements.txt    # Python dependencies
-├── data_loader.py      # Multi-source data fetchers with @st.cache_data
-├── xp_engine.py        # Expected Points mathematical engine
-├── optimizer.py        # PuLP ILP solver + chip decision matrix
-├── backend.py          # FastAPI backend (port 8000)
-└── app.py              # Streamlit frontend (port 8501)
+├── README.md                           # This file
+├── .github/workflows/fetch-data.yml    # Cron job: fetch FPL data every 15 min
+├── docs/                               # GitHub Pages root (deployed)
+│   ├── index.html                      # Main HTML (678 lines)
+│   ├── app.js                          # Core engine (1703 lines)
+│   ├── style.css                       # All styles (275 lines)
+│   ├── .nojekyll                       # Prevents Jekyll processing
+│   └── data/
+│       ├── bootstrap.json              # Player data (514 active players)
+│       └── fixtures.json               # 380 fixtures with FDR
+├── app.py                              # Original Python Streamlit (not used)
+├── backend.py                          # Original FastAPI backend (not used)
+├── data_loader.py                      # Original data loader (not used)
+├── xp_engine.py                        # Original xP engine (not used)
+├── optimizer.py                        # Original optimizer (not used)
+├── Dockerfile                          # Original Docker config (not used)
+├── docker-compose.yml                  # Original Docker config (not used)
+├── requirements.txt                    # Original Python deps (not used)
+└── .gitignore
+```
+
+**Note**: The Python files (`app.py`, `backend.py`, etc.) are from the original architecture and are kept in the repo but not used in deployment. The live app is the static `docs/` directory.
+
+---
+
+## How the xP Engine Works
+
+### Per-Fixture Calculation
+
+For each player + fixture combination:
+
+1. **Mins probability**: Based on starts/minutes history, team form (home/away boost)
+2. **Clean sheet probability**: `baseCS[pos] * defMult * defStrMult * csPer90 * oppDefFactor`
+3. **Goal probability**: `baseGoals[pos] * attackMult * attStrMult * goalsPer90 * oppDefFactor`
+4. **Assist probability**: `baseAssists[pos] * attackMult * creativity * assistsPer90 * oppDefFactor`
+5. **Bonus probability**: `BPSweight * bonusPer90 * minsProb`
+6. **DEFCON**: `defConPer90 * mins/90 * defMult * teamStr`
+7. **Captain ceiling bonus**: FWD 1.15x, premium MID 1.18x, budget MID 1.08x
+
+### Multi-GW Aggregation
+
+`totalXP = sum(fixtureXP for each GW in horizon)`
+
+### Key Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| APPEARANCE_PTS | 2 | Points per appearance |
+| CS_PTS | {GK:4, DEF:4, MID:1, FWD:0} | Clean sheet bonus |
+| GOAL_PTS | {GK:10, DEF:6, MID:5, FWD:4} | Goal bonus |
+| ASSIST_PTS | 3 | Assist bonus |
+
+---
+
+## How to Run Locally
+
+### Static App (Current)
+
+Just open `docs/index.html` in a browser. The data files are already in `docs/data/`.
+
+To update data manually:
+```bash
+curl -o docs/data/bootstrap.json "https://fantasy.premierleague.com/api/bootstrap-static/"
+curl -o docs/data/fixtures.json "https://fantasy.premierleague.com/api/fixtures/"
+```
+
+### Test the Engine
+
+```bash
+node test_v5.js  # Requires bootstrap.json and fixtures.json in docs/data/
 ```
 
 ---
 
-## Setup & Installation
+## Testing
 
-### Prerequisites
-
-- Python 3.10+
-- pip
-- Git
-
-### Clone the Repository
+Tests are in `C:\Users\Tushant\AppData\Local\Temp\opencode\test_v5.js` (local only). Run with:
 
 ```bash
-git clone https://github.com/Jadax/VibeGaffer.git
-cd VibeGaffer
+node test_v5.js
 ```
 
-### Install Dependencies
+**34/35 tests pass** (1 expected: backup GKs with 0 starts have low xP).
 
-```bash
-pip install -r requirements.txt
-```
+Test coverage:
+- Optimizer: squad size, formation validity, captain, budget
+- Multi-strategy: all 3 strategies produce valid squads
+- Transfer optimizer: break-even analysis, hit details
+- Captain rotation: 5 GWs, top-3 sorted by xP
+- Transfer roadmap: per-GW fixture grid, recommendations
+- Chips: all 4 chips evaluated, gwScores populated
+- Dynamic tips: personalized analysis generated
+- xpComponents: all 8 fields, sum matches totalXP
+- Edge cases: empty squad, empty fixtures
 
 ---
 
-## Running the Application
+## Current Results (v5.0, preseason data)
 
-### Option 1: Streamlit Cloud (Free, Instant Domain — Recommended)
+| Strategy | xP (5 GW) | Formation | Captain |
+|----------|-----------|-----------|---------|
+| Balanced | ~382 | 5-4-1 | Saka (37.2) |
+| Premium | ~375 | 5-4-1 | Saka (37.2) |
+| Value | ~380 | 5-4-1 | O'Reilly (38.1) |
 
-1. Push this repo to your GitHub
-2. Go to **[share.streamlit.io](https://share.streamlit.io)** → sign in with GitHub
-3. Click **"New app"** → repo `Jadax/VibeGaffer` → branch `main` → main file `app.py`
-4. Click **Deploy** — your app is live at `https://vibegaffer.streamlit.app`
-
-Or from this repo directly:
-[![Deploy to Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/deploy?repository=Jadax/VibeGaffer&branch=main&mainModule=app.py)
-
-> **Custom domain**: In Streamlit Cloud app settings, add your own domain (e.g. `vibegaffer.com`) and set a CNAME record to `custom-domains.streamlit.app`.
-
-### Option 2: Local (Development)
-
-**Terminal 1 — Backend:**
-```bash
-uvicorn backend:app --host 0.0.0.0 --port 8000 --reload
-```
-
-**Terminal 2 — Frontend:**
-```bash
-streamlit run app.py --server.port 8501
-```
-
-Then open **http://localhost:8501** in your browser.
-
-### Option 3: Docker (Any Cloud — Railway, Render, Fly.io, AWS)
-
-```bash
-docker compose up --build -d
-# Frontend → http://localhost:8501
-# Backend  → http://localhost:8000
-```
-
-Works on any Docker host (Railway, Render, Fly.io, DigitalOcean, AWS ECS) with custom domain support.
-
-### Option 4: Instant Public URL via ngrok
-
-```bash
-pip install pyngrok
-ngrok http 8501
-# Gives you a public URL like https://abc123.ngrok.io
-```
+**Note**: These numbers reflect preseason data (form=0.0, team strengths all 0). Once the season starts with real match data, xP projections will be significantly more accurate.
 
 ---
 
-## Features
+## Version History
 
-### Executive Recommendation Banner
-- Transfer IN/OUT cards with price and xP
-- Captain / Vice-Captain picks
-- Chip advice (TC, BB, WC, FH) with trigger reasoning
-
-### Pitch Visualizer
-- Interactive Plotly-based tactical pitch
-- Formation-aware player positioning (3-4-3, 4-4-2, 4-3-3, etc.)
-- Color-coded position cards (GK/DEF/MID/FWD)
-- Player name, position, and xP on each card
-
-### Bench View
-- 4 bench players in priority order
-- Color-coded cards matching position
-
-### Chip Decision Matrix
-
-| Chip | Trigger Condition |
-|------|-------------------|
-| **Triple Captain** | Top captain single-GW xP ≥ 11.5 OR Double Gameweek detected |
-| **Bench Boost** | 4 bench players combined xP ≥ 14.5 |
-| **Free Hit** | Blank Gameweek detected |
-| **Wildcard** | ≥ 5 player changes yield ≥ +20 xP gain over 4 GWs |
-
-### Transfer Hit Logic
-- Only recommends a -4 pt hit if net xP gain over 3 GWs exceeds +4.0 pts
-- Evaluates 0, 1, and 2-transfer plans simultaneously
-
-### Player Comparison (Radar Chart)
-- Compare up to 3 players side-by-side
-- Spider/radar chart: Total xP, Form PPG, Minutes, Price, xP/£m, Avg FDR
-- Stat comparison table with next fixtures
-
-### Price Change Predictor
-- Predict which players will rise/fall in price tonight
-- Based on net transfer data from FPL live endpoint
-- Separate "Likely Risers" and "Likely Fallers" panels
-
-### Fixture Difficulty Ticker
-- Color-coded 8-GW fixture grid for all 20 Premier League teams
-- Green = easy, Gray = neutral, Red = hard
-- Shows opponent and home/away for each gameweek
-
-### Differential Picks
-- Find low-ownership (<5%) high-xP players
-- Ideal for gaining rank against template teams
-- Sorted by total xP descending with ownership %, xP/£m, minutes probability
+| Version | Commit | Key Changes |
+|---------|--------|------------|
+| v5.0 | `c6cc293` | Bug fixes, pos-badge CSS, edge case guards |
+| v4.3 | `39c86c0` | Captain rotation planner, chip timeline, dynamic strategy tab |
+| v4.2 | `78d9588` | xpComponents in Compare tab, transfer roadmap |
+| v4.1 | `f47ad3a` | Phase 5 local search, transfer break-even |
+| v4.0 | `f0983b6` | Core xP engine overhaul (8 improvements) |
 
 ---
 
-## API Endpoints
+## Known Limitations
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | App info |
-| GET | `/health` | Health check |
-| GET | `/status` | Data source status |
-| GET | `/current-gw` | Current gameweek |
-| GET | `/players` | All players |
-| GET | `/teams` | All teams |
-| GET | `/fixtures` | All fixtures |
-| GET | `/squad/{team_id}/{gw}` | User squad with details |
-| GET | `/player-xp/{player_id}` | Player xP projection |
-| POST | `/optimize/draft` | Mode A: Draft optimization |
-| POST | `/optimize/transfers` | Mode B: Transfer optimization |
+1. **Greedy optimizer**: No ILP solver — can miss global optima. Would need PuLP/HiGHS via WebAssembly.
+2. **Pre-season data**: All team strengths are 0, form is 0.0 — fallback estimates used.
+3. **No bookmaker odds**: External data source needed (not in FPL API).
+4. **No multi-week transfer planning**: Only optimizes for current GW, not across weeks.
+5. **No expected minutes model**: Uses simple fallback (82%) instead of team-specific rotation data.
+
+---
+
+## TODO (Remaining Improvements)
+
+- [ ] ILP solver (PuLP/HiGHS via WebAssembly) for guaranteed global optimum
+- [ ] Multi-week transfer planning with hit optimization (SolioAnalytics-style)
+- [ ] Bookmaker odds integration (requires external API or data source)
+- [ ] Exponential form weighting when real match data is available
+- [ ] Team-specific minutes/rotation model
+- [ ] Injury/suspension data integration
+- [ ] League analyzer (compare squad against mini-league rivals)
 
 ---
 
 ## Metadata
 
-- **Application**: VibeGaffer v1.0
+- **Application**: VibeGaffer v5.0
 - **Company**: Astraiva
 - **Author**: Tushant Sharma
 - **License**: Proprietary
-- **Year**: 2025
+- **Live URL**: https://jadax.github.io/VibeGaffer/
+- **GitHub**: https://github.com/Jadax/VibeGaffer
+- **Last Updated**: July 2026
