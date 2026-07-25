@@ -74,6 +74,8 @@
       <p class="subtitle">Select 2-3 players to compare across key metrics.</p>
       <select class="player-select" id="compareSelect" multiple size="8" style="height:140px;margin-bottom:16px;"></select>
       <div class="compare-chart-wrap"><canvas id="radarChart"></canvas></div>
+      <div style="margin:16px 0 8px;color:#94a3b8;font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">xP Breakdown by Source</div>
+      <div style="height:200px;margin-bottom:12px;"><canvas id="compareBarContainer"></canvas></div>
       <div id="compareTable"></div>
     </div>
 
@@ -235,6 +237,50 @@ VG.run = async () => {
         }
       } else if (result.freeTransfersUsed <= 1) {
         html += `<div style="text-align:center;color:#00ff87;font-size:0.72rem;margin-top:8px;">✓ Using free transfer only — champion strategy</div>`;
+      }
+    }
+
+    // Transfer Roadmap: per-GW fixture grid + recommendations
+    if (result.mode === "draft" && result.squad?.length >= 11) {
+      const roadmap = VG.computeTransferRoadmap(result.squad, allXP, VG.allFixtures, parseInt(el("gw").value), 5);
+      if (roadmap && roadmap.length > 0) {
+        html += '<div class="section-title" style="margin-top:24px;">Transfer Roadmap <span style="color:#475569;font-size:0.65rem;font-weight:400;margin-left:4px;">fixture outlook + swap suggestions</span></div>';
+
+        // Fixture grid for squad
+        const gwHeaders = roadmap.map(r => `GW${r.gw}`).join('</th><th style="text-align:center;">');
+        html += '<table class="data-table" style="font-size:0.7rem;"><tr><th style="text-align:left;">Player</th><th>Pos</th><th style="text-align:center;">' + gwHeaders + '</th></tr>';
+        result.squad.sort((a, b) => a.positionId - b.positionId || b.totalXP - a.totalXP).forEach(sp => {
+          const pid = sp.element || sp.id;
+          const xp = allXP.find(p => p.id === pid);
+          if (!xp) return;
+          const posCls = VG.POS_SHIRT[xp.positionId];
+          html += `<tr><td style="color:#e2e8f0;"><span class="pos-badge ${posCls}" style="font-size:0.55rem;padding:1px 4px;">${xp.position}</span> ${xp.name}</td><td style="color:#475569;">£${xp.price.toFixed(1)}m</td>`;
+          roadmap.forEach(r => {
+            const p = r.players.find(pl => pl.id === pid);
+            if (!p) { html += '<td style="text-align:center;color:#334155;">-</td>'; return; }
+            const bg = p.fdr === 0 ? '#1e1b4b' : p.fdr <= 2 ? 'rgba(34,197,94,0.15)' : p.fdr === 3 ? 'rgba(255,255,255,0.03)' : p.fdr >= 4 ? 'rgba(239,68,68,0.15)' : 'transparent';
+            const color = p.fdr === 0 ? '#475569' : p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#94a3b8';
+            html += `<td style="text-align:center;background:${bg};color:${color};font-weight:600;">${p.oppName}${p.isHome ? '' : ' (A)'}</td>`;
+          });
+          html += '</tr>';
+        });
+        html += '</table>';
+
+        // Transfer recommendations per GW (only show GWs with recommendations)
+        const recGWs = roadmap.filter(r => r.recommendations.length > 0);
+        if (recGWs.length > 0) {
+          html += '<div style="margin-top:12px;font-size:0.72rem;color:#94a3b8;font-weight:600;">Suggested Swaps</div>';
+          recGWs.forEach(r => {
+            r.recommendations.slice(0, 2).forEach(rec => {
+              html += `<div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:0.7rem;">`;
+              html += `<span style="color:#475569;font-weight:600;">GW${r.gw}</span>`;
+              html += `<span style="color:#ef4444;text-decoration:line-through;">${rec.out} <span style="color:#64748b;">(${rec.outOpp}${rec.outFDR >= 4 ? ' ⚠' : ''})</span></span>`;
+              html += `<span style="color:#475569;">→</span>`;
+              html += `<span style="color:#00ff87;">${rec.in} <span style="color:#64748b;">(${rec.inOpp} £${rec.inPrice.toFixed(1)}m +${rec.gain})</span></span>`;
+              html += `</div>`;
+            });
+          });
+        }
       }
     }
 
@@ -482,38 +528,82 @@ VG.renderComparison = () => {
   const selected = Array.from(sel.selectedOptions).map(o => o.value).slice(0, 3);
   if (selected.length < 2) { document.getElementById("compareTable").innerHTML = ""; return; }
   const colors = ['#00ff87', '#7c3aed', '#fbbf24'];
-  const datasets = [];
-  const allLabels = ["Total xP", "xP/£m", "Form", "xG", "xA", "ICT", "BPS", "ep_next", "Own%"];
 
-  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>Form</th><th>xG</th><th>xA</th><th>BPS</th><th>ep_next</th><th>DEF/90</th></tr>';
+  // ── Radar: xP components (the real comparison) ──
+  const radarLabels = ["Appearance", "Clean Sheet", "Goals", "Assists", "Bonus", "DEFCON", "Saves"];
+  const radarDatasets = [];
   selected.forEach((name, i) => {
     const p = VG.allXP.find(x => x.name === name);
     if (!p) return;
-    const playerData = VG.players[p.id];
-    const form = parseFloat(playerData?.form || "0");
-    const ppg = parseFloat(playerData?.points_per_game || "0");
-    const displayForm = Math.max(form, ppg);
-    datasets.push({
+    const xc = p.xpComponents || {};
+    radarDatasets.push({
       label: name,
-      data: [(p.totalXP || 0).toFixed(1), (p.xpPerPrice || 0).toFixed(1), displayForm.toFixed(1), (p.xG || 0).toFixed(1), (p.xA || 0).toFixed(1), (p.ict || 0).toFixed(1), (p.bps || 0), (p.epNext || 0).toFixed(1), (p.ownership || 0).toFixed(0)],
+      data: [xc.xpAppearance || 0, xc.xpCS || 0, xc.xpGoals || 0, xc.xpAssists || 0, xc.xpBonus || 0, xc.xpDEFCON || 0, xc.xpSaves || 0],
       borderColor: colors[i], backgroundColor: colors[i] + "18", borderWidth: 2, pointRadius: 3
     });
-    tableHtml += `<tr><td style="color:#e2e8f0;">${name}</td><td>${p.position}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${displayForm.toFixed(1)}</td><td>${(p.xG || 0).toFixed(1)}</td><td>${(p.xA || 0).toFixed(1)}</td><td>${(p.bps || 0)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td>${(p.defconPer90 || 0).toFixed(2)}</td></tr>`;
   });
-  tableHtml += '</table>';
-  document.getElementById("compareTable").innerHTML = tableHtml;
 
-  const ctx = document.getElementById("radarChart");
-  if (ctx._chart) ctx._chart.destroy();
-  ctx._chart = new Chart(ctx, {
+  const radarCtx = document.getElementById("radarChart");
+  if (radarCtx._chart) radarCtx._chart.destroy();
+  radarCtx._chart = new Chart(radarCtx, {
     type: 'radar',
-    data: { labels: allLabels, datasets },
+    data: { labels: radarLabels, datasets: radarDatasets },
     options: {
       responsive: true, maintainAspectRatio: false,
       scales: { r: { grid: { color: 'rgba(255,255,255,0.05)' }, pointLabels: { color: '#64748b', font: { size: 11, family: 'Inter' } }, ticks: { display: false }, suggestedMin: 0 } },
       plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11, family: 'Inter' } } } }
     }
   });
+
+  // ── Stacked xP breakdown bar chart ──
+  const barLabels = selected;
+  const barComponents = ['xpAppearance', 'xpCS', 'xpGoals', 'xpAssists', 'xpBonus', 'xpDEFCON', 'xpSaves'];
+  const barColors = ['#64748b', '#3b82f6', '#22c55e', '#a78bfa', '#fbbf24', '#f97316', '#06b6d4'];
+  const barNames = ['Appearance', 'Clean Sheet', 'Goals', 'Assists', 'Bonus', 'DEFCON', 'Saves'];
+  const barDatasets = barComponents.map((comp, ci) => ({
+    label: barNames[ci],
+    data: selected.map(name => {
+      const p = VG.allXP.find(x => x.name === name);
+      return p?.xpComponents?.[comp] || 0;
+    }),
+    backgroundColor: barColors[ci]
+  }));
+
+  const barContainer = document.getElementById("compareBarContainer");
+  if (barContainer) {
+    if (barContainer._chart) barContainer._chart.destroy();
+    barContainer._chart = new Chart(barContainer, {
+      type: 'bar',
+      data: { labels: barLabels, datasets: barDatasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        indexAxis: 'y',
+        scales: {
+          x: { stacked: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', font: { size: 10 } } },
+          y: { stacked: true, grid: { display: false }, ticks: { color: '#e2e8f0', font: { size: 12, family: 'Inter', weight: 'bold' } } }
+        },
+        plugins: { legend: { labels: { color: '#94a3b8', font: { size: 10, family: 'Inter' } } } }
+      }
+    });
+  }
+
+  // ── Table: raw stats + xP components ──
+  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>App</th><th>CS</th><th>Goals</th><th>Assists</th><th>Bonus</th><th>DEFCON</th><th>Saves</th></tr>';
+  selected.forEach((name) => {
+    const p = VG.allXP.find(x => x.name === name);
+    if (!p) return;
+    const xc = p.xpComponents || {};
+    tableHtml += `<tr><td style="color:#e2e8f0;">${name}</td><td>${p.position}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
+    tableHtml += `<td>${(xc.xpAppearance || 0).toFixed(1)}</td>`;
+    tableHtml += `<td>${(xc.xpCS || 0).toFixed(1)}</td>`;
+    tableHtml += `<td>${(xc.xpGoals || 0).toFixed(1)}</td>`;
+    tableHtml += `<td>${(xc.xpAssists || 0).toFixed(1)}</td>`;
+    tableHtml += `<td>${(xc.xpBonus || 0).toFixed(1)}</td>`;
+    tableHtml += `<td>${(xc.xpDEFCON || 0).toFixed(1)}</td>`;
+    tableHtml += `<td>${(xc.xpSaves || 0).toFixed(1)}</td></tr>`;
+  });
+  tableHtml += '</table>';
+  document.getElementById("compareTable").innerHTML = tableHtml;
 };
 
 VG.init();

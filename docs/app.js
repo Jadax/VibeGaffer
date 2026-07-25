@@ -2,6 +2,7 @@ const VG = {};
 
 VG.FPL = "https://fantasy.premierleague.com/api";
 VG.POSITIONS = { 1: "GK", 2: "DEF", 3: "MID", 4: "FWD" };
+VG.POSITIONS_R = { GK: 1, DEF: 2, MID: 3, FWD: 4 };
 VG.POS_TARGET = { 1: 2, 2: 5, 3: 5, 4: 3 };
 VG.POS_SHIRT = { 1: "gk", 2: "def", 3: "mid", 4: "fwd" };
 VG.CACHE_TTL = 1800000;
@@ -380,7 +381,16 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
     bonusProb: projBonus,
     defconProb: defconXP,
     fdr,
-    xpComponents: { xpAppearance, xpCS, xpGoals, xpAssists, xpBonus, xpSaves, xpDEFCON, xpNegative }
+    xpComponents: {
+      xpAppearance: +(xpAppearance * captainBonus).toFixed(4),
+      xpCS: +(xpCS * captainBonus).toFixed(4),
+      xpGoals: +(xpGoals * captainBonus).toFixed(4),
+      xpAssists: +(xpAssists * captainBonus).toFixed(4),
+      xpBonus: +(xpBonus * captainBonus).toFixed(4),
+      xpSaves: +(xpSaves * captainBonus).toFixed(4),
+      xpDEFCON: +(xpDEFCON * captainBonus).toFixed(4),
+      xpNegative: +(xpNegative * captainBonus).toFixed(4)
+    }
   };
 };
 
@@ -1258,6 +1268,71 @@ VG.analyzeFixtureSwings = (startGW, nGWs, fixtures) => {
   return swings;
 };
 
+// ── Multi-Week Transfer Roadmap ─────────────────────────────────────
+// Analyzes squad fixtures across the horizon and recommends transfers per GW
+VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
+  if (!squad || squad.length < 11 || !allXP || allXP.length === 0) return null;
+
+  const roadmap = [];
+  const squadIds = new Set(squad.map(p => p.element || p.id));
+  const squadXP = allXP.filter(p => squadIds.has(p.id));
+  const bank = 0; // Simplified — assume neutral budget
+
+  for (let gw = startGW; gw < startGW + nGWs; gw++) {
+    const gwFix = fixtures.filter(f => f.event === gw);
+    const gwData = { gw, players: [], problems: [], recommendations: [] };
+
+    // Analyze each squad player's fixture
+    squad.forEach(sp => {
+      const pid = sp.element || sp.id;
+      const xp = squadXP.find(p => p.id === pid);
+      if (!xp) return;
+      const f = gwFix.find(fi => fi.team_h === xp.teamId || fi.team_a === xp.teamId);
+      const isHome = f ? f.team_h === xp.teamId : false;
+      const oppId = f ? (isHome ? f.team_a : f.team_h) : null;
+      const fdr = f ? (isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3)) : 0;
+      const oppName = oppId ? (VG.teams[oppId]?.short_name || "?") : "BLANK";
+      const gwXP = xp.gwXP || (xp.totalXP / Math.max(nGWs, 1));
+
+      const info = { name: xp.name, position: xp.position, teamId: xp.teamId, fdr, oppName, isHome, gwXP, id: pid, price: xp.price, totalXP: xp.totalXP };
+      gwData.players.push(info);
+
+      if (fdr >= 4 || fdr === 0) {
+        gwData.problems.push(info);
+      }
+    });
+
+    // For each problem player, find the best replacement
+    gwData.problems.forEach(prob => {
+      const posId = VG.POSITIONS_R[prob.position];
+      const upgrades = allXP.filter(p =>
+        !squadIds.has(p.id) &&
+        p.positionId === posId &&
+        p.totalXP > prob.totalXP * 0.9
+      ).sort((a, b) => (b.totalXP / b.price) - (a.totalXP / a.price));
+
+      if (upgrades.length > 0) {
+        const best = upgrades[0];
+        const bestF = gwFix.find(f => f.team_h === best.teamId || f.team_a === best.teamId);
+        const bestIsHome = bestF ? bestF.team_h === best.teamId : false;
+        const bestFDR = bestF ? (bestIsHome ? (bestF.team_h_difficulty || 3) : (bestF.team_a_difficulty || 3)) : 3;
+        const bestOpp = bestF ? (bestIsHome ? VG.teams[bestIsHome ? bestF.team_a : bestF.team_h]?.short_name || "?" : VG.teams[bestIsHome ? bestF.team_a : bestF.team_h]?.short_name || "?") : "?";
+
+        gwData.recommendations.push({
+          out: prob.name, outFDR: prob.fdr, outOpp: prob.oppName,
+          in: best.name, inFDR: bestFDR, inOpp: bestOpp, inPrice: best.price, inXP: best.totalXP,
+          gain: +(best.totalXP - prob.totalXP).toFixed(1)
+        });
+      }
+    });
+
+    gwData.recommendations.sort((a, b) => b.gain - a.gain);
+    roadmap.push(gwData);
+  }
+
+  return roadmap;
+};
+
 // ── Price Change Risk ─────────────────────────────────────────────────
 VG.getPriceRisk = async () => {
   const data = VG.bootstrapData;
@@ -1365,9 +1440,6 @@ VG.render.metrics = (result) => {
     `<div class="metric"><div class="metric-label">${m.label}</div><div class="metric-value" style="color:${m.color}">${m.value}</div></div>`
   ).join('') + '</div>';
 };
-
-VG.render.metricCard = (label, value, color) =>
-  `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value" style="color:${color}">${value}</div></div>`;
 
 VG.render.chipCard = (label, color, advice) => {
   const active = advice.recommend ? " active" : "";
