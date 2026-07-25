@@ -9,7 +9,7 @@ This file provides context for AI models working on the VibeGaffer codebase.
 - **Live URL**: https://jadax.github.io/VibeGaffer/
 - **Data**: Auto-fetched every 15 min via GitHub Actions cron → `docs/data/*.json`
 - **ILP Solver**: highs-js (HiGHS WASM) loaded from CDN, falls back to greedy
-- **Odds**: The-Odds-API free tier (500 req/month), fetched by GitHub Actions → `docs/data/odds.json`
+- **Odds**: The-Odds-API free tier (500 req/month), fetched daily by separate cron → `docs/data/odds.json`
 
 ## Critical Files
 
@@ -133,6 +133,10 @@ Run: `node test_v5.js`
 - Version commits: `v{major}.{minor}: {description}`
 - Bug fixes: `fix: {description}`
 - Tags: `v{major}.{minor}` (e.g., `v5.0`)
+
+## Setup Requirements
+
+- **Odds API** (optional): Add `ODDS_API_KEY` as a GitHub Actions repository secret from https://the-odds-api.com (free tier: 500 req/month). Without it, the app works fine but without odds adjustments.
 
 ## FPL API
 

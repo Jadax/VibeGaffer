@@ -1,0 +1,139 @@
+name: Fetch Bookmaker Odds
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Once per day at 6 AM UTC (~30 req/month)
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Fetch odds from The-Odds-API
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          mkdir -p docs/data
+          if [ -z "$ODDS_API_KEY" ]; then
+            echo "No ODDS_API_KEY secret set — skipping odds fetch"
+            exit 0
+          fi
+
+          # Single request returns ALL upcoming PL fixtures with odds
+          # Free tier: 500 req/month, this uses 1
+          curl -sL -o /tmp/odds_raw.json \
+            "https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?apiKey=${ODDS_API_KEY}&regions=uk&markets=h2h,spreads,totals&bookmakers=bet365,pinnacle,betfair_ex_uk"
+
+          if [ ! -s /tmp/odds_raw.json ]; then
+            echo "Empty response from odds API"
+            exit 0
+          fi
+
+          python3 -c "
+          import json, sys, os
+
+          # Validate response
+          try:
+              with open('/tmp/odds_raw.json') as f:
+                  odds_data = json.load(f)
+              if not isinstance(odds_data, list):
+                  print('Response not a list:', type(odds_data))
+                  sys.exit(0)
+          except json.JSONDecodeError as e:
+              print(f'Invalid JSON: {e}')
+              sys.exit(0)
+
+          # Load FPL teams for name mapping
+          try:
+              bootstrap = json.load(open('docs/data/bootstrap.json'))
+              team_map = {}
+              for t in bootstrap.get('teams', []):
+                  team_map[t['name'].lower()] = t['short_name']
+                  team_map[t.get('short_name','').lower()] = t['short_name']
+          except:
+              team_map = {}
+
+          # Common betting name -> FPL short_name aliases
+          aliases = {
+              'manchester city': 'MCI', 'man city': 'MCI', 'city': 'MCI',
+              'manchester united': 'MUN', 'man utd': 'MUN', 'manchester utd': 'MUN',
+              'liverpool': 'LIV', 'liverpool fc': 'LIV',
+              'arsenal': 'ARS', 'arsenal fc': 'ARS',
+              'chelsea': 'CHE', 'chelsea fc': 'CHE',
+              'tottenham': 'TOT', 'tottenham hotspur': 'TOT', 'spurs': 'TOT',
+              'newcastle': 'NEW', 'newcastle united': 'NEW',
+              'aston villa': 'AVL', 'villa': 'AVL',
+              'brighton': 'BHA', 'brighton & hove albion': 'BHA', 'brighton and hove albion': 'BHA',
+              'west ham': 'WHU', 'west ham united': 'WHU',
+              'crystal palace': 'CRY', 'palace': 'CRY',
+              'wolves': 'WOL', 'wolverhampton': 'WOL', 'wolverhampton wanderers': 'WOL',
+              'fulham': 'FUL', 'fulham fc': 'FUL',
+              'bournemouth': 'BOU', 'afc bournemouth': 'BOU',
+              'brentford': 'BRE', 'brentford fc': 'BRE',
+              'nottingham forest': 'NFO', 'nottm forest': 'NFO', 'forest': 'NFO',
+              'everton': 'EVE', 'everton fc': 'EVE',
+              'burnley': 'BUR',
+              'luton': 'LUT', 'luton town': 'LUT',
+              'sheffield utd': 'SHU', 'sheffield united': 'SHU',
+              'ipswich': 'IPS', 'ipswich town': 'IPS',
+              'leicester': 'LEI', 'leicester city': 'LEI',
+              'sunderland': 'SUN', 'sunderland afc': 'SUN'
+          }
+          team_map.update(aliases)
+
+          def find_team_id(name):
+              name_lower = name.lower().strip()
+              if name_lower in team_map:
+                  return team_map[name_lower]
+              for key, val in team_map.items():
+                  if key in name_lower or name_lower in key:
+                      return val
+              return name
+
+          mapped = []
+          for event in odds_data:
+              home = find_team_id(event.get('home_team', ''))
+              away = find_team_id(event.get('away_team', ''))
+              h2h = {}
+              totals = {}
+              for bm_name, bm_markets in event.get('bookmakers', {}).items():
+                  for market in bm_markets:
+                      if market['key'] == 'h2h' and market.get('outcomes'):
+                          for o in market['outcomes']:
+                              if o['name'] == event.get('home_team', ''): h2h['home'] = float(o['price'])
+                              elif o['name'] == event.get('away_team', ''): h2h['away'] = float(o['price'])
+                              elif o['name'] == 'Draw': h2h['draw'] = float(o['price'])
+                      elif market['key'] == 'totals' and market.get('outcomes'):
+                          for o in market['outcomes']:
+                              if o['name'] == 'Over': totals['over'] = float(o['point'])
+                              elif o['name'] == 'Under': totals['under'] = float(o['point'])
+              if h2h:
+                  mapped.append({
+                      'home': home, 'away': away,
+                      'commence_time': event.get('commence_time', ''),
+                      'h2h': h2h,
+                      'totals': totals
+                  })
+
+          with open('docs/data/odds.json', 'w') as f:
+              json.dump(mapped, f)
+          print(f'OK: {len(mapped)} fixtures with odds')
+          "
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/odds.json
+          if git diff --staged --quiet; then
+            echo "No odds changes"
+          else
+            git commit -m "data: auto-fetch bookmaker odds [skip ci]"
+            git push
+          fi

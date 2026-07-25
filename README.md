@@ -188,6 +188,12 @@ Personalized tips generated from actual squad data:
 
 ---
 
+## Setup
+
+- **Odds API** (optional): Add `ODDS_API_KEY` as a GitHub Actions repository secret from https://the-odds-api.com (free tier: 500 req/month). The odds workflow runs once per day (~30 req/month). Without it, the app works fine but without odds adjustments.
+
+---
+
 ## File Structure
 
 ```

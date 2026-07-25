@@ -37,118 +37,16 @@ jobs:
           curl -sL -o docs/data/fixtures.json \
             "https://corsproxy.io/?$(printf '%s' 'https://fantasy.premierleague.com/api/fixtures/')" 2>/dev/null || true
 
-      - name: Fetch bookmaker odds
-        if: env.ODDS_API_KEY != ''
-        env:
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: |
-          curl -sL -o /tmp/odds_raw.json \
-            "https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?apiKey=${ODDS_API_KEY}&regions=uk&markets=h2h,spreads,totals&bookmakers=bet365,pinnacle,betfair_ex_uk" 2>/dev/null
-          if [ -s /tmp/odds_raw.json ] && python3 -c "import json; json.load(open('/tmp/odds_raw.json'))" 2>/dev/null; then
-            python3 -c "
-          import json, sys
-
-          # Load FPL teams for name mapping
-          try:
-              bootstrap = json.load(open('docs/data/bootstrap.json'))
-              team_map = {}
-              for t in bootstrap.get('teams', []):
-                  # Map FPL team names to common betting names
-                  team_map[t['name'].lower()] = t['short_name']
-                  team_map[t.get('short_name','').lower()] = t['short_name']
-              # Common betting name -> FPL short_name mappings
-              aliases = {
-                  'manchester city': 'MCI', 'man city': 'MCI', 'city': 'MCI',
-                  'manchester united': 'MUN', 'man utd': 'MUN', 'manchester utd': 'MUN',
-                  'liverpool': 'LIV', 'liverpool fc': 'LIV',
-                  'arsenal': 'ARS', 'arsenal fc': 'ARS',
-                  'chelsea': 'CHE', 'chelsea fc': 'CHE',
-                  'tottenham': 'TOT', 'tottenham hotspur': 'TOT', 'spurs': 'TOT',
-                  'newcastle': 'NEW', 'newcastle united': 'NEW',
-                  'aston villa': 'AVL', 'villa': 'AVL',
-                  'brighton': 'BHA', 'brighton & hove albion': 'BHA', 'brighton and hove albion': 'BHA',
-                  'west ham': 'WHU', 'west ham united': 'WHU',
-                  'crystal palace': 'CRY', 'palace': 'CRY',
-                  'wolves': 'WOL', 'wolverhampton': 'WOL', 'wolverhampton wanderers': 'WOL',
-                  'fulham': 'FUL', 'fulham fc': 'FUL',
-                  'bournemouth': 'BOU', 'afc bournemouth': 'BOU',
-                  'brentford': 'BRE', 'brentford fc': 'BRE',
-                  'nottingham forest': 'NFO', "nottm forest": 'NFO', 'forest': 'NFO',
-                  'everton': 'EVE', 'everton fc': 'EVE',
-                  'burnley': 'BUR',
-                  'luton': 'LUT', 'luton town': 'LUT',
-                  'sheffield utd': 'SHU', 'sheffield united': 'SHU',
-                  'ipswich': 'IPS', 'ipswich town': 'IPS',
-                  'leicester': 'LEI', 'leicester city': 'LEI',
-                  'sunderland': 'SUN', 'sunderland afc': 'SUN'
-              }
-              team_map.update(aliases)
-          except:
-              team_map = {}
-
-          with open('/tmp/odds_raw.json') as f:
-              odds_data = json.load(f)
-
-          def find_team_id(name):
-              name_lower = name.lower().strip()
-              if name_lower in team_map:
-                  return team_map[name_lower]
-              # Try partial match
-              for key, val in team_map.items():
-                  if key in name_lower or name_lower in key:
-                      return val
-              return name
-
-          mapped = []
-          for event in odds_data:
-              home = find_team_id(event.get('home_team', ''))
-              away = find_team_id(event.get('away_team', ''))
-              h2h = {}
-              spreads = {}
-              totals = {}
-              for bm_name, bm_markets in event.get('bookmakers', {}).items():
-                  for market in bm_markets:
-                      if market['key'] == 'h2h' and market.get('outcomes'):
-                          for o in market['outcomes']:
-                              if o['name'] == home: h2h['home'] = float(o['price'])
-                              elif o['name'] == away: h2h['away'] = float(o['price'])
-                              elif o['name'] == 'Draw': h2h['draw'] = float(o['price'])
-                      elif market['key'] == 'totals' and market.get('outcomes'):
-                          for o in market['outcomes']:
-                              if o['name'] == 'Over': totals['over'] = float(o['point'])
-                              elif o['name'] == 'Under': totals['under'] = float(o['point'])
-              if h2h:
-                  mapped.append({
-                      'home': home, 'away': away,
-                      'commence_time': event.get('commence_time', ''),
-                      'h2h': h2h,
-                      'totals': totals
-                  })
-
-          with open('docs/data/odds.json', 'w') as f:
-              json.dump(mapped, f)
-          print(f'OK: {len(mapped)} fixtures with odds')
-          " 2>/dev/null && echo "Odds saved" || echo "Odds mapping failed"
-          else
-            echo "No odds data or API key invalid"
-          fi
-
       - name: Validate JSON
         run: |
           python3 -c "
-          import json, sys, os
+          import json, sys
           for f in ['docs/data/bootstrap.json', 'docs/data/fixtures.json']:
             with open(f) as fh:
               data = json.load(fh)
               if 'elements' in data: print(f'OK: {len(data[\"elements\"])} players')
               elif isinstance(data, list): print(f'OK: {len(data)} fixtures')
               else: print(f'WARN: unexpected format in {f}')
-          if os.path.exists('docs/data/odds.json'):
-            with open('docs/data/odds.json') as fh:
-              odds = json.load(fh)
-              print(f'OK: {len(odds)} odds entries')
-          else:
-            print('No odds.json (optional)')
           "
 
       - name: Commit and push if changed
