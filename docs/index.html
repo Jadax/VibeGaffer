@@ -242,7 +242,7 @@ VG.run = async () => {
 
     // Transfer Roadmap: per-GW fixture grid + recommendations
     if (result.mode === "draft" && result.squad?.length >= 11) {
-      const roadmap = VG.computeTransferRoadmap(result.squad, allXP, VG.allFixtures, parseInt(el("gw").value), 5);
+      const roadmap = VG.computeTransferRoadmap(result.squad, allXP, VG.allFixtures, parseInt(el("gameweek").value), 5);
       if (roadmap && roadmap.length > 0) {
         html += '<div class="section-title" style="margin-top:24px;">Transfer Roadmap <span style="color:#475569;font-size:0.65rem;font-weight:400;margin-left:4px;">fixture outlook + swap suggestions</span></div>';
 
@@ -296,7 +296,7 @@ VG.run = async () => {
 
     // Captain Rotation Planner
     if (result.squad?.length >= 11) {
-      const capRotation = VG.computeCaptainRotation(result.squad, allXP, VG.allFixtures, parseInt(el("gw").value), 5);
+      const capRotation = VG.computeCaptainRotation(result.squad, allXP, VG.allFixtures, parseInt(el("gameweek").value), 5);
       if (capRotation && capRotation.length > 0) {
         html += '<div class="section-title" style="margin-top:20px;">Captain Rotation Planner</div>';
         html += '<table class="data-table" style="font-size:0.72rem;"><tr><th>GW</th><th>#1 Pick</th><th>xP</th><th>Opp (FDR)</th><th>#2 Pick</th><th>xP</th><th>Opp (FDR)</th><th>#3 Pick</th><th>xP</th><th>Opp (FDR)</th></tr>';
@@ -583,7 +583,7 @@ VG.preloadTabs = async (gw, horizon) => {
   }
 
   try {
-    document.getElementById("tipsContent").innerHTML = VG.render.tips(VG.currentResult, VG.allXP, VG.allFixtures, parseInt(el('gw').value), 5);
+    document.getElementById("tipsContent").innerHTML = VG.render.tips(VG.currentResult, VG.allXP, VG.allFixtures, parseInt(el('gameweek').value), 5);
   } catch(e) {
     console.warn("[VG] Tips:", e);
   }

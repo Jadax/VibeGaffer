@@ -1302,7 +1302,7 @@ VG.computeCaptainRotation = (squad, allXP, fixtures, startGW, nGWs) => {
 // ── Transfer Roadmap ───────────────────────────────────────────────
 // Analyzes squad fixtures across the horizon and recommends transfers per GW
 VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
-  if (!squad || squad.length < 11 || !allXP || allXP.length === 0) return null;
+  if (!squad || squad.length < 11 || !allXP || allXP.length === 0 || !fixtures || fixtures.length === 0) return null;
 
   const roadmap = [];
   const squadIds = new Set(squad.map(p => p.element || p.id));
@@ -1347,7 +1347,8 @@ VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
         const bestF = gwFix.find(f => f.team_h === best.teamId || f.team_a === best.teamId);
         const bestIsHome = bestF ? bestF.team_h === best.teamId : false;
         const bestFDR = bestF ? (bestIsHome ? (bestF.team_h_difficulty || 3) : (bestF.team_a_difficulty || 3)) : 3;
-        const bestOpp = bestF ? (bestIsHome ? VG.teams[bestIsHome ? bestF.team_a : bestF.team_h]?.short_name || "?" : VG.teams[bestIsHome ? bestF.team_a : bestF.team_h]?.short_name || "?") : "?";
+        const bestOppId = bestF ? (bestIsHome ? bestF.team_a : bestF.team_h) : null;
+        const bestOpp = bestOppId ? (VG.teams[bestOppId]?.short_name || "?") : "?";
 
         gwData.recommendations.push({
           out: prob.name, outFDR: prob.fdr, outOpp: prob.oppName,
