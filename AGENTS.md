@@ -8,6 +8,8 @@ This file provides context for AI models working on the VibeGaffer codebase.
 - **Architecture**: Pure static HTML/CSS/JS on GitHub Pages (no backend)
 - **Live URL**: https://jadax.github.io/VibeGaffer/
 - **Data**: Auto-fetched every 15 min via GitHub Actions cron → `docs/data/*.json`
+- **ILP Solver**: highs-js (HiGHS WASM) loaded from CDN, falls back to greedy
+- **Odds**: The-Odds-API free tier (500 req/month), fetched by GitHub Actions → `docs/data/odds.json`
 
 ## Critical Files
 
@@ -46,6 +48,7 @@ The xP engine computes per-fixture expected points using:
 - Exponential form weighting: hot streaks amplified (1.3x power), cold streaks dampened (0.7x power)
 - DEFCON calibration to real 2025/26 data
 - Captain ceiling bonus (FWD 1.15x, premium MID 1.18x)
+- **Bookmaker odds adjustment**: Implied win probabilities from 1X2 odds boost favorite attack (0.88-1.20x), penalize underdog defense
 
 ### Injury-Aware Optimizer (v5.1)
 
@@ -70,6 +73,7 @@ Start-rate model using last season data:
 
 ### Optimizer
 - `VG.optimizeDraft(players, budget, fixtures, startGW, nGWs)` → 5-phase squad builder (injury-aware)
+- `VG.optimizeDraftILP(players, budget, fixtures, startGW, nGWs)` → ILP solver via HiGHS WASM (globally optimal, falls back to greedy)
 - `VG.optimizeStrategies(players, budget, fixtures, startGW, nGWs)` → 3 strategies
 - `VG.optimizeTransfers(squad, players, bank, freeTransfers, fixtures, startGW, nGWs)` → transfer recommendations with break-even (injury-aware)
 

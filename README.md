@@ -76,6 +76,15 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 All phases filter out injured/suspended/unavailable players (`status !== 'a' && status !== 'd'`).
 
+### ILP Solver (v5.1)
+
+Globally optimal squad via HiGHS WebAssembly solver:
+- Loads `highs-js` from CDN (no build step, ~4MB WASM)
+- Generates CPLEX .lp format: binary variables for each player, maximize xP
+- Constraints: 15 players, position counts, budget ≤ £100m, max 3 per team
+- Falls back to greedy optimizer if WASM fails to load
+- Produces provably optimal solution (vs greedy's local optimum)
+
 ### Multi-Strategy Optimizer
 
 Three strategies run simultaneously, best wins:
@@ -100,6 +109,7 @@ Position-specific, opponent-aware, multi-signal expected points projection:
 - **DEFCON calibration**: Defensive contributions calibrated to real 2025/26 data (CBs ~1.4 pts/game)
 - **Captain ceiling bonus**: FWD 1.15x, premium MID 1.18x, budget MID 1.08x
 - **Home advantage**: 1.15x multiplier
+- **Bookmaker odds adjustment** (v5.1): Implied win probabilities from 1X2 odds boost favorite attack (0.88-1.20x), penalize underdog defense, adjust clean sheet probability based on expected scoring
 
 ### Captain Rotation Planner
 
@@ -304,6 +314,7 @@ Test coverage:
 | Version | Commit | Key Changes |
 |---------|--------|------------|
 | v5.1 | — | Injury-aware optimizer, multi-week transfer planner, league analyzer |
+| v5.1 | — | Injury-aware optimizer, ILP solver (HiGHS WASM), bookmaker odds, transfer planner, league analyzer |
 | v5.0 | `c6cc293` | Bug fixes, pos-badge CSS, edge case guards |
 | v4.3 | `39c86c0` | Captain rotation planner, chip timeline, dynamic strategy tab |
 | v4.2 | `78d9588` | xpComponents in Compare tab, transfer roadmap |
@@ -314,11 +325,10 @@ Test coverage:
 
 ## Known Limitations
 
-1. **Greedy optimizer**: No ILP solver — can miss global optima. Would need PuLP/HiGHS via WebAssembly.
+1. **ILP solver WASM**: HiGHS WASM is ~4MB, loaded from CDN on first optimization. Falls back to greedy if CDN unavailable.
 2. **Pre-season data**: All team strengths are 0, form is 0.0 — fallback estimates used.
-3. **No bookmaker odds**: External data source needed (not in FPL API).
-4. **No expected minutes model**: Uses simple fallback (82%) instead of team-specific rotation data.
-5. **Python files are dead code**: `app.py`, `backend.py`, `data_loader.py`, `xp_engine.py`, `optimizer.py` from old architecture.
+3. **Bookmaker odds**: Requires `ODDS_API_KEY` secret in GitHub Actions (The-Odds-API free tier, 500 req/month). Without key, app works fine without odds.
+4. **Python files are dead code**: `app.py`, `backend.py`, `data_loader.py`, `xp_engine.py`, `optimizer.py` from old architecture.
 
 ---
 
@@ -329,8 +339,8 @@ Test coverage:
 - [x] ~~League analyzer~~ (v5.1: analyzeLeague with ownership analysis)
 - [x] ~~Team-specific minutes/rotation model~~ (v5.1: start-rate model with sub risk + confidence regression)
 - [x] ~~Exponential form weighting~~ (v5.1: hot streaks 1.3x power, cold 0.7x power)
-- [ ] ILP solver (PuLP/HiGHS via WebAssembly) for guaranteed global optimum
-- [ ] Bookmaker odds integration (requires external API or data source)
+- [x] ~~ILP solver (PuLP/HiGHS via WebAssembly)~~ (v5.1: highs-js from CDN, falls back to greedy)
+- [x] ~~Bookmaker odds integration~~ (v5.1: The-Odds-API via GitHub Actions → odds.json, adjusts xP engine)
 
 ---
 

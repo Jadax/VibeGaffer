@@ -91,6 +91,20 @@ VG.loadFixtures = async () => {
   return VG.fetch(VG.FPL + "/fixtures/", "fixtures");
 };
 
+VG.loadOdds = async () => {
+  try {
+    const r = await fetch("data/odds.json", { cache: "no-cache" });
+    if (r.ok) {
+      const j = await r.json();
+      if (Array.isArray(j) && j.length > 0) {
+        VG.oddsData = j;
+        return j;
+      }
+    }
+  } catch (e) { console.warn("[VG] Odds data unavailable (optional):", e.message); }
+  return [];
+};
+
 VG.loadSquad = async (tid, gw) => {
   const [info, picks] = await Promise.all([
     VG.fetch(VG.FPL + "/entry/" + tid + "/", "team"),
@@ -276,6 +290,46 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const attMult = fdrMult[fdr] || 1.0;
   const defMult = fdrMult[6 - (fdr || 3)] || 1.0;
 
+  // ── Bookmaker odds adjustment (if available) ──
+  let oddsAttMult = 1.0;
+  let oddsDefMult = 1.0;
+  let oddsCSMult = 1.0;
+  if (VG.oddsData && VG.oddsData.length > 0 && oppTeamId) {
+    const oppTeam = VG.teams[oppTeamId];
+    const thisTeam = VG.teams[p.team];
+    if (oppTeam && thisTeam) {
+      const matchOdds = VG.oddsData.find(o =>
+        (o.home === thisTeam.short_name && o.away === oppTeam.short_name) ||
+        (o.away === thisTeam.short_name && o.home === oppTeam.short_name)
+      );
+      if (matchOdds && matchOdds.h2h) {
+        const h = matchOdds.h2h.home || 3.0;
+        const d = matchOdds.h2h.draw || 3.0;
+        const a = matchOdds.h2h.away || 3.0;
+        // Implied probabilities (remove overround)
+        const rawH = 1 / h, rawD = 1 / d, rawA = 1 / a;
+        const total = rawH + rawD + rawA;
+        const pH = rawH / total, pD = rawD / total, pA = rawA / total;
+        // Determine which side this team is on
+        const isThisHome = matchOdds.home === thisTeam.short_name;
+        const thisWinProb = isThisHome ? pH : pA;
+        const thisLoseProb = isThisHome ? pA : pH;
+        // Attack boost: favorite gets up to 1.15x, underdog gets 0.88x
+        oddsAttMult = 0.88 + 0.27 * thisWinProb;
+        // Defense penalty: underdog concedes more
+        oddsDefMult = 0.88 + 0.27 * thisLoseProb;
+        // Clean sheet: lower if high-scoring game expected (implied from odds)
+        // Use odds-implied goal expectation: if both teams > 40% win prob, expect goals
+        const bothDangerous = (pH > 0.40 && pA > 0.30) || (pA > 0.40 && pH > 0.30);
+        oddsCSMult = bothDangerous ? 0.85 : (thisWinProb > 0.55 ? 1.10 : 1.0);
+        // Clamp all
+        oddsAttMult = Math.max(0.80, Math.min(1.20, oddsAttMult));
+        oddsDefMult = Math.max(0.80, Math.min(1.20, oddsDefMult));
+        oddsCSMult = Math.max(0.75, Math.min(1.15, oddsCSMult));
+      }
+    }
+  }
+
   // ── Position-specific team strength (attack vs defence, not just overall) ──
   const teamId = p.team;
   const team = VG.teams[teamId];
@@ -318,14 +372,14 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   // Apply opponent attacking strength: strong attack = harder clean sheet
   const oppDefFactor = (oppDefStr + (1.6 - oppAttStr)) / 2;
   const projCS = Math.min(Math.max(
-    baseCS * confidenceMult * xGCImpact * oppDefFactor
-    + csRatePer90 * confidenceMult * defMult * oppDefFactor,
+    baseCS * confidenceMult * xGCImpact * oppDefFactor * oddsCSMult
+    + csRatePer90 * confidenceMult * defMult * oppDefFactor * oddsCSMult,
     0), 0.70);
 
   // ── Goal / assist probability ──
   const homeBoost = 1.15;
-  const projGoals = Math.min(projGoalsPer90 * (isHome ? homeBoost : 1.0), 0.85);
-  const projAssists = Math.min(projAssistsPer90 * (isHome ? homeBoost : 1.0), 0.85);
+  const projGoals = Math.min(projGoalsPer90 * (isHome ? homeBoost : 1.0) * oddsAttMult, 0.85);
+  const projAssists = Math.min(projAssistsPer90 * (isHome ? homeBoost : 1.0) * oddsAttMult, 0.85);
 
   // ── Bonus: use BPS (strongest predictor) + position-specific ICT + xGI ──
   const bpsPerGameNorm = bpsPerGame / 40;
@@ -893,7 +947,202 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
   };
 };
 
-// ── Multi-Strategy: Balanced, Premium Heavy, Best Value ────────────────
+// ── ILP Solver: globally optimal squad via HiGHS WebAssembly ──────────
+// Uses highs-js (HiGHS C++ solver compiled to WASM) from CDN.
+// Falls back to greedy optimizer if WASM fails to load.
+VG._highsReady = null;
+VG._highsLoading = false;
+
+VG._loadHighs = async () => {
+  if (VG._highsReady) return VG._highsReady;
+  if (VG._highsLoading) return null;
+  VG._highsLoading = true;
+  try {
+    // Load highs-js from CDN — no build step needed
+    if (!window.Highs) {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/highs@1.8.0/build/highs.js';
+      document.head.appendChild(script);
+      await new Promise((resolve, reject) => {
+        script.onload = resolve;
+        script.onerror = reject;
+        setTimeout(reject, 8000);
+      });
+    }
+    const highs = await window.Highs({
+      locateFile: (file) => 'https://cdn.jsdelivr.net/npm/highs@1.8.0/build/' + file
+    });
+    VG._highsReady = highs;
+    return highs;
+  } catch (e) {
+    console.warn('[VG] HiGHS WASM load failed, using greedy fallback:', e.message);
+    VG._highsLoading = false;
+    return null;
+  }
+};
+
+VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12) => {
+  const highs = await VG._loadHighs();
+  if (!highs) {
+    // Fallback to greedy
+    return VG.optimizeDraft(players, budget, fixtures, startGW, nGWs);
+  }
+
+  const target = { 1: 2, 2: 5, 3: 5, 4: 3 };
+  const n = players.length;
+  if (n === 0) {
+    return { mode: "draft", squad: [], starting: [], bench: [], formation: { DEF: 4, MID: 4, FWD: 2 }, totalCost: 0, budgetRemaining: budget, totalXP: 0, benchXP: 0, gotCap: [], gwPicks: [] };
+  }
+
+  // Build CPLEX .lp problem
+  // Variables: x0, x1, ..., x_{n-1} — binary (0 or 1) for each player
+  let lp = 'Maximize\n obj:';
+  const terms = [];
+  for (let i = 0; i < n; i++) {
+    const xp = players[i].totalXP || 0;
+    if (xp > 0) terms.push(xp + ' x' + i);
+  }
+  lp += ' ' + terms.join(' + ');
+
+  lp += '\nSubject To\n';
+
+  // Constraint 1: exactly 15 players
+  const allVars = [];
+  for (let i = 0; i < n; i++) allVars.push('x' + i);
+  lp += ' squad: ' + allVars.join(' + ') + ' = 15\n';
+
+  // Constraint 2: position counts (GK=2, DEF 3-5, MID 3-5, FWD 1-3)
+  [1, 2, 3, 4].forEach(pos => {
+    const posVars = [];
+    for (let i = 0; i < n; i++) {
+      if (players[i].positionId === pos) posVars.push('x' + i);
+    }
+    if (posVars.length === 0) return;
+    const posExpr = posVars.join(' + ');
+    if (pos === 1) {
+      lp += ' gk_exact: ' + posExpr + ' = 2\n';
+    } else if (pos === 4) {
+      lp += ' fwd_min: ' + posExpr + ' >= 1\n';
+      lp += ' fwd_max: ' + posExpr + ' <= 3\n';
+    } else {
+      lp += ' pos' + pos + '_min: ' + posExpr + ' >= 3\n';
+      lp += ' pos' + pos + '_max: ' + posExpr + ' <= 5\n';
+    }
+  });
+
+  // Constraint 3: budget
+  const budgetTerms = [];
+  for (let i = 0; i < n; i++) {
+    const price = players[i].price || 0;
+    if (price > 0) budgetTerms.push(price + ' x' + i);
+  }
+  lp += ' budget: ' + budgetTerms.join(' + ') + ' <= ' + budget + '\n';
+
+  // Constraint 4: max 3 per team
+  const teamIds = new Set(players.map(p => p.teamId));
+  teamIds.forEach(tid => {
+    const teamVars = [];
+    for (let i = 0; i < n; i++) {
+      if (players[i].teamId === tid) teamVars.push('x' + i);
+    }
+    if (teamVars.length > 3) {
+      lp += ' team' + tid + ': ' + teamVars.join(' + ') + ' <= 3\n';
+    }
+  });
+
+  // Bounds + Binary
+  lp += 'Bounds\n';
+  for (let i = 0; i < n; i++) lp += ' 0 <= x' + i + ' <= 1\n';
+  lp += 'Binary\n';
+  for (let i = 0; i < n; i++) {
+    if (i > 0 && i % 20 === 0) lp += '\n';
+    lp += ' x' + i;
+  }
+  lp += '\nEnd\n';
+
+  try {
+    const sol = highs.solve(lp, { presolve: 'on' });
+    if (!sol || sol.Status !== 'Optimal') {
+      console.warn('[VG] ILP status:', sol?.Status, '- falling back to greedy');
+      return VG.optimizeDraft(players, budget, fixtures, startGW, nGWs);
+    }
+
+    // Extract selected players
+    const selected = [];
+    for (let i = 0; i < n; i++) {
+      const col = sol.Columns['x' + i];
+      if (col && col.Primal > 0.5) {
+        selected.push({ ...players[i] });
+      }
+    }
+
+    if (selected.length < 11) {
+      console.warn('[VG] ILP selected only', selected.length, 'players - falling back');
+      return VG.optimizeDraft(players, budget, fixtures, startGW, nGWs);
+    }
+
+    const spent = selected.reduce((s, p) => s + (p.price || 0), 0);
+
+    // Select starting XI: best formation
+    const byPos = { 1: [], 2: [], 3: [], 4: [] };
+    selected.forEach(p => byPos[p.positionId].push(p));
+    Object.values(byPos).forEach(arr => arr.sort((a, b) => b.totalXP - a.totalXP));
+
+    const formations = [
+      [3, 4, 3], [3, 5, 2], [4, 3, 3], [4, 4, 2], [4, 5, 1], [5, 3, 2], [5, 4, 1]
+    ];
+    let bestFormation = null, bestTotalXP = 0;
+    formations.forEach(([defN, midN, fwdN]) => {
+      if (byPos[2].length < defN || byPos[3].length < midN || byPos[4].length < fwdN) return;
+      let xp = 0;
+      xp += byPos[1][0].totalXP;
+      for (let i = 0; i < defN; i++) xp += byPos[2][i].totalXP;
+      for (let i = 0; i < midN; i++) xp += byPos[3][i].totalXP;
+      for (let i = 0; i < fwdN; i++) xp += byPos[4][i].totalXP;
+      if (xp > bestTotalXP) { bestTotalXP = xp; bestFormation = { DEF: defN, MID: midN, FWD: fwdN }; }
+    });
+    if (!bestFormation) bestFormation = { DEF: 4, MID: 4, FWD: 2 };
+
+    const starting = [];
+    const bench = [];
+    starting.push(byPos[1][0]);
+    if (byPos[1][1]) bench.push(byPos[1][1]);
+    [2, 3, 4].forEach(pos => {
+      const n = bestFormation[VG.POSITIONS[pos]];
+      byPos[pos].forEach((p, i) => {
+        if (i < n) starting.push(p); else bench.push(p);
+      });
+    });
+    while (starting.length < 11 && bench.length > 0) starting.push(bench.shift());
+    bench.sort((a, b) => a.positionId - b.positionId || b.totalXP - a.totalXP);
+
+    // Per-GW picks
+    const gwPicks = [];
+    for (let gw = startGW; gw < startGW + nGWs; gw++) {
+      gwPicks.push(VG.computePerGWPicks(selected, gw, fixtures));
+    }
+
+    const totalXP = +gwPicks.reduce((s, g) => s + g.gwTotalXP, 0).toFixed(1);
+    const benchXP = +gwPicks.reduce((s, g) => s + g.gwBenchXP, 0).toFixed(1);
+
+    return {
+      mode: "draft",
+      squad: selected,
+      starting: gwPicks[0]?.starting || starting.slice(0, 11),
+      bench: gwPicks[0]?.bench || bench.slice(0, 4),
+      formation: gwPicks[0]?.formation || bestFormation,
+      totalCost: +spent.toFixed(1),
+      budgetRemaining: +(budget - spent).toFixed(1),
+      totalXP, benchXP,
+      gotCap: gwPicks[0]?.gotCap || [...starting].filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2),
+      gwPicks,
+      solver: "ILP"
+    };
+  } catch (e) {
+    console.warn('[VG] ILP solve failed:', e.message, '- falling back to greedy');
+    return VG.optimizeDraft(players, budget, fixtures, startGW, nGWs);
+  }
+};
 VG.STRATEGIES = {
   balanced: { name: "Balanced", desc: "Maximize total xP within budget", icon: "⚖️" },
   premium: { name: "Premium Heavy", desc: "Stack elite players, accept weaker bench", icon: "💎" },
