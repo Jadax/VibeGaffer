@@ -758,6 +758,36 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
       }
     }
 
+    // Phase 5: Local search — random single-player swaps to escape greedy local optima
+    // Try N random swaps, keep improvements, occasionally accept worse solutions (simulated annealing)
+    let currentXP = squad.reduce((s, p) => s + p.totalXP, 0);
+    const bestLocalXP = currentXP;
+    for (let iter = 0; iter < 50; iter++) {
+      const idx = Math.floor(Math.random() * squad.length);
+      const cur = squad[idx];
+      const candidates = players.filter(p =>
+        p.id !== cur.id && !inSquad.has(p.id) &&
+        p.positionId === cur.positionId &&
+        (clubCounts[p.teamId] || 0) < 3 && p.teamId !== cur.teamId
+      );
+      if (candidates.length === 0) continue;
+      const cand = candidates[Math.floor(Math.random() * candidates.length)];
+      const costDiff = +(cand.price - cur.price).toFixed(1);
+      if (costDiff > remaining()) continue;
+      const gain = cand.totalXP - cur.totalXP;
+      // Accept if improvement, or with low probability if worse (annealing)
+      const temp = 0.3 * (1 - iter / 50);
+      if (gain > 0 || (gain > -3 && Math.random() < temp)) {
+        clubCounts[cur.teamId] = (clubCounts[cur.teamId] || 1) - 1;
+        clubCounts[cand.teamId] = (clubCounts[cand.teamId] || 0) + 1;
+        inSquad.delete(cur.id);
+        inSquad.add(cand.id);
+        squad[idx] = { ...cand };
+        spent = +(spent + costDiff).toFixed(1);
+        currentXP += gain;
+      }
+    }
+
     // Evaluate this squad's total XP
     const totalXP = squad.reduce((s, p) => s + p.totalXP, 0);
     if (totalXP > bestStrategyXP && squad.length === 15) {
@@ -863,7 +893,11 @@ VG.optimizeStrategies = (players, budget = 100, fixtures = [], startGW = 1, nGWs
   return results;
 };
 
-VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers) => {
+VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, startGW, nGWs) => {
+  fixtures = fixtures || [];
+  startGW = startGW || 1;
+  nGWs = nGWs || 5;
+
   const currentIds = new Set(currentSquad.map(p => p.element));
   const candidates = [];
 
@@ -881,23 +915,31 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers) => {
     ).sort((a, b) => (b.totalXP - b.price) - (a.totalXP - a.price));
 
     if (upgrades.length > 0) {
-      const best = upgrades[0];
-      const gain = best.totalXP - cXP.totalXP;
-      const cost = +(best.price - cPrice).toFixed(1);
-      candidates.push({
-        out: { id: pid, name: sp.web_name || "?", position: VG.POSITIONS[pos], price: cPrice, totalXP: cXP.totalXP },
-        in: { id: best.id, name: best.name, position: best.position, price: best.price, totalXP: best.totalXP },
-        gain, cost, netGain: gain
-      });
-    }
+        const best = upgrades[0];
+        const gain = best.totalXP - cXP.totalXP;
+        const cost = +(best.price - cPrice).toFixed(1);
+
+        // Break-even analysis: linear approximation using per-GW average gain
+        const gwAvgGain = +(gain / nGWs).toFixed(2);
+        const breakEvenGWs = gwAvgGain > 0 ? Math.ceil(4.0 / gwAvgGain) : null;
+        const breakEvenGW = breakEvenGWs !== null ? Math.min(startGW + breakEvenGWs - 1, startGW + nGWs - 1) : null;
+        const breaksEven = breakEvenGWs !== null && breakEvenGWs <= nGWs;
+
+        candidates.push({
+          out: { id: pid, name: sp.web_name || "?", position: VG.POSITIONS[pos], price: cPrice, totalXP: cXP.totalXP },
+          in: { id: best.id, name: best.name, position: best.position, price: best.price, totalXP: best.totalXP },
+          gain, cost, netGain: gain,
+          breakEvenGWs, breakEvenGW, breaksEven, gwAvgGain
+        });
+      }
   });
 
-  // Sort by net gain (biggest improvement first)
   candidates.sort((a, b) => b.netGain - a.netGain);
 
   // Phase 1: Only use free transfers (no hits)
   const outPlayers = [];
   const inPlayers = [];
+  const outCandidates = [];
   let spent = 0;
   const usedIds = new Set();
 
@@ -907,36 +949,46 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers) => {
     if (spent + c.cost > bank + 0.1) continue;
     outPlayers.push(c.out);
     inPlayers.push(c.in);
+    outCandidates.push(c);
     spent += c.cost;
     usedIds.add(c.in.id);
     currentIds.delete(c.out.id);
     currentIds.add(c.in.id);
   }
 
-  // Phase 2: Consider hits ONLY if improvement is massive (>8 pts per hit)
+  // Phase 2: Consider hits with break-even analysis
+  // A hit is worth it if the cumulative per-GW gain recovers 4 pts within the horizon
   const hitCandidates = [];
   for (const c of candidates) {
     if (usedIds.has(c.in.id)) continue;
-    if (c.netGain <= 8) continue; // Not worth a hit
+    if (!c.breaksEven) continue; // Never breaks even within horizon
+    if (c.gwAvgGain < 1.5) continue; // Too small per-GW gain
     hitCandidates.push(c);
   }
 
   let hitTransfers = 0;
+  const hitDetails = [];
   for (const c of hitCandidates) {
     if (spent + c.cost > bank + 0.1) continue;
     outPlayers.push(c.out);
     inPlayers.push(c.in);
+    outCandidates.push(c);
     spent += c.cost;
     usedIds.add(c.in.id);
     hitTransfers++;
+    hitDetails.push({ name: c.in.name, breakEvenGWs: c.breakEvenGWs, gwAvgGain: c.gwAvgGain });
   }
 
   const hits = hitTransfers * 4;
 
   return {
     mode: "transfer", transfersIn: inPlayers, transfersOut: outPlayers,
-    hitCost: hits, recommendedTransfers: outPlayers.length, freeTransfersUsed: Math.min(outPlayers.length, freeTransfers),
-    hitWarning: hits > 0 ? `${hitTransfers} hit(s) = -${hits} pts. Champion advice: avoid hits unless improvement > 8 pts.` : null
+    hitCost: hits, recommendedTransfers: outPlayers.length,
+    freeTransfersUsed: Math.min(outPlayers.length, freeTransfers),
+    hitDetails,
+    hitWarning: hits > 0
+      ? `${hitTransfers} hit(s) = -${hits} pts. Break-even: ${hitDetails.map(h => `${h.name} in ~${h.breakEvenGWs} GWs (${h.gwAvgGain} pts/GW)`).join('; ')}.`
+      : null
   };
 };
 

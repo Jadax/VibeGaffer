@@ -182,7 +182,7 @@ VG.run = async () => {
       const currentSquad = squadData.picks.picks;
       const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
       const freeTransfers = parseInt(el("freeTransfers").value);
-      const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers);
+      const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, VG.allFixtures, gw, 5);
       const transferOutIds = new Set(transferResult.transfersOut.map(p => p.id));
       const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
       const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
@@ -228,6 +228,11 @@ VG.run = async () => {
       html += '</div></div>';
       if (result.hitCost > 0) {
         html += `<div style="text-align:center;color:#ef4444;font-size:0.75rem;font-weight:600;margin-top:8px;">Hit Cost: -${result.hitCost} pts</div>`;
+        if (result.hitDetails?.length > 0) {
+          result.hitDetails.forEach(h => {
+            html += `<div style="text-align:center;color:#fbbf24;font-size:0.7rem;margin-top:2px;">↳ ${h.name}: breaks even in ~${h.breakEvenGWs} GWs (${h.gwAvgGain} pts/GW avg)</div>`;
+          });
+        }
       } else if (result.freeTransfersUsed <= 1) {
         html += `<div style="text-align:center;color:#00ff87;font-size:0.72rem;margin-top:8px;">✓ Using free transfer only — champion strategy</div>`;
       }
