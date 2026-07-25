@@ -4,7 +4,7 @@ This file provides context for AI models working on the VibeGaffer codebase.
 
 ## Quick Status
 
-- **Current version**: v5.0 (tagged `v5.0`, commit `c6cc293`)
+- **Current version**: v5.1
 - **Architecture**: Pure static HTML/CSS/JS on GitHub Pages (no backend)
 - **Live URL**: https://jadax.github.io/VibeGaffer/
 - **Data**: Auto-fetched every 15 min via GitHub Actions cron → `docs/data/*.json`
@@ -13,8 +13,8 @@ This file provides context for AI models working on the VibeGaffer codebase.
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `docs/app.js` | 1703 | All logic: xP engine, optimizer, chips, transfers, roadmap, tips |
-| `docs/index.html` | 678 | All UI: tabs, rendering, Chart.js radar/bar, inline JS |
+| `docs/app.js` | 1875 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips |
+| `docs/index.html` | 737 | All UI: 8 tabs, rendering, Chart.js radar/bar, inline JS |
 | `docs/style.css` | 275 | All styles |
 | `docs/data/bootstrap.json` | ~1.3MB | Player data (514 active, 20 teams) |
 | `docs/data/fixtures.json` | ~118KB | 380 fixtures with FDR |
@@ -46,6 +46,10 @@ The xP engine computes per-fixture expected points using:
 - DEFCON calibration to real 2025/26 data
 - Captain ceiling bonus (FWD 1.15x, premium MID 1.18x)
 
+### Injury-Aware Optimizer (v5.1)
+
+All 6 optimizer phases filter out injured/suspended/unavailable players (`status !== 'a' && status !== 'd'`). Doubtful players are still eligible but should be manually checked by users.
+
 ## Key Functions in app.js
 
 ### Data Layer
@@ -56,9 +60,12 @@ The xP engine computes per-fixture expected points using:
 - `VG.computeMultiGWXP(pid, startGW, nGWs, fixtures)` → multi-GW aggregate
 
 ### Optimizer
-- `VG.optimizeDraft(players, budget, fixtures, startGW, nGWs)` → 5-phase squad builder
+- `VG.optimizeDraft(players, budget, fixtures, startGW, nGWs)` → 5-phase squad builder (injury-aware)
 - `VG.optimizeStrategies(players, budget, fixtures, startGW, nGWs)` → 3 strategies
-- `VG.optimizeTransfers(squad, players, bank, freeTransfers, fixtures, startGW, nGWs)` → transfer recommendations with break-even
+- `VG.optimizeTransfers(squad, players, bank, freeTransfers, fixtures, startGW, nGWs)` → transfer recommendations with break-even (injury-aware)
+
+### Transfer Planning (v5.1)
+- `VG.computeTransferPlan(squad, allXP, fixtures, startGW, nGWs, bank, freeTransfers)` → week-by-week transfer schedule, only recommends hits if cumulative xP gain > 4 pts
 
 ### Analysis
 - `VG.computeCaptainRotation(squad, allXP, fixtures, startGW, nGWs)` → top 3 captains per GW
@@ -66,6 +73,9 @@ The xP engine computes per-fixture expected points using:
 - `VG.evaluateChips(squad, gwPicks, startGW, fixtures)` → chip recommendations with gwScores
 - `VG.analyzeFixtureSwings(startGW, nGWs, fixtures)` → easy/hard run detection
 - `VG.buildFixtureTicker(startGW, nGWs, fixtures)` → per-team fixture grid
+
+### League Analyzer (v5.1)
+- `VG.analyzeLeague(leagueId, currentGW)` → fetches classic league, compares squads, ownership analysis, differentials, outliers, template detection
 
 ### Rendering
 - `VG.render.metrics(result)` → metric cards (xP, cost, formation)
@@ -79,13 +89,23 @@ The xP engine computes per-fixture expected points using:
 - `VG.POS_TARGET` → `{ 1: 2, 2: 5, 3: 5, 4: 3 }` (target squad composition)
 - `VG.STRATEGIES` → balanced/premium/value descriptions
 
+## UI Tabs (8 total)
+
+1. **Squad** — Pitch view, metrics, captaincy, transfer grid
+2. **Compare** — Radar chart, xP component stacked bar, stat table
+3. **Prices** — Price change predictor (risers/fallers)
+4. **Fixtures** — Fixture ticker with swing analysis
+5. **Differentials** — Low ownership, high xP picks
+6. **Transfer Plan** — Week-by-week transfer schedule with hit optimization
+7. **League** — Mini-league comparison, ownership analysis, differentials
+8. **Strategy** — Dynamic tips + static championship wisdom
+
 ## Known Issues
 
 1. **Greedy optimizer**: Can miss global optima (no ILP solver)
 2. **Pre-season data**: Team strengths all 0, form 0.0 — fallback estimates used
-3. **No multi-week transfer planning**: Only optimizes for current GW
-4. **No expected minutes model**: Uses simple 82% fallback
-5. **Python files are dead code**: `app.py`, `backend.py`, `data_loader.py`, `xp_engine.py`, `optimizer.py` are from old architecture
+3. **No expected minutes model**: Uses simple 82% fallback
+4. **Python files are dead code**: `app.py`, `backend.py`, `data_loader.py`, `xp_engine.py`, `optimizer.py` are from old architecture
 
 ## Testing
 
@@ -93,7 +113,7 @@ Tests are at `C:\Users\Tushant\AppData\Local\Temp\opencode\test_v5.js` (local on
 
 Run: `node test_v5.js`
 
-34/35 tests pass (1 expected: backup GKs with 0 starts have low xP).
+41/42 tests pass (1 expected: backup GKs with 0 starts have low xP).
 
 ## Commit Convention
 
@@ -111,5 +131,6 @@ Key endpoints:
 - `event/{gw}/live/` → live gameweek data (transfers, points)
 - `entry/{team_id}/` → user team info
 - `entry/{team_id}/event/{gw}/picks/` → user squad for a GW
+- `leagues-classic/{id}/standings/` → mini-league standings + entries
 
 Pre-season note: All `strength_*` fields are 0. Form is 0.0. `total_points`, `minutes`, `starts`, `goals_scored`, `assists`, `clean_sheets`, `saves`, `bonus` are real last-season data.

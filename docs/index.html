@@ -34,6 +34,8 @@
   <select id="freeTransfers"><option value="1">1</option><option value="2">2</option></select>
   <label>Bank Override (£m)</label>
   <input type="number" id="bankOverride" placeholder="Auto-detect" step="0.1" min="0">
+  <label>Mini-League ID</label>
+  <input type="number" id="leagueId" placeholder="Optional — compare vs rivals" min="0">
   <label>Squad Strategy</label>
   <select id="strategy">
     <option value="balanced">⚖️ Balanced</option>
@@ -62,6 +64,8 @@
       <button class="tab" onclick="VG.switchTab('prices')">Prices</button>
       <button class="tab" onclick="VG.switchTab('fixtures')">Fixtures</button>
       <button class="tab" onclick="VG.switchTab('diffs')">Differentials</button>
+      <button class="tab" onclick="VG.switchTab('plan')">Transfer Plan</button>
+      <button class="tab" onclick="VG.switchTab('league')">League</button>
       <button class="tab" onclick="VG.switchTab('tips')">Strategy</button>
     </div>
 
@@ -95,6 +99,18 @@
       <div class="section-title">Differential Picks</div>
       <p class="subtitle">Low ownership, high xP — your secret weapons.</p>
       <div id="diffContent"></div>
+    </div>
+
+    <div class="tab-content" id="tab-plan">
+      <div class="section-title">Transfer Planner</div>
+      <p class="subtitle">Week-by-week transfer schedule optimized across your gameweek horizon.</p>
+      <div id="planContent"></div>
+    </div>
+
+    <div class="tab-content" id="tab-league">
+      <div class="section-title">Mini-League Analyzer</div>
+      <p class="subtitle">Compare your squad vs rivals in a classic league.</p>
+      <div id="leagueContent"></div>
     </div>
 
     <div class="tab-content" id="tab-tips">
@@ -580,6 +596,113 @@ VG.preloadTabs = async (gw, horizon) => {
     }
   } catch(e) {
     console.warn("[VG] Differentials:", e);
+  }
+
+  try {
+    if (VG.currentResult && VG.allXP && VG.allFixtures) {
+      const squad = VG.currentResult.squad || [];
+      const bank = VG.currentResult.budgetRemaining || 0;
+      const gw = parseInt(el('gameweek').value);
+      const horizon = parseInt(el('horizon').value);
+      const plan = VG.computeTransferPlan(squad, VG.allXP, VG.allFixtures, gw, horizon, bank, 1);
+      if (plan && plan.schedule.length > 0) {
+        let ph = '';
+        // Summary card
+        const s = plan.summary;
+        ph += `<div class="chip-sequence">`;
+        ph += `<div class="chip-card"><div class="chip-label">Squad xP</div><div class="chip-score" style="color:#00ff87;">${s.totalSquadXP}</div><div class="chip-advice">${horizon}-GW projection</div></div>`;
+        ph += `<div class="chip-card"><div class="chip-label">Transfers</div><div class="chip-score" style="color:#60a5fa;">${s.totalTransfers}</div><div class="chip-advice">${s.freeTransfersUsed} free</div></div>`;
+        ph += `<div class="chip-card"><div class="chip-label">Hits Taken</div><div class="chip-score" style="color:${s.totalHits > 0 ? '#ef4444' : '#00ff87'};">-${s.totalHits}</div><div class="chip-advice">${s.totalHits > 0 ? s.netGainFromHits + ' net gain' : 'Clean sheet'}</div></div>`;
+        ph += `<div class="chip-card"><div class="chip-label">Avg xP/GW</div><div class="chip-score" style="color:#fbbf24;">${s.avgSquadXP}</div><div class="chip-advice">Per gameweek</div></div>`;
+        ph += `</div>`;
+
+        // Per-GW schedule
+        plan.schedule.forEach(gwPlan => {
+          if (gwPlan.transfers.length === 0) {
+            ph += `<div style="margin:10px 0;padding:10px 14px;background:rgba(30,41,59,0.4);border-radius:8px;border-left:3px solid #334155;"><span style="color:#94a3b8;font-weight:600;">GW${gwPlan.gw}</span> <span style="color:#475569;font-size:0.75rem;">No changes — squad holds (${gwPlan.squadXP} xP)</span></div>`;
+            return;
+          }
+          const border = gwPlan.hitCost > 0 ? '#ef4444' : '#00ff87';
+          ph += `<div style="margin:10px 0;padding:12px 14px;background:rgba(30,41,59,0.5);border-radius:8px;border-left:3px solid ${border};">`;
+          ph += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><span style="color:#94a3b8;font-weight:600;">GW${gwPlan.gw}</span>`;
+          ph += `<span style="font-size:0.68rem;color:#64748b;">${gwPlan.squadXP} xP · ${gwPlan.transfers.length} transfer${gwPlan.transfers.length > 1 ? 's' : ''}${gwPlan.hitCost > 0 ? ' · <span style="color:#ef4444;">-4 hit</span>' : ' · <span style="color:#00ff87;">Free</span>'}</span></div>`;
+          gwPlan.transfers.forEach(t => {
+            const hitTag = t.isHit ? ' <span style="color:#ef4444;font-size:0.65rem;">(HIT)</span>' : '';
+            ph += `<div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:0.75rem;">`;
+            ph += `<span style="color:#ef4444;text-decoration:line-through;">${t.out.name}</span>`;
+            ph += `<span style="color:#475569;">→</span>`;
+            ph += `<span style="color:#00ff87;">${t.in.name}</span>${hitTag}`;
+            ph += `<span style="color:#64748b;margin-left:auto;">+${t.cumGain.toFixed(1)} xP</span>`;
+            ph += `</div>`;
+          });
+          ph += `</div>`;
+        });
+
+        document.getElementById("planContent").innerHTML = ph;
+      } else {
+        document.getElementById("planContent").innerHTML = '<p style="color:#475569;">No transfer opportunities identified for this horizon.</p>';
+      }
+    } else {
+      document.getElementById("planContent").innerHTML = '<p style="color:#475569;">Run a squad analysis first to see transfer recommendations.</p>';
+    }
+  } catch(e) {
+    console.warn("[VG] Transfer Plan:", e);
+    document.getElementById("planContent").innerHTML = '<p style="color:#475569;">Transfer plan unavailable.</p>';
+  }
+
+  try {
+    const leagueId = parseInt(el("leagueId").value) || 0;
+    if (leagueId > 0) {
+      const gw = parseInt(el("gameweek").value);
+      const league = await VG.analyzeLeague(leagueId, gw);
+      if (league) {
+        let lh = `<div class="chip-sequence">`;
+        lh += `<div class="chip-card"><div class="chip-label">League</div><div class="chip-score" style="color:#e2e8f0;font-size:0.8rem;">${league.leagueName}</div><div class="chip-advice">${league.fetchedSquads} of ${league.totalSquads} teams analyzed</div></div>`;
+        lh += `<div class="chip-card"><div class="chip-label">Differentials</div><div class="chip-score" style="color:#00ff87;">${league.differentials.length}</div><div class="chip-advice">Low-owned picks in your squad</div></div>`;
+        lh += `<div class="chip-card"><div class="chip-label">Template</div><div class="chip-score" style="color:#fbbf24;">${league.templateIds.length}</div><div class="chip-advice">Players ≥30% owned in league</div></div>`;
+        lh += `<div class="chip-card"><div class="chip-label">Outliers</div><div class="chip-score" style="color:#ef4444;">${league.outliers.length}</div><div class="chip-advice">Popular picks you're missing</div></div>`;
+        lh += `</div>`;
+
+        // Differentials
+        if (league.differentials.length > 0) {
+          lh += '<div style="margin-top:14px;"><div class="section-title" style="font-size:0.8rem;color:#00ff87;">Your Differentials</div>';
+          lh += '<table class="data-table" style="font-size:0.72rem;"><tr><th>Player</th><th>Pos</th><th>League Own%</th><th>Captains</th></tr>';
+          league.differentials.forEach(p => {
+            lh += `<tr><td style="color:#e2e8f0;">${p.name}</td><td>${p.position}</td><td style="color:#00ff87;">${p.ownershipPct}%</td><td>${p.captains}</td></tr>`;
+          });
+          lh += '</table></div>';
+        }
+
+        // Outliers
+        if (league.outliers.length > 0) {
+          lh += '<div style="margin-top:14px;"><div class="section-title" style="font-size:0.8rem;color:#ef4444;">Popular Picks You\'re Missing</div>';
+          lh += '<table class="data-table" style="font-size:0.72rem;"><tr><th>Player</th><th>Pos</th><th>League Own%</th><th>Captains</th></tr>';
+          league.outliers.forEach(p => {
+            lh += `<tr><td style="color:#e2e8f0;">${p.name}</td><td>${p.position}</td><td style="color:#ef4444;">${p.ownershipPct}%</td><td>${p.captains}</td></tr>`;
+          });
+          lh += '</table></div>';
+        }
+
+        // League standings mini-table
+        if (league.squads.length > 0) {
+          lh += '<div style="margin-top:14px;"><div class="section-title" style="font-size:0.8rem;">League Standings</div>';
+          lh += '<table class="data-table" style="font-size:0.72rem;"><tr><th>#</th><th>Manager</th><th>GW</th><th>Total</th><th>Captain</th></tr>';
+          league.squads.forEach(s => {
+            lh += `<tr><td style="color:#94a3b8;">${s.rank || "-"}</td><td style="color:#e2e8f0;">${s.name}</td><td>${s.gwPoints}</td><td style="color:#fbbf24;">${s.totalPoints}</td><td style="color:#94a3b8;">${s.captain}</td></tr>`;
+          });
+          lh += '</table></div>';
+        }
+
+        document.getElementById("leagueContent").innerHTML = lh;
+      } else {
+        document.getElementById("leagueContent").innerHTML = '<p style="color:#475569;">Could not load league data. Check the League ID is correct and the league is public.</p>';
+      }
+    } else {
+      document.getElementById("leagueContent").innerHTML = '<p style="color:#475569;">Enter a Mini-League ID in the sidebar to compare your squad vs rivals.</p>';
+    }
+  } catch(e) {
+    console.warn("[VG] League:", e);
+    document.getElementById("leagueContent").innerHTML = '<p style="color:#475569;">League analysis unavailable.</p>';
   }
 
   try {

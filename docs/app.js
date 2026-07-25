@@ -589,12 +589,18 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
       inSquad.add(p.id);
     };
 
+    // Injury filter: exclude injured/suspended/unavailable players
+    const isAvailable = (p) => {
+      const data = VG.players[p.id];
+      return !data || data.status === 'a' || data.status === 'd'; // available or doubtful only
+    };
+
     // Phase 1a: Seed with must-have premiums (highest xP per position)
     // This ensures expensive captains like Haaland/Saka aren't priced out by budget reserve
     // For MIDs, seed top 2 (e.g. Saka + Bruno) since they're captain-viable
     const seeds = [];
     [1, 2, 3, 4].forEach(function(pos) {
-      const candidates = players.filter(function(p) { return p.positionId === pos && !inSquad.has(p.id); })
+      const candidates = players.filter(function(p) { return p.positionId === pos && !inSquad.has(p.id) && isAvailable(p); })
         .sort(function(a, b) { return b.totalXP - a.totalXP; });
       seeds.push(candidates[0]);
       if (pos === 3 && candidates[1]) seeds.push(candidates[1]);
@@ -611,11 +617,11 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
     // This ensures premium MIDs like Bruno aren't excluded just because DEFs are filled first
     let byValue;
     if (strategy === 'value') {
-      byValue = [...players].sort((a, b) => (b._sortBy || b.xpPerPrice) - (a._sortBy || a.xpPerPrice));
+      byValue = players.filter(isAvailable).sort((a, b) => (b._sortBy || b.xpPerPrice) - (a._sortBy || a.xpPerPrice));
     } else if (strategy === 'xp') {
-      byValue = [...players].sort((a, b) => b.totalXP - a.totalXP);
+      byValue = players.filter(isAvailable).sort((a, b) => b.totalXP - a.totalXP);
     } else { // mixed
-      byValue = [...players].sort((a, b) => {
+      byValue = players.filter(isAvailable).sort((a, b) => {
         const scoreA = (a._sortBy || a.xpPerPrice) * 0.5 + (a.totalXP / 10) * 0.5;
         const scoreB = (b._sortBy || b.xpPerPrice) * 0.5 + (b.totalXP / 10) * 0.5;
         return scoreB - scoreA;
@@ -655,7 +661,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
         const need = target[pos] - squad.filter(s => s.positionId === pos).length;
         if (need > 0) posNeeded2[pos] = need;
       });
-      const fillers = [...players].sort((a, b) => a.price - b.price);
+      const fillers = players.filter(isAvailable).sort((a, b) => a.price - b.price);
       for (const p of fillers) {
         if (squad.length >= 15) break;
         if (inSquad.has(p.id)) continue;
@@ -680,7 +686,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
         const cur = squad[i];
         let bestCand = null, bestGain = 0;
         for (const p of players) {
-          if (inSquad.has(p.id)) continue;
+          if (inSquad.has(p.id) || !isAvailable(p)) continue;
           if (p.positionId !== cur.positionId) continue;
           const costDiff = +(p.price - cur.price).toFixed(1);
           if (costDiff <= 0 || costDiff > remaining()) continue;
@@ -725,7 +731,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
           // Find best replacement for sA in same position
           let bestA = null, bestAGain = -Infinity;
           for (const p of players) {
-            if (inSquad.has(p.id)) continue;
+            if (inSquad.has(p.id) || !isAvailable(p)) continue;
             if (p.positionId !== sA.positionId) continue;
             if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== sA.teamId) continue;
             const gain = p.totalXP - sA.totalXP;
@@ -734,7 +740,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
           if (!bestA) continue;
           // Find best replacement for sB in same position, fitting remaining budget
           for (const p of players) {
-            if (inSquad.has(p.id) || p.id === bestA.p.id) continue;
+            if (inSquad.has(p.id) || p.id === bestA.p.id || !isAvailable(p)) continue;
             if (p.positionId !== sB.positionId) continue;
             if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== sB.teamId) continue;
             const costDiffB = +(p.price - sB.price).toFixed(1);
@@ -776,7 +782,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
       const idx = Math.floor(Math.random() * squad.length);
       const cur = squad[idx];
       const candidates = players.filter(p =>
-        p.id !== cur.id && !inSquad.has(p.id) &&
+        p.id !== cur.id && !inSquad.has(p.id) && isAvailable(p) &&
         p.positionId === cur.positionId &&
         (clubCounts[p.teamId] || 0) < 3 && p.teamId !== cur.teamId
       );
@@ -908,6 +914,11 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, st
   startGW = startGW || 1;
   nGWs = nGWs || 5;
 
+  const isAvailable = (p) => {
+    const data = VG.players[p.id];
+    return !data || data.status === 'a' || data.status === 'd';
+  };
+
   const currentIds = new Set(currentSquad.map(p => p.element));
   const candidates = [];
 
@@ -918,7 +929,7 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, st
     if (!cXP) return;
     const pos = cXP.positionId;
     const upgrades = players.filter(p =>
-      p.id !== pid && !currentIds.has(p.id) &&
+      p.id !== pid && !currentIds.has(p.id) && isAvailable(p) &&
       p.positionId === pos &&
       p.price <= cPrice + bank + 0.1 &&
       p.totalXP > cXP.totalXP + 1.0
@@ -1365,6 +1376,167 @@ VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
   return roadmap;
 };
 
+// ── Multi-Week Transfer Planner ────────────────────────────────────────
+// Simulates squad across N GWs, identifies weakest players each week,
+// finds best replacements, and schedules transfers week-by-week.
+// Only recommends hits if cumulative xP gain exceeds hit cost.
+VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTransfers) => {
+  if (!squad || squad.length < 11 || !allXP || allXP.length === 0 || !fixtures || fixtures.length === 0) return null;
+
+  bank = bank || 0;
+  freeTransfers = Math.max(freeTransfers || 1, 1);
+
+  const isAvailable = (p) => {
+    const data = VG.players[p.id];
+    return !data || data.status === 'a' || data.status === 'd';
+  };
+
+  // Build per-GW xP maps for all players
+  const allXPMap = {};
+  allXP.forEach(p => { allXPMap[p.id] = p; });
+
+  // Current squad as mutable set
+  let currentSquadIds = new Set(squad.map(p => p.element || p.id));
+  let currentSquadPrices = {};
+  squad.forEach(p => { currentSquadPrices[p.element || p.id] = (p.selling_price || p.now_cost || 0) / 10; });
+  let remainingBank = bank;
+
+  // Pre-compute per-GW xP for every player
+  const perGWXP = {}; // { gw: { pid: gwXP } }
+  for (let gw = startGW; gw < startGW + nGWs; gw++) {
+    perGWXP[gw] = {};
+    allXP.forEach(p => {
+      const details = p.gwDetails || [];
+      const gwD = details.find(d => d.gw === gw);
+      perGWXP[gw][p.id] = gwD ? gwD.xp : (p.totalXP / Math.max(nGWs, 1));
+    });
+  }
+
+  const schedule = [];
+  let totalHits = 0;
+  let totalGainFromHits = 0;
+  let usedFreeTransfers = 0;
+  const usedIds = new Set();
+
+  for (let gw = startGW; gw < startGW + nGWs; gw++) {
+    const gwFix = fixtures.filter(f => f.event === gw);
+    const gwTransfer = { gw, transfers: [], hitCost: 0, freeUsed: 0, squadXP: 0, cumGain: 0 };
+
+    // Compute each squad player's GW xP (using per-GW detail, not average)
+    const squadGWXP = [];
+    currentSquadIds.forEach(pid => {
+      const xp = perGWXP[gw][pid] || 0;
+      const info = allXPMap[pid];
+      if (!info) return;
+      const f = gwFix.find(fi => fi.team_h === info.teamId || fi.team_a === info.teamId);
+      const isHome = f ? f.team_h === info.teamId : false;
+      const fdr = f ? (isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3)) : 3;
+      const oppId = f ? (isHome ? f.team_a : f.team_h) : null;
+      const oppName = oppId ? (VG.teams[oppId]?.short_name || "?") : "BLANK";
+      squadGWXP.push({ id: pid, xp, price: currentSquadPrices[pid] || info.price, positionId: info.positionId, position: info.position, name: info.name, teamId: info.teamId, totalXP: info.totalXP, fdr, oppName, isHome });
+    });
+
+    // Only evaluate starters (top 11 by xP) for replacement — bench upgrades rarely matter
+    squadGWXP.sort((a, b) => b.xp - a.xp);
+    const starters = squadGWXP.slice(0, 11);
+    const weakStarters = starters.slice(-4); // Bottom 4 starters are replacement candidates
+
+    gwTransfer.squadXP = +starters.slice(0, 11).reduce((s, p) => s + p.xp, 0).toFixed(2);
+
+    // Find transfers for weak starters
+    const transferOpts = [];
+    for (const weak of weakStarters) {
+      if (weak.xp < 1.0) continue; // Skip very low-xP placeholders
+
+      const candidates = allXP.filter(p =>
+        !currentSquadIds.has(p.id) && !usedIds.has(p.id) &&
+        p.positionId === weak.positionId && isAvailable(p) &&
+        p.price <= weak.price + remainingBank + 0.5
+      );
+
+      for (const cand of candidates) {
+        // Compute cumulative xP gain from this GW to end of horizon
+        let cumGain = 0;
+        for (let g = gw; g < startGW + nGWs; g++) {
+          const oldXP = perGWXP[g][weak.id] || 0;
+          const newDetail = (cand.gwDetails || []).find(d => d.gw === g);
+          const newXP = newDetail ? newDetail.xp : (cand.totalXP / Math.max(nGWs, 1));
+          cumGain += newXP - oldXP;
+        }
+        const cost = +(cand.price - weak.price).toFixed(1);
+        cumGain -= cost > 0 ? 0 : 0; // Cost doesn't subtract xP, just constrains budget
+
+        if (cumGain > 1.0) { // Minimum 1 xP gain to consider
+          transferOpts.push({
+            out: weak, in: cand, cost, cumGain,
+            gwXPold: +weak.xp.toFixed(2),
+            gwXPnew: perGWXP[gw][cand.id] || +(cand.totalXP / Math.max(nGWs, 1)).toFixed(2)
+          });
+        }
+      }
+    }
+
+    // Sort by cumulative xP gain (best first)
+    transferOpts.sort((a, b) => b.cumGain - a.cumGain);
+
+    // Apply transfers: free first, then hits
+    let freeLeft = gw === startGW ? freeTransfers : Math.max(1, freeTransfers - usedFreeTransfers);
+    // After a hit, carry over one free transfer
+    freeLeft = Math.min(freeLeft, 1);
+
+    let gwHitCost = 0;
+    for (const opt of transferOpts) {
+      if (gwTransfer.transfers.length >= 5) break; // Max 5 transfers per GW
+      if (opt.cost > remainingBank + 0.1) continue;
+      if (usedIds.has(opt.in.id)) continue;
+      if (currentSquadIds.has(opt.in.id)) continue;
+
+      if (gwTransfer.transfers.length < freeLeft) {
+        // Free transfer
+        gwTransfer.transfers.push({ ...opt, isHit: false });
+        gwTransfer.freeUsed++;
+        usedFreeTransfers++;
+      } else if (opt.cumGain > 4.0) {
+        // Hit is worth it: cumulative gain exceeds 4 pts
+        gwHitCost += 4;
+        totalHits += 4;
+        totalGainFromHits += opt.cumGain;
+        gwTransfer.transfers.push({ ...opt, isHit: true });
+      } else {
+        continue; // Skip — not worth a hit
+      }
+
+      // Apply the transfer
+      currentSquadIds.delete(opt.out.id);
+      currentSquadIds.add(opt.in.id);
+      currentSquadPrices[opt.in.id] = opt.in.price;
+      remainingBank = +(remainingBank - opt.cost).toFixed(1);
+      usedIds.add(opt.in.id);
+    }
+
+    gwTransfer.hitCost = gwHitCost;
+    gwTransfer.cumGain = +(gwTransfer.transfers.reduce((s, t) => s + t.cumGain, 0) - gwHitCost).toFixed(2);
+    schedule.push(gwTransfer);
+  }
+
+  // Summary
+  const totalSquadXP = schedule.reduce((s, g) => s + g.squadXP, 0);
+  const totalTransfers = schedule.reduce((s, g) => s + g.transfers.length, 0);
+  const netGain = +(totalGainFromHits - totalHits).toFixed(2);
+
+  return {
+    schedule,
+    summary: {
+      totalSquadXP: +totalSquadXP.toFixed(2),
+      totalTransfers,
+      totalHits,
+      netGainFromHits: netGain,
+      freeTransfersUsed: usedFreeTransfers,
+      avgSquadXP: +(totalSquadXP / nGWs).toFixed(2)
+    }
+  };
+};
+
 // ── Price Change Risk ─────────────────────────────────────────────────
 VG.getPriceRisk = async () => {
   const data = VG.bootstrapData;
@@ -1387,6 +1559,117 @@ VG.getPriceRisk = async () => {
   } catch (e) {
     console.warn("[VG] Price risk failed:", e);
     return [];
+  }
+};
+
+// ── Mini-League Analyzer ────────────────────────────────────────────────
+VG.analyzeLeague = async (leagueId, currentGW) => {
+  if (!leagueId) return null;
+  try {
+    const data = await VG.fetch(VG.FPL + "/leagues-classic/" + leagueId + "/standings/", "league_" + leagueId);
+    if (!data || !data.league || !data.standings) return null;
+
+    const leagueName = data.league.name || "Mini-League";
+    const entries = data.standings.results || [];
+    if (entries.length === 0) return null;
+
+    // Fetch squads for top 10 managers (API limit)
+    const topEntries = entries.slice(0, 10);
+    const squads = [];
+
+    for (const entry of topEntries) {
+      try {
+        const gw = Math.min(currentGW || VG.currentGW || 1, VG.currentGW || 1);
+        const picksData = await VG.fetch(VG.FPL + "/entry/" + entry.entry + "/event/" + gw + "/picks/", "picks_" + entry.entry);
+        if (picksData && picksData.picks) {
+          squads.push({
+            entry: entry.entry,
+            name: entry.player_name || entry.entry_name,
+            teamName: entry.entry_name,
+            rank: entry.rank,
+            totalPoints: entry.total || entry.total_points || 0,
+            gwPoints: picksData.entry_history ? picksData.entry_history.points : 0,
+            picks: picksData.picks.map(p => {
+              const playerInfo = VG.players[p.element];
+              return {
+                element: p.element,
+                name: playerInfo ? (playerInfo.web_name || playerInfo.second_name) : "Unknown",
+                position: playerInfo ? VG.POSITIONS[playerInfo.element_type] : "?",
+                teamId: playerInfo ? playerInfo.team : 0,
+                multiplier: p.multiplier || 1,
+                isCaptain: p.is_captain || p.multiplier > 1
+              };
+            })
+          });
+        }
+      } catch (e) {
+        // Skip entries with no data
+      }
+    }
+
+    // Ownership analysis across league
+    const playerCounts = {};
+    let totalSquads = squads.length;
+    squads.forEach(sq => {
+      sq.picks.forEach(p => {
+        if (!playerCounts[p.element]) {
+          playerCounts[p.element] = { count: 0, captains: 0, name: p.name, position: p.position, teamId: p.teamId };
+        }
+        playerCounts[p.element].count++;
+        if (p.isCaptain) playerCounts[p.element].captains++;
+      });
+    });
+
+    // Build ownership data
+    const ownership = Object.entries(playerCounts)
+      .map(([pid, info]) => ({
+        id: parseInt(pid),
+        name: info.name,
+        position: info.position,
+        teamId: info.teamId,
+        count: info.count,
+        captains: info.captains,
+        ownershipPct: totalSquads > 0 ? +((info.count / totalSquads) * 100).toFixed(1) : 0
+      }))
+      .sort((a, b) => b.ownershipPct - a.ownershipPct);
+
+    // Template: players with >= 30% ownership in league
+    const templateIds = new Set(ownership.filter(p => p.ownershipPct >= 30).map(p => p.id));
+
+    // My squad players
+    const mySquad = VG.currentResult?.squad || [];
+    const myIds = new Set(mySquad.map(p => p.element || p.id));
+
+    // Differentials (in my squad but < 20% in league)
+    const differentials = ownership.filter(p => myIds.has(p.id) && p.ownershipPct < 20);
+
+    // Outliers (in league top squads but not in mine)
+    const outliers = ownership.filter(p => !myIds.has(p.id) && p.ownershipPct >= 40);
+
+    // Missing from league (in my squad but 0% in league)
+    const uniquePicks = ownership.filter(p => myIds.has(p.id) && p.count === 1);
+
+    return {
+      leagueName,
+      totalSquads,
+      fetchedSquads: squads.length,
+      ownership: ownership.slice(0, 30),
+      templateIds: [...templateIds],
+      differentials,
+      outliers,
+      uniquePicks,
+      squads: squads.map(s => ({
+        name: s.teamName,
+        rank: s.rank,
+        totalPoints: s.totalPoints,
+        gwPoints: s.gwPoints,
+        squadSize: s.picks.length,
+        captain: s.picks.find(p => p.isCaptain)?.name || "?"
+      }))
+    };
+  } catch (e) {
+    console.warn("[VG] League analysis failed:", e);
+    return null;
   }
 };
 

@@ -1,4 +1,4 @@
-# VibeGaffer v5.0
+# VibeGaffer v5.1
 
 **FPL Optimization Engine** | Powered by [Astraiva](https://astraiva.com) | Author: Tushant Sharma
 
@@ -10,7 +10,7 @@ Live: https://jadax.github.io/VibeGaffer/
 
 VibeGaffer generates production-ready Fantasy Premier League squad recommendations. It ingests data from the official FPL API, projects expected points (xP) using a mathematical model, and optimizes 15-player squads under budget and team constraints.
 
-### Two Modes
+### Modes
 
 | Mode | Trigger | What It Does |
 |------|---------|-------------|
@@ -61,9 +61,9 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.0)
+## Features (v5.1)
 
-### Squad Optimization (5-Phase Greedy + Local Search)
+### Squad Optimization (5-Phase Greedy + Local Search, Injury-Aware)
 
 | Phase | What It Does |
 |-------|-------------|
@@ -73,6 +73,8 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 | 3 | Upgrade pass — iteratively swaps worst player for best affordable upgrade |
 | 4 | Cross-position rebalancing — paired swaps across positions |
 | 5 | Local search — 50 random swaps with simulated annealing to escape local optima |
+
+All phases filter out injured/suspended/unavailable players (`status !== 'a' && status !== 'd'`).
 
 ### Multi-Strategy Optimizer
 
@@ -116,6 +118,23 @@ Per-GW fixture grid for the full squad:
 - Color-coded FDR cells (green=FDR<=2, red=FDR>=4)
 - Automated swap suggestions for hard-fixture players (FDR>=4)
 - Shows replacement name, fixture, price, and xP gain
+
+### Multi-Week Transfer Planner (v5.1)
+
+Week-by-week transfer schedule optimized across the full GW horizon:
+- Identifies weakest starters per GW (bottom 4 by xP)
+- Finds replacements that improve cumulative xP across remaining GWs
+- Only recommends hits if cumulative gain exceeds 4 pts (hit cost)
+- Summary: total squad xP, transfers made, hits taken, net gain
+
+### Mini-League Analyzer (v5.1)
+
+Compare your squad vs rivals in a classic league:
+- Fetches top 10 teams from FPL API league endpoint
+- Ownership analysis: template players (≥30%), differentials (<20%), outliers
+- Your differentials: low-owned picks unique to your squad
+- Missing popular picks: players you don't have but league leaders do
+- Standings table with GW points, total points, captain choices
 
 ### Chip Strategy
 
@@ -165,8 +184,8 @@ VibeGaffer/
 ├── README.md                           # This file
 ├── .github/workflows/fetch-data.yml    # Cron job: fetch FPL data every 15 min
 ├── docs/                               # GitHub Pages root (deployed)
-│   ├── index.html                      # Main HTML (678 lines)
-│   ├── app.js                          # Core engine (1703 lines)
+│   ├── index.html                      # Main HTML (737 lines)
+│   ├── app.js                          # Core engine (1875 lines)
 │   ├── style.css                       # All styles (275 lines)
 │   ├── .nojekyll                       # Prevents Jekyll processing
 │   └── data/
@@ -244,13 +263,21 @@ Tests are in `C:\Users\Tushant\AppData\Local\Temp\opencode\test_v5.js` (local on
 node test_v5.js
 ```
 
-**34/35 tests pass** (1 expected: backup GKs with 0 starts have low xP).
+**41/42 tests pass** (1 expected: backup GKs with 0 starts have low xP).
 
 Test coverage:
 - Optimizer: squad size, formation validity, captain, budget
 - Multi-strategy: all 3 strategies produce valid squads
 - Transfer optimizer: break-even analysis, hit details
 - Captain rotation: 5 GWs, top-3 sorted by xP
+- Transfer planner: 5-GW schedule, summary, edge cases
+- League analyzer: null/bad input handling
+- Chips: all 4 chips, gwScores
+- Dynamic tips: analysis, captain, static sections
+- xpComponents: all 8 fields, sum matches totalXP
+- Reverse maps: GK/DEF/MID/FWD mapping
+- Edge cases: empty squads, missing fixtures
+- xP engine accuracy: Haaland xP, GK xP
 - Transfer roadmap: per-GW fixture grid, recommendations
 - Chips: all 4 chips evaluated, gwScores populated
 - Dynamic tips: personalized analysis generated
@@ -275,6 +302,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.1 | — | Injury-aware optimizer, multi-week transfer planner, league analyzer |
 | v5.0 | `c6cc293` | Bug fixes, pos-badge CSS, edge case guards |
 | v4.3 | `39c86c0` | Captain rotation planner, chip timeline, dynamic strategy tab |
 | v4.2 | `78d9588` | xpComponents in Compare tab, transfer roadmap |
@@ -288,26 +316,26 @@ Test coverage:
 1. **Greedy optimizer**: No ILP solver — can miss global optima. Would need PuLP/HiGHS via WebAssembly.
 2. **Pre-season data**: All team strengths are 0, form is 0.0 — fallback estimates used.
 3. **No bookmaker odds**: External data source needed (not in FPL API).
-4. **No multi-week transfer planning**: Only optimizes for current GW, not across weeks.
-5. **No expected minutes model**: Uses simple fallback (82%) instead of team-specific rotation data.
+4. **No expected minutes model**: Uses simple fallback (82%) instead of team-specific rotation data.
+5. **Python files are dead code**: `app.py`, `backend.py`, `data_loader.py`, `xp_engine.py`, `optimizer.py` from old architecture.
 
 ---
 
 ## TODO (Remaining Improvements)
 
+- [x] ~~Injury/suspension data integration~~ (v5.1: all optimizer phases filter injured players)
+- [x] ~~Multi-week transfer planning with hit optimization~~ (v5.1: computeTransferPlan)
+- [x] ~~League analyzer~~ (v5.1: analyzeLeague with ownership analysis)
 - [ ] ILP solver (PuLP/HiGHS via WebAssembly) for guaranteed global optimum
-- [ ] Multi-week transfer planning with hit optimization (SolioAnalytics-style)
 - [ ] Bookmaker odds integration (requires external API or data source)
 - [ ] Exponential form weighting when real match data is available
-- [ ] Team-specific minutes/rotation model
-- [ ] Injury/suspension data integration
-- [ ] League analyzer (compare squad against mini-league rivals)
+- [ ] Team-specific minutes/rotation model (currently uses 82% fallback)
 
 ---
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.0
+- **Application**: VibeGaffer v5.1
 - **Company**: Astraiva
 - **Author**: Tushant Sharma
 - **License**: Proprietary
