@@ -334,14 +334,16 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const APPEARANCE_PTS = 2;
 
   // ── DEFCON: use API defensive_contribution_per_90 when available ──
+  // Calibrated to real 2025/26 data: top CBs ~1.4 DEFCON pts/game, avg CB ~0.8
   let defconXP = 0;
   if (pos === 2) {
     if (defConPer90 > 0) {
       const dcPerFixture = defConPer90 * (mins / 90);
       defconXP = Math.min(dcPerFixture / 6, 2.5) * minsProb * confidenceMult * defMult * defStrMult;
     } else {
-      const defconBase = 1.1;
-      const teamDefStr = team ? ((team.strength_defence_home + team.strength_defence_away) / 2 / 800) : 0.8;
+      // Fallback: base 0.65 thresholds/game * team defence quality (divisor 1200)
+      const defconBase = 0.65;
+      const teamDefStr = team ? ((team.strength_defence_home + team.strength_defence_away) / 2 / 1200) : 0.75;
       defconXP = defconBase * teamDefStr * minsProb * confidenceMult * defMult;
     }
   } else if (pos === 3) {
@@ -349,6 +351,7 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
       const dcPerFixture = defConPer90 * (mins / 90);
       defconXP = Math.min(dcPerFixture / 8, 1.5) * minsProb * confidenceMult * defMult;
     } else {
+      // DEF MIDs get partial DEFCON (~0.4 thresholds/game)
       defconXP = 0.4 * minsProb * confidenceMult * defMult;
     }
   }
@@ -1145,6 +1148,62 @@ VG.buildFixtureTicker = (startGW, nGWs, fixtures) => {
     ticker[t.id] = row;
   });
   return ticker;
+};
+
+// ── Fixture Swing Analysis: detect easy/hard runs ─────────────────────
+VG.analyzeFixtureSwings = (startGW, nGWs, fixtures) => {
+  const swings = [];
+  Object.values(VG.teams).forEach(t => {
+    const fdrs = [];
+    const fixtures_list = [];
+    for (let gw = startGW; gw < startGW + nGWs; gw++) {
+      const f = fixtures.find(fi => fi.event === gw && (fi.team_h === t.id || fi.team_a === t.id));
+      if (f) {
+        const isHome = f.team_h === t.id;
+        const oppId = isHome ? f.team_a : f.team_h;
+        const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
+        fdrs.push(fdr);
+        fixtures_list.push({ gw, fdr, opp: VG.teams[oppId]?.short_name || "", isHome });
+      } else {
+        fdrs.push(0);
+        fixtures_list.push({ gw, fdr: 0, opp: "BLANK", isHome: false });
+      }
+    }
+    const validFdrs = fdrs.filter(f => f > 0);
+    const avgFDR = validFdrs.length > 0 ? validFdrs.reduce((a, b) => a + b, 0) / validFdrs.length : 3;
+    // Detect runs: 3+ consecutive FDR <= 2 = easy run, 3+ consecutive FDR >= 4 = hard run
+    let easyRun = 0, hardRun = 0, maxEasy = 0, maxHard = 0;
+    let easyStart = -1, hardStart = -1;
+    let currentEasyStart = -1, currentHardStart = -1;
+    fdrs.forEach((f, i) => {
+      if (f > 0 && f <= 2) {
+        if (easyRun === 0) currentEasyStart = i;
+        easyRun++;
+        hardRun = 0;
+        if (easyRun > maxEasy) { maxEasy = easyRun; easyStart = currentEasyStart; }
+      } else if (f >= 4) {
+        if (hardRun === 0) currentHardStart = i;
+        hardRun++;
+        easyRun = 0;
+        if (hardRun > maxHard) { maxHard = hardRun; hardStart = currentHardStart; }
+      } else {
+        easyRun = 0;
+        hardRun = 0;
+      }
+    });
+    swings.push({
+      id: t.id,
+      name: t.short_name || t.name,
+      avgFDR: +avgFDR.toFixed(2),
+      fixtures: fixtures_list,
+      maxEasyRun: maxEasy,
+      maxHardRun: maxHard,
+      easyRunGWs: maxEasy >= 3 ? `${startGW + easyStart}-${startGW + easyStart + maxEasy - 1}` : null,
+      hardRunGWs: maxHard >= 3 ? `${startGW + hardStart}-${startGW + hardStart + maxHard - 1}` : null
+    });
+  });
+  swings.sort((a, b) => a.avgFDR - b.avgFDR);
+  return swings;
 };
 
 // ── Price Change Risk ─────────────────────────────────────────────────

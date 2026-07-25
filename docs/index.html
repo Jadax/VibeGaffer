@@ -314,12 +314,44 @@ VG.run = async () => {
       html += VG.render.bench(result.bench);
     }
 
-    // Full squad list
+    // Full squad list with xP component breakdown
     if (result.squad?.length) {
-      html += '<div class="section-title">Full Squad</div><div class="squad-list">';
-      result.squad.sort((a, b) => a.positionId - b.positionId || b.totalXP - a.totalXP).forEach(p => {
+      html += '<div class="section-title">Full Squad <span style="color:#475569;font-size:0.65rem;font-weight:400;margin-left:4px;">click player for xP breakdown</span></div><div class="squad-list">';
+      result.squad.sort((a, b) => a.positionId - b.positionId || b.totalXP - a.totalXP).forEach((p, idx) => {
         const posCls = VG.POS_SHIRT[p.positionId];
-        html += `<div class="squad-item"><div class="pos-badge ${posCls}">${VG.POSITIONS[p.positionId]}</div><div class="info"><div class="pname">${p.name}</div><div class="pteam">${p.teamName}</div></div><div class="pprice">£${p.price.toFixed(1)}m</div><div class="pxp">${(p.totalXP || 0).toFixed(1)}</div></div>`;
+        const xc = p.xpComponents || {};
+        const total = p.totalXP || 1;
+        const barCS = ((xc.xpCS || 0) / total * 100).toFixed(0);
+        const barGoal = ((xc.xpGoals || 0) / total * 100).toFixed(0);
+        const barAssist = ((xc.xpAssists || 0) / total * 100).toFixed(0);
+        const barBonus = ((xc.xpBonus || 0) / total * 100).toFixed(0);
+        const barDefcon = ((xc.xpDEFCON || 0) / total * 100).toFixed(0);
+        const barApp = ((xc.xpAppearance || 0) / total * 100).toFixed(0);
+        const barSaves = ((xc.xpSaves || 0) / total * 100).toFixed(0);
+        html += `<div class="squad-item" onclick="this.querySelector('.squad-breakdown').classList.toggle('show')" style="cursor:pointer;">`;
+        html += `<div class="pos-badge ${posCls}">${VG.POSITIONS[p.positionId]}</div>`;
+        html += `<div class="info"><div class="pname">${p.name}</div><div class="pteam">${p.teamName}</div></div>`;
+        html += `<div class="pprice">£${p.price.toFixed(1)}m</div>`;
+        html += `<div class="pxp">${(p.totalXP || 0).toFixed(1)}</div>`;
+        html += `<div class="squad-breakdown">`;
+        html += `<div class="xp-bar">`;
+        if (barApp > 0) html += `<div class="xp-bar-seg" style="width:${barApp}%;background:#64748b;" title="Appearance: ${(xc.xpAppearance||0).toFixed(1)}"></div>`;
+        if (barCS > 0) html += `<div class="xp-bar-seg" style="width:${barCS}%;background:#3b82f6;" title="Clean Sheet: ${(xc.xpCS||0).toFixed(1)}"></div>`;
+        if (barGoal > 0) html += `<div class="xp-bar-seg" style="width:${barGoal}%;background:#22c55e;" title="Goals: ${(xc.xpGoals||0).toFixed(1)}"></div>`;
+        if (barAssist > 0) html += `<div class="xp-bar-seg" style="width:${barAssist}%;background:#a78bfa;" title="Assists: ${(xc.xpAssists||0).toFixed(1)}"></div>`;
+        if (barBonus > 0) html += `<div class="xp-bar-seg" style="width:${barBonus}%;background:#fbbf24;" title="Bonus: ${(xc.xpBonus||0).toFixed(1)}"></div>`;
+        if (barDefcon > 0) html += `<div class="xp-bar-seg" style="width:${barDefcon}%;background:#f97316;" title="DEFCON: ${(xc.xpDEFCON||0).toFixed(1)}"></div>`;
+        if (barSaves > 0) html += `<div class="xp-bar-seg" style="width:${barSaves}%;background:#06b6d4;" title="Saves: ${(xc.xpSaves||0).toFixed(1)}"></div>`;
+        html += `</div>`;
+        html += `<div class="xp-legend">`;
+        if (xc.xpAppearance > 0.1) html += `<span><i class="dot" style="background:#64748b"></i>App ${(xc.xpAppearance||0).toFixed(1)}</span>`;
+        if (xc.xpCS > 0.1) html += `<span><i class="dot" style="background:#3b82f6"></i>CS ${(xc.xpCS||0).toFixed(1)}</span>`;
+        if (xc.xpGoals > 0.1) html += `<span><i class="dot" style="background:#22c55e"></i>Goals ${(xc.xpGoals||0).toFixed(1)}</span>`;
+        if (xc.xpAssists > 0.1) html += `<span><i class="dot" style="background:#a78bfa"></i>Assists ${(xc.xpAssists||0).toFixed(1)}</span>`;
+        if (xc.xpBonus > 0.1) html += `<span><i class="dot" style="background:#fbbf24"></i>Bonus ${(xc.xpBonus||0).toFixed(1)}</span>`;
+        if (xc.xpDEFCON > 0.1) html += `<span><i class="dot" style="background:#f97316"></i>DEFCON ${(xc.xpDEFCON||0).toFixed(1)}</span>`;
+        if (xc.xpSaves > 0.1) html += `<span><i class="dot" style="background:#06b6d4"></i>Saves ${(xc.xpSaves||0).toFixed(1)}</span>`;
+        html += `</div></div></div>`;
       });
       html += '</div>';
     }
@@ -352,7 +384,29 @@ VG.run = async () => {
 VG.preloadTabs = async (gw, horizon) => {
   try {
     const tickerData = VG.buildFixtureTicker(gw, 8, VG.allFixtures);
-    document.getElementById("fixtureContent").innerHTML = VG.render.ticker(tickerData, gw, 8);
+    const swings = VG.analyzeFixtureSwings(gw, 8, VG.allFixtures);
+    let fixtureHTML = VG.render.ticker(tickerData, gw, 8);
+    // Add fixture swing summary
+    fixtureHTML += '<div class="section-title" style="margin-top:16px;font-size:0.8rem;">Fixture Swing Analysis</div>';
+    fixtureHTML += '<div class="swing-grid">';
+    // Best runs (avg FDR <= 2.5)
+    const bestRuns = swings.filter(s => s.avgFDR <= 2.5).slice(0, 5);
+    const worstRuns = swings.filter(s => s.avgFDR >= 3.5).slice(-5).reverse();
+    fixtureHTML += '<div class="swing-col"><div class="swing-header" style="color:#00ff87;">Easy Runs</div>';
+    if (bestRuns.length === 0) fixtureHTML += '<p style="color:#334155;font-size:0.7rem;">No clear easy runs</p>';
+    bestRuns.forEach(s => {
+      const runTag = s.maxEasyRun >= 3 ? `<span class="swing-run easy">🔥 ${s.maxEasyRun} GW run (GW${s.easyRunGWs})</span>` : '';
+      fixtureHTML += `<div class="swing-card"><span class="swing-name">${s.name}</span><span class="swing-avg">FDR ${s.avgFDR}</span>${runTag}</div>`;
+    });
+    fixtureHTML += '</div>';
+    fixtureHTML += '<div class="swing-col"><div class="swing-header" style="color:#ef4444;">Hard Runs</div>';
+    if (worstRuns.length === 0) fixtureHTML += '<p style="color:#334155;font-size:0.7rem;">No clear hard runs</p>';
+    worstRuns.forEach(s => {
+      const runTag = s.maxHardRun >= 3 ? `<span class="swing-run hard">💀 ${s.maxHardRun} GW run (GW${s.hardRunGWs})</span>` : '';
+      fixtureHTML += `<div class="swing-card"><span class="swing-name">${s.name}</span><span class="swing-avg">FDR ${s.avgFDR}</span>${runTag}</div>`;
+    });
+    fixtureHTML += '</div></div>';
+    document.getElementById("fixtureContent").innerHTML = fixtureHTML;
   } catch(e) {
     console.warn("[VG] Fixture ticker:", e);
     document.getElementById("fixtureContent").innerHTML = '<p style="color:#475569;">Fixture data unavailable</p>';

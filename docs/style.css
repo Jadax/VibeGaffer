@@ -204,6 +204,14 @@ a { color: #00ff87; text-decoration: none; }
 .squad-item .info .pteam { font-size: 0.6rem; color: #475569; }
 .squad-item .pprice { color: #64748b; font-weight: 600; font-size: 0.7rem; }
 .squad-item .pxp { color: #00ff87; font-weight: 700; font-size: 0.7rem; }
+.squad-breakdown { display: none; width: 100%; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.05); }
+.squad-breakdown.show { display: block; }
+.xp-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: rgba(255,255,255,0.03); margin-bottom: 4px; }
+.xp-bar-seg { height: 100%; transition: width 0.3s; }
+.xp-legend { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 0.6rem; color: #64748b; }
+.xp-legend span { display: inline-flex; align-items: center; gap: 3px; }
+.xp-legend .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.squad-item { flex-wrap: wrap; }
 
 /* ── Per-GW Breakdown ─────────────────────────────────────── */
 .gw-breakdown { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 12px; }
@@ -253,3 +261,14 @@ a { color: #00ff87; text-decoration: none; }
 .strategy-players { border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px; }
 .strategy-player { font-size: 0.7rem; color: #94a3b8; padding: 2px 0; display: flex; justify-content: space-between; }
 .strategy-player .pos { color: #64748b; font-size: 0.6rem; }
+
+/* ── Fixture Swing Analysis ──────────────────────────────── */
+.swing-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
+.swing-col { display: flex; flex-direction: column; gap: 6px; }
+.swing-header { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+.swing-card { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px solid rgba(255,255,255,0.03); font-size: 0.7rem; }
+.swing-name { font-weight: 700; color: #e2e8f0; min-width: 32px; }
+.swing-avg { color: #64748b; font-size: 0.65rem; }
+.swing-run { font-size: 0.6rem; font-weight: 600; padding: 1px 6px; border-radius: 4px; }
+.swing-run.easy { background: rgba(0,255,135,0.1); color: #00ff87; }
+.swing-run.hard { background: rgba(239,68,68,0.1); color: #ef4444; }
