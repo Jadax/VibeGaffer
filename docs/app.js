@@ -1268,7 +1268,38 @@ VG.analyzeFixtureSwings = (startGW, nGWs, fixtures) => {
   return swings;
 };
 
-// ── Multi-Week Transfer Roadmap ─────────────────────────────────────
+// ── Captain Rotation Planner ────────────────────────────────────────
+// For each GW in the horizon, find the top captain candidates with their
+// fixture info, xP, and FDR — so users can plan captain rotation
+VG.computeCaptainRotation = (squad, allXP, fixtures, startGW, nGWs) => {
+  if (!squad || squad.length < 11 || !allXP || allXP.length === 0) return null;
+
+  const squadIds = new Set(squad.map(p => p.element || p.id));
+  const squadXP = allXP.filter(p => squadIds.has(p.id) && p.positionId !== 1);
+  const rotation = [];
+
+  for (let gw = startGW; gw < startGW + nGWs; gw++) {
+    const gwFix = fixtures.filter(f => f.event === gw);
+    const candidates = squadXP.map(p => {
+      const f = gwFix.find(fi => fi.team_h === p.teamId || fi.team_a === p.teamId);
+      const isHome = f ? f.team_h === p.teamId : false;
+      const oppId = f ? (isHome ? f.team_a : f.team_h) : null;
+      const fdr = f ? (isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3)) : 0;
+      const oppName = oppId ? (VG.teams[oppId]?.short_name || "?") : "BLANK";
+      const gwXP = p.gwXP || (p.totalXP / Math.max(nGWs, 1));
+      return { ...p, fdr, oppName, isHome, gwXP };
+    }).sort((a, b) => b.gwXP - a.gwXP);
+
+    rotation.push({
+      gw,
+      top3: candidates.slice(0, 3),
+      dgw: gwFix.length >= 2
+    });
+  }
+  return rotation;
+};
+
+// ── Transfer Roadmap ───────────────────────────────────────────────
 // Analyzes squad fixtures across the horizon and recommends transfers per GW
 VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
   if (!squad || squad.length < 11 || !allXP || allXP.length === 0) return null;
@@ -1526,8 +1557,135 @@ VG.TIPS = [
   }
 ];
 
-VG.render.tips = () => {
+VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
   let html = '';
+
+  // ── Dynamic: Your Squad Analysis ──
+  if (result && allXP) {
+    const tips = [];
+    const squad = result.squad || [];
+    const gwPicks = result.gwPicks || [];
+    const chipAdvice = result.chipAdvice || {};
+
+    // Captain analysis
+    if (result.gotCap?.length >= 1) {
+      const c = result.gotCap[0];
+      const capXP = c.gwXP || c.totalXP || 0;
+      const capShare = result.gwTotalXP > 0 ? ((capXP / result.gwTotalXP) * 100).toFixed(0) : '?';
+      tips.push({
+        title: `Captain: ${c.name} (${capXP.toFixed(1)} xP)`,
+        text: `Your captain contributes ~${capShare}% of GW${gw} expected points. ${capXP >= 6 ? 'Strong pick — this is a premium captaincy.' : capXP >= 4 ? 'Decent pick — consider alternatives if fixtures worsen.' : 'Weak pick — look for a better option in your squad or via transfer.'}`,
+        source: 'VibeGaffer Analysis'
+      });
+    }
+
+    // Injury/doubtful count
+    const injuredCount = squad.filter(p => {
+      const data = VG.players[p.element || p.id];
+      return data && data.status !== 'a';
+    }).length;
+    if (injuredCount >= 3) {
+      tips.push({
+        title: `${injuredCount} Injured/Doubtful Players`,
+        text: `Your squad has ${injuredCount} players with injury concerns. This is a wildcard trigger — consider using WC to replace them before they lose value.`,
+        source: 'VibeGaffer Analysis'
+      });
+    } else if (injuredCount >= 1) {
+      tips.push({
+        title: `${injuredCount} Injury Concern(s)`,
+        text: `Monitor ${injuredCount} player(s) before the deadline. If they're confirmed out, use your free transfer rather than taking a hit.`,
+        source: 'VibeGaffer Analysis'
+      });
+    }
+
+    // Fixture difficulty
+    const gwFix = fixtures.filter(f => f.event === gw);
+    let hardFixtures = 0;
+    squad.forEach(sp => {
+      const xp = allXP.find(p => p.id === (sp.element || sp.id));
+      if (!xp) return;
+      const f = gwFix.find(fi => fi.team_h === xp.teamId || fi.team_a === xp.teamId);
+      if (!f) return;
+      const isHome = f.team_h === xp.teamId;
+      const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
+      if (fdr >= 4) hardFixtures++;
+    });
+    if (hardFixtures >= 6) {
+      tips.push({
+        title: `${hardFixtures} Players with Hard Fixtures (FDR 4-5)`,
+        text: `Over half your squad faces tough opponents this gameweek. If this persists into next GW, consider rolling transfers or using a Wildcard.`,
+        source: 'VibeGaffer Analysis'
+      });
+    }
+
+    // Budget analysis
+    if (result.budgetRemaining !== undefined) {
+      const bank = result.budgetRemaining;
+      if (bank >= 2.0) {
+        tips.push({
+          title: `£${bank.toFixed(1)}m in the Bank`,
+          text: `You have significant budget flexibility. Consider upgrading a mid-range player to a premium for higher ceiling, especially if they have easy fixtures ahead.`,
+          source: 'VibeGaffer Analysis'
+        });
+      } else if (bank < 0.1) {
+        tips.push({
+          title: 'Budget Fully Utilized',
+          text: 'No room for upgrades without selling. If you want to bring in a premium, you\'ll need to downgrade elsewhere first.',
+          source: 'VibeGaffer Analysis'
+        });
+      }
+    }
+
+    // Chip recommendations
+    if (chipAdvice.triple_captain?.recommend) {
+      tips.push({
+        title: `TC Window: GW${chipAdvice.triple_captain.bestGW}`,
+        text: chipAdvice.triple_captain.reason,
+        source: 'Chip Analysis'
+      });
+    }
+    if (chipAdvice.bench_boost?.recommend) {
+      tips.push({
+        title: `BB Window: GW${chipAdvice.bench_boost.bestGW}`,
+        text: chipAdvice.bench_boost.reason,
+        source: 'Chip Analysis'
+      });
+    }
+    if (chipAdvice.wildcard?.recommend) {
+      tips.push({
+        title: `WC Recommended: GW${chipAdvice.wildcard.bestGW}`,
+        text: chipAdvice.wildcard.reason,
+        source: 'Chip Analysis'
+      });
+    }
+
+    // Differential opportunity
+    const owned = new Set(squad.map(p => p.element || p.id));
+    const template = allXP.filter(p => (p.ownership || 0) >= 30 && p.totalXP >= 25);
+    const missing = template.filter(p => !owned.has(p.id));
+    if (missing.length >= 3) {
+      tips.push({
+        title: `Missing ${missing.length} Template Players`,
+        text: `You're missing popular high-xP picks: ${missing.slice(0, 3).map(p => p.name).join(', ')}. These are highly owned — if they score well, you'll lose rank. Consider whether your differentials can compensate.`,
+        source: 'VibeGaffer Analysis'
+      });
+    }
+
+    if (tips.length > 0) {
+      html += `<div class="tips-section">`;
+      html += `<div class="tips-section-header">📊 Your Squad Analysis</div>`;
+      tips.forEach(tip => {
+        html += `<div class="tip-card" style="border-left:3px solid #00ff87;">`;
+        html += `<div class="tip-title">${tip.title}</div>`;
+        html += `<div class="tip-text">${tip.text}</div>`;
+        html += `<div class="tip-source">— ${tip.source}</div>`;
+        html += `</div>`;
+      });
+      html += `</div>`;
+    }
+  }
+
+  // ── Static championship tips ──
   VG.TIPS.forEach(section => {
     html += `<div class="tips-section">`;
     html += `<div class="tips-section-header">${section.icon} ${section.category}</div>`;
