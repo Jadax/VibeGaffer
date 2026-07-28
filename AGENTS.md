@@ -4,7 +4,7 @@ This file provides context for AI models working on the VibeGaffer codebase.
 
 ## Quick Status
 
-- **Current version**: v5.1
+- **Current version**: v5.2
 - **Architecture**: Pure static HTML/CSS/JS on GitHub Pages (no backend)
 - **Live URL**: https://jadax.github.io/VibeGaffer/
 - **Data**: Auto-fetched every 15 min via GitHub Actions cron → `docs/data/*.json`
@@ -86,6 +86,9 @@ Start-rate model using last season data:
 - `VG.evaluateChips(squad, gwPicks, startGW, fixtures)` → chip recommendations with gwScores
 - `VG.analyzeFixtureSwings(startGW, nGWs, fixtures)` → easy/hard run detection
 - `VG.buildFixtureTicker(startGW, nGWs, fixtures)` → per-team fixture grid
+- `VG.computeLineupAdvice(squad, allXP, fixtures, gw)` → optimal lineup with per-player reasoning (v5.2)
+- `VG.getCaptainReasoning(cap, fixtures, gw)` → natural-language captain explanation (v5.2)
+- `VG.getSquadAnalysis(result, allXP, fixtures, gw)` → strengths/weaknesses squad DNA (v5.2)
 
 ### League Analyzer (v5.1)
 - `VG.analyzeLeague(leagueId, currentGW)` → fetches classic league, compares squads, ownership analysis, differentials, outliers, template detection

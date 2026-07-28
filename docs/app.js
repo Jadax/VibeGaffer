@@ -2053,6 +2053,199 @@ VG.render.ticker = (ticker, startGW, nGWs) => {
   return html;
 };
 
+// ── Lineup Intelligence: optimal bench/start suggestions ───────────────
+VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
+  if (!squad || squad.length < 11 || !allXP || !fixtures) return null;
+  const gwFix = fixtures.filter(f => f.event === gw);
+  const players = squad.map(p => {
+    const xp = allXP.find(a => a.id === (p.element || p.id));
+    if (!xp) return null;
+    const f = gwFix.find(fi => fi.team_h === xp.teamId || fi.team_a === xp.teamId);
+    const isHome = f ? f.team_h === xp.teamId : null;
+    const fdr = f ? (isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3)) : 3;
+    const oppTeamId = f ? (isHome ? f.team_a : f.team_h) : null;
+    const oppName = oppTeamId && VG.teams[oppTeamId] ? VG.teams[oppTeamId].short_name : '?';
+    const data = VG.players[xp.id];
+    const status = data ? data.status : 'a';
+    const minutes = parseInt(data?.minutes || '0');
+    const starts = parseInt(data?.starts || '0');
+    const isNailed = starts >= 25 && minutes > 2000;
+    const isDoubtful = status === 'd' || status === 'u';
+    return { ...xp, fdr, oppName, isHome: isHome ? 'H' : 'A', status, isNailed, isDoubtful };
+  }).filter(Boolean);
+
+  // Separate by position
+  const byPos = { 1: [], 2: [], 3: [], 4: [] };
+  players.forEach(p => byPos[p.positionId]?.push(p));
+
+  // Sort each position by xP
+  Object.values(byPos).forEach(arr => arr.sort((a, b) => b.totalXP - a.totalXP));
+
+  // Determine formation based on xP distribution (non-GK)
+  const outfield = [...byPos[4], ...byPos[3], ...byPos[2]];
+  outfield.sort((a, b) => b.totalXP - a.totalXP);
+
+  // Try formations: 3-4-3, 3-5-2, 4-4-2, 4-3-3, 5-3-2, 4-5-1
+  const formations = [
+    { DEF: 3, MID: 4, FWD: 3 },
+    { DEF: 3, MID: 5, FWD: 2 },
+    { DEF: 4, MID: 4, FWD: 2 },
+    { DEF: 4, MID: 3, FWD: 3 },
+    { DEF: 5, MID: 3, FWD: 2 },
+    { DEF: 4, MID: 5, FWD: 1 },
+  ];
+
+  let bestPicks = null;
+  let bestFmt = null;
+  let bestScore = -1;
+
+  for (const fmt of formations) {
+    const defs = byPos[2].length;
+    const mids = byPos[3].length;
+    const fwds = byPos[4].length;
+    if (defs < fmt.DEF || mids < fmt.MID || fwds < fmt.FWD) continue;
+
+    const picks = [
+      byPos[1].slice(0, 1), // GK
+      byPos[2].slice(0, fmt.DEF),
+      byPos[3].slice(0, fmt.MID),
+      byPos[4].slice(0, fmt.FWD),
+    ];
+    const starting = picks.flat();
+    const bench4 = [
+      byPos[1].slice(1, 2),
+      byPos[2].slice(fmt.DEF, fmt.DEF + 1),
+      byPos[3].slice(fmt.MID, fmt.MID + 1),
+      byPos[4].slice(fmt.FWD, fmt.FWD + 1),
+    ].flat().filter(Boolean);
+
+    const total = starting.reduce((s, p) => s + p.totalXP, 0);
+    if (total > bestScore) {
+      bestScore = total;
+      bestPicks = { starting, bench: bench4, formation: fmt };
+      bestFmt = fmt;
+    }
+  }
+
+  if (!bestPicks) return null;
+
+  // Generate per-player start/bench reasoning
+  const reasoning = bestPicks.starting.map(p => {
+    const reasons = [];
+    if (p.isDoubtful) reasons.push('⚠ Doubtful — monitor team news');
+    if (!p.isNailed && p.fdr >= 4) reasons.push('Tough fixture, rotation risk');
+    if (p.fdr <= 2) reasons.push('Excellent fixture — attack/clean sheet opportunity');
+    if (p.totalXP >= 40) reasons.push(`High projected return (${p.totalXP.toFixed(1)} xP)`);
+    if (p.totalXP < 20) reasons.push('Low xP projection — consider benching');
+    if (reasons.length === 0) reasons.push('Solid pick based on xP projection');
+    return { name: p.name, position: p.position, totalXP: p.totalXP, fdr: p.fdr, oppName: p.oppName, isHome: p.isHome, reasons, positionId: p.positionId };
+  });
+
+  const benchReasoning = bestPicks.bench.map(p => {
+    const reasons = [];
+    if (p.fdr >= 4) reasons.push(`Tough fixture (FDR ${p.fdr}) — benched`);
+    if (p.totalXP < 25) reasons.push(`Lower xP (${p.totalXP.toFixed(1)}) than starters`);
+    if (p.isDoubtful) reasons.push('Doubtful — risk of 0 minutes');
+    if (p.fdr <= 2) reasons.push(`Easy fixture (FDR ${p.fdr}) — could haul from bench`);
+    if (reasons.length === 0) reasons.push('Bench option — monitor for rotation');
+    return { name: p.name, position: p.position, totalXP: p.totalXP, fdr: p.fdr, oppName: p.oppName, isHome: p.isHome, reasons, positionId: p.positionId };
+  });
+
+  // Formation comparison
+  const altFormations = formations.filter(f =>
+    f.DEF !== bestFmt.DEF || f.MID !== bestFmt.MID || f.FWD !== bestFmt.FWD
+  ).slice(0, 3).map(f => {
+    const d = byPos[2].length >= f.DEF ? byPos[2].slice(0, f.DEF) : [];
+    const m = byPos[3].length >= f.MID ? byPos[3].slice(0, f.MID) : [];
+    const fw = byPos[4].length >= f.FWD ? byPos[4].slice(0, f.FWD) : [];
+    if (d.length < f.DEF || m.length < f.MID || fw.length < f.FWD) return null;
+    return { formation: `${f.DEF}-${f.MID}-${f.FWD}`, xP: [...d, ...m, ...fw].reduce((s, p) => s + p.totalXP, 0) };
+  }).filter(Boolean);
+
+  return {
+    formation: `${bestFmt.DEF}-${bestFmt.MID}-${bestFmt.FWD}`,
+    starting: reasoning,
+    bench: benchReasoning,
+    altFormations,
+    totalXP: bestScore.toFixed(1)
+  };
+};
+
+VG.getCaptainReasoning = (cap, fixtures, gw) => {
+  if (!cap) return { summary: 'No captain selected', details: [] };
+  const reasons = [];
+  if (cap.isDoubful) reasons.push('⚠ Doubtful — have a VC ready');
+  if (cap.fdr <= 2) reasons.push(`Easy fixture (FDR ${cap.fdr}) — high scoring potential`);
+  if (cap.fdr >= 4) reasons.push(`Tough fixture (FDR ${cap.fdr}) — consider alternatives`);
+  if (cap.gwXP >= 7) reasons.push(`Elite projection (${cap.gwXP.toFixed(1)} xP) — premium captaincy`);
+  if (cap.gwXP >= 5 && cap.gwXP < 7) reasons.push(`Strong projection (${cap.gwXP.toFixed(1)} xP) — solid captaincy`);
+  if (cap.gwXP < 5) reasons.push(`Modest projection (${cap.gwXP.toFixed(1)} xP) — look for a better option`);
+  if (cap.positionId === 4) reasons.push('Forward — highest ceiling position for captaincy');
+  if (cap.positionId === 3 && (cap.price || 0) >= 9) reasons.push('Premium midfielder — consistent point scorer');
+  if (cap.positionId === 1 || cap.positionId === 2) reasons.push('Defender/GK captain is very high variance');
+
+  const isHome = cap.isHome === 'H';
+  const venue = isHome ? 'at home' : 'away';
+  const summary = `${cap.name} (${cap.position}) ${venue} vs ${cap.oppName} (FDR ${cap.fdr}) · ${cap.gwXP.toFixed(1)} xP`;
+  return { summary, details: reasons };
+};
+
+VG.getSquadAnalysis = (result, allXP, fixtures, gw) => {
+  if (!result || !result.squad) return null;
+  const squad = result.squad;
+  const weaknesses = [];
+  const strengths = [];
+
+  // Budget distribution analysis
+  const byCost = { premium: 0, mid: 0, budget: 0 };
+  squad.forEach(p => {
+    const cost = p.price || 0;
+    if (cost >= 9) byCost.premium++;
+    else if (cost >= 6) byCost.mid++;
+    else byCost.budget++;
+  });
+  strengths.push(`Budget: ${byCost.premium} premium, ${byCost.mid} mid-range, ${byCost.budget} budget picks`);
+  if (byCost.premium >= 4) strengths.push('Multiple premium assets — high ceiling');
+  if (byCost.budget >= 8) weaknesses.push('Budget-heavy — may lack consistent haul potential');
+
+  // Team distribution
+  const teamCount = {};
+  squad.forEach(p => { teamCount[p.teamName] = (teamCount[p.teamName] || 0) + 1; });
+  const maxTeam = Object.entries(teamCount).sort((a, b) => b[1] - a[1])[0];
+  if (maxTeam && maxTeam[1] >= 3) strengths.push(`Triple-up on ${maxTeam[0]} — strong fixture alignment`);
+  if (maxTeam && maxTeam[1] >= 4) weaknesses.push(`4 players from ${maxTeam[0]} — overexposed`);
+
+  // Fixture difficulty
+  const gwFix = fixtures.filter(f => f.event === gw);
+  let easyFix = 0, hardFix = 0;
+  squad.forEach(p => {
+    const f = gwFix.find(fi => fi.team_h === p.teamId || fi.team_a === p.teamId);
+    if (!f) return;
+    const isH = f.team_h === p.teamId;
+    const fdr = isH ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
+    if (fdr <= 2) easyFix++;
+    if (fdr >= 4) hardFix++;
+  });
+  if (easyFix >= 6) strengths.push(`${easyFix} players with great fixtures (FDR 1-2)`);
+  if (hardFix >= 4) weaknesses.push(`${hardFix} players with tough fixtures (FDR 4-5)`);
+
+  // Captain quality
+  if (result.gotCap?.length >= 1) {
+    const c = result.gotCap[0];
+    if (c.gwXP >= 7) strengths.push(`Captain ${c.name} has elite projection (${c.gwXP.toFixed(1)} xP)`);
+  }
+
+  // Formation balance
+  const formation = result.formation;
+  if (formation) {
+    const fwdCount = formation.FWD || 0;
+    if (fwdCount >= 3) strengths.push('3-forward formation — aggressive attacking setup');
+    if (fwdCount <= 1) weaknesses.push('Only 1 forward — limits attacking ceiling');
+  }
+
+  return { strengths, weaknesses };
+};
+
 // ── Strategy Tips: championship wisdom ──────────────────────────────────
 VG.TIPS = [
   {
@@ -2116,6 +2309,31 @@ VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
     const squad = result.squad || [];
     const gwPicks = result.gwPicks || [];
     const chipAdvice = result.chipAdvice || {};
+
+    // Squad strengths and weaknesses
+    const analysis = VG.getSquadAnalysis(result, allXP, fixtures, gw);
+    if (analysis) {
+      html += `<div class="tips-section">`;
+      html += `<div class="tips-section-header">📊 Squad DNA — Strengths & Weaknesses</div>`;
+      html += `<div class="tips-dna" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">`;
+      if (analysis.strengths.length > 0) {
+        html += `<div style="background:rgba(0,255,135,0.04);border-radius:8px;padding:10px;">`;
+        html += `<div style="color:#00ff87;font-size:0.65rem;font-weight:700;text-transform:uppercase;margin-bottom:4px;">✅ Strengths</div>`;
+        analysis.strengths.forEach(s => {
+          html += `<div style="font-size:0.7rem;color:#94a3b8;margin-top:3px;">▸ ${s}</div>`;
+        });
+        html += `</div>`;
+      }
+      if (analysis.weaknesses.length > 0) {
+        html += `<div style="background:rgba(239,68,68,0.04);border-radius:8px;padding:10px;">`;
+        html += `<div style="color:#ef4444;font-size:0.65rem;font-weight:700;text-transform:uppercase;margin-bottom:4px;">⚠ Risks</div>`;
+        analysis.weaknesses.forEach(s => {
+          html += `<div style="font-size:0.7rem;color:#94a3b8;margin-top:3px;">▸ ${s}</div>`;
+        });
+        html += `</div>`;
+      }
+      html += `</div></div>`;
+    }
 
     // Captain analysis
     if (result.gotCap?.length >= 1) {

@@ -16,7 +16,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Astraiva</strong> · Tushant Sharma · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.1</span></div>
+    <div><span class="badge pulse-glow">v5.2</span></div>
 </div>
 
 <div class="app">
@@ -124,7 +124,7 @@
 </div>
 </div>
 
-<div class="footer">VibeGaffer v5.1 · Astraiva · Built by Tushant Sharma</div>
+<div class="footer">VibeGaffer v5.2 · Astraiva · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -301,6 +301,54 @@ VG.run = async () => {
       }
     }
 
+    // Optimal Lineup Intelligence
+    if (result.squad?.length >= 11) {
+      const lineupAdvice = VG.computeLineupAdvice(result.squad, allXP, VG.allFixtures, gw);
+      if (lineupAdvice) {
+        html += '<div class="section-title" style="margin-top:24px;">Optimal Lineup <span style="color:#475569;font-size:0.65rem;font-weight:400;margin-left:4px;">suggested XI + reasoning for GW' + gw + '</span></div>';
+        html += '<div class="chip-sequence" style="margin-bottom:10px;"><div class="chip-card"><div class="chip-label">Formation</div><div class="chip-score" style="color:#00ff87;font-size:0.8rem;">' + lineupAdvice.formation + '</div></div><div class="chip-card"><div class="chip-label">xP</div><div class="chip-score" style="color:#fbbf24;font-size:0.8rem;">' + lineupAdvice.totalXP + '</div></div></div>';
+        
+        // Starting XI with reasoning
+        html += '<div style="font-size:0.72rem;color:#94a3b8;font-weight:600;margin-bottom:6px;">STARTING XI</div>';
+        lineupAdvice.starting.forEach(p => {
+          const fdrColor = p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#94a3b8';
+          html += '<div class="lineup-player" style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(30,41,59,0.4);border-radius:6px;margin-bottom:4px;border-left:3px solid ' + fdrColor + ';">';
+          html += '<span class="pos-badge ' + VG.POS_SHIRT[p.positionId] + '" style="font-size:0.6rem;">' + p.position + '</span>';
+          html += '<span style="color:#e2e8f0;font-weight:500;font-size:0.75rem;">' + p.name + '</span>';
+          html += '<span style="color:#64748b;font-size:0.65rem;">' + (p.isHome === 'H' ? '' : 'A ') + p.oppName + '</span>';
+          html += '<span style="color:' + fdrColor + ';font-size:0.65rem;font-weight:600;">FDR ' + p.fdr + '</span>';
+          html += '<span style="color:#00ff87;font-size:0.65rem;margin-left:auto;">' + p.totalXP.toFixed(1) + ' xP</span>';
+          html += '</div>';
+          // Reasoning row
+          html += '<div style="margin:-2px 0 6px 16px;font-size:0.6rem;color:#64748b;font-style:italic;">';
+          html += p.reasons.join(' · ');
+          html += '</div>';
+        });
+
+        // Bench with reasoning
+        if (lineupAdvice.bench.length > 0) {
+          html += '<div style="font-size:0.72rem;color:#94a3b8;font-weight:600;margin:10px 0 6px;">BENCH</div>';
+          lineupAdvice.bench.forEach(p => {
+            const fdrColor = p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#64748b';
+            html += '<div style="display:flex;align-items:center;gap:8px;padding:4px 10px;background:rgba(30,41,59,0.2);border-radius:4px;margin-bottom:2px;border-left:2px solid ' + fdrColor + ';">';
+            html += '<span class="pos-badge ' + VG.POS_SHIRT[p.positionId] + '" style="font-size:0.55rem;padding:1px 3px;">' + p.position + '</span>';
+            html += '<span style="color:#94a3b8;font-size:0.7rem;">' + p.name + '</span>';
+            html += '<span style="color:#64748b;font-size:0.6rem;">· ' + p.reasons[0] + '</span>';
+            html += '</div>';
+          });
+        }
+
+        // Alternative formations
+        if (lineupAdvice.altFormations.length > 0) {
+          html += '<div style="margin-top:10px;font-size:0.65rem;color:#64748b;">Alternatives: ';
+          html += lineupAdvice.altFormations.map(f => 
+            '<span style="color:#94a3b8;margin-right:8px;">' + f.formation + ' (' + f.xP.toFixed(1) + ' xP)</span>'
+          ).join('');
+          html += '</div>';
+        }
+      }
+    }
+
     // Captaincy
     if (result.gotCap?.length >= 2) {
       const c = result.gotCap[0];
@@ -309,6 +357,15 @@ VG.run = async () => {
       html += `<div class="cap-card primary"><div class="cap-role" style="color:#fbbf24;">Captain</div><div class="cap-name">${c.name}</div><div class="cap-stats"><span style="color:#fbbf24;">${(c.gwXP || c.totalXP || 0).toFixed(1)} xP</span> · ${c.position} · ${c.teamName}${c.gwOpp ? ' · ' + c.gwVenue + ' vs ' + c.gwOpp : ''}</div></div>`;
       html += `<div class="cap-card secondary"><div class="cap-role" style="color:#06b6d4;">Vice</div><div class="cap-name">${v.name}</div><div class="cap-stats"><span style="color:#06b6d4;">${(v.gwXP || v.totalXP || 0).toFixed(1)} xP</span> · ${v.position} · ${v.teamName}${v.gwOpp ? ' · ' + v.gwVenue + ' vs ' + v.gwOpp : ''}</div></div>`;
       html += '</div>';
+      // Captain reasoning
+      const capReason = VG.getCaptainReasoning(Object.assign({}, c, { isHome: c.gwVenue, oppName: c.gwOpp, fdr: c.gwFDR, gwXP: c.gwXP || c.totalXP }), VG.allFixtures, gw);
+      if (capReason && capReason.details.length > 0) {
+        html += '<div style="margin-top:8px;padding:10px 14px;background:rgba(251,191,36,0.05);border-radius:8px;border-left:3px solid #fbbf24;">';
+        html += '<div style="font-size:0.7rem;color:#fbbf24;font-weight:600;">Why This Captain?</div>';
+        html += '<div style="font-size:0.7rem;color:#e2e8f0;margin-top:4px;">' + capReason.summary + '</div>';
+        html += '<div style="margin-top:4px;font-size:0.65rem;color:#64748b;">' + capReason.details.join(' · ') + '</div>';
+        html += '</div>';
+      }
     }
 
     // Captain Rotation Planner
