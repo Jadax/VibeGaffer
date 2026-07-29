@@ -16,7 +16,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Astraiva</strong> · Tushant Sharma · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.2</span></div>
+    <div><span class="badge pulse-glow">v5.2.1</span></div>
 </div>
 
 <div class="app">
@@ -124,7 +124,7 @@
 </div>
 </div>
 
-<div class="footer">VibeGaffer v5.2 · Astraiva · Built by Tushant Sharma</div>
+<div class="footer">VibeGaffer v5.2.1 · Astraiva · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -192,7 +192,9 @@ VG.run = async () => {
         const chips = VG.evaluateChips(draft.squad, draft.gwPicks, gw, VG.allFixtures);
         result = { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, netAfterHit: draft.totalXP, mode: "draft", strategies };
       } else {
-        const draft = await VG.optimizeDraftILP(allXP, 100, VG.allFixtures, gw, horizon);
+        const draft = strategy === "balanced"
+          ? await VG.optimizeDraftILP(allXP, 100, VG.allFixtures, gw, horizon)
+          : VG.optimizeStrategies(allXP, 100, VG.allFixtures, gw, horizon)[strategy];
         const chips = VG.evaluateChips(draft.squad, draft.gwPicks, gw, VG.allFixtures);
         result = { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, netAfterHit: draft.totalXP, mode: "draft", activeStrategy: strategy };
       }
@@ -315,7 +317,7 @@ VG.run = async () => {
           html += '<div class="lineup-player" style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(30,41,59,0.4);border-radius:6px;margin-bottom:4px;border-left:3px solid ' + fdrColor + ';">';
           html += '<span class="pos-badge ' + VG.POS_SHIRT[p.positionId] + '" style="font-size:0.6rem;">' + p.position + '</span>';
           html += '<span style="color:#e2e8f0;font-weight:500;font-size:0.75rem;">' + p.name + '</span>';
-          html += '<span style="color:#64748b;font-size:0.65rem;">' + (p.isHome === 'H' ? '' : 'A ') + p.oppName + '</span>';
+          html += '<span style="color:#64748b;font-size:0.65rem;">' + (p.isHome === 'H' ? p.oppName : p.isHome === 'A' ? 'A ' + p.oppName : p.isHome + ' ' + p.oppName) + '</span>';
           html += '<span style="color:' + fdrColor + ';font-size:0.65rem;font-weight:600;">FDR ' + p.fdr + '</span>';
           html += '<span style="color:#00ff87;font-size:0.65rem;margin-left:auto;">' + p.totalXP.toFixed(1) + ' xP</span>';
           html += '</div>';
@@ -382,7 +384,7 @@ VG.run = async () => {
             const fdrBg = p.fdr <= 2 ? 'rgba(34,197,94,0.12)' : p.fdr >= 4 ? 'rgba(239,68,68,0.12)' : 'transparent';
             html += `<td style="color:#e2e8f0;${i === 0 ? 'font-weight:700;' : ''}">${p.name}</td>`;
             html += `<td style="color:#00ff87;font-weight:600;">${p.gwXP.toFixed(1)}</td>`;
-            html += `<td style="background:${fdrBg};color:${fdrColor};font-weight:600;">${p.oppName}${p.isHome ? '' : ' (A)'} (${p.fdr || '?'})</td>`;
+            html += `<td style="background:${fdrBg};color:${fdrColor};font-weight:600;">${p.oppName}${p.venue === 'A' ? ' (A)' : p.venue === 'H/A' ? ' (H/A)' : ''} (${p.fdr || '?'})</td>`;
           });
           html += '</tr>';
         });
@@ -573,6 +575,8 @@ VG.run = async () => {
 };
 
 VG.preloadTabs = async (gw, horizon) => {
+  const el = id => document.getElementById(id);
+
   try {
     const tickerData = VG.buildFixtureTicker(gw, 8, VG.allFixtures);
     const swings = VG.analyzeFixtureSwings(gw, 8, VG.allFixtures);

@@ -1,0 +1,27 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/app.js"
+      - "docs/index.html"
+      - "docs/data/bootstrap.json"
+      - "docs/data/fixtures.json"
+      - "tests/**"
+      - "package.json"
+      - ".github/workflows/test.yml"
+      - ".github/workflows/fetch-odds.yml"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run check
+      - run: npm test

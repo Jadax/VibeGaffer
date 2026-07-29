@@ -552,7 +552,7 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
 VG.computeAllXP = (startGW, nGWs, fixtures) => {
   const results = [];
   Object.values(VG.players).forEach(p => {
-    if (p.status !== "a" || p.now_cost <= 0) return;
+    if ((p.status !== "a" && p.status !== "d") || p.now_cost <= 0) return;
     const xp = VG.computeMultiGWXP(p.id, startGW, nGWs, fixtures);
     xp.info.xpPerPrice = +(xp.totalXP / Math.max(xp.info.price, 4.0)).toFixed(2);
     xp.info.xpComponents = xp.xpComponents;
@@ -562,24 +562,57 @@ VG.computeAllXP = (startGW, nGWs, fixtures) => {
 };
 
 // ── Per-GW Picks: best XI + formation for a single gameweek ──────────────
+VG.computePlayerGWProjection = (player, gw, fixtures) => {
+  if (!player || !Array.isArray(fixtures)) {
+    return { gwXP: 0, fixtureCount: 0, opponents: [], oppName: "BLANK", venue: "-", fdr: 0 };
+  }
+
+  const teamFixtures = fixtures.filter(f =>
+    f.event === gw && (f.team_h === player.teamId || f.team_a === player.teamId)
+  );
+  if (teamFixtures.length === 0) {
+    return { gwXP: 0, fixtureCount: 0, opponents: [], oppName: "BLANK", venue: "-", fdr: 0 };
+  }
+
+  let gwXP = 0;
+  const opponents = [];
+  const venues = [];
+  const difficulties = [];
+
+  teamFixtures.forEach(f => {
+    const isHome = f.team_h === player.teamId;
+    const oppId = isHome ? f.team_a : f.team_h;
+    const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
+    const projection = VG.computeFixtureXP(player.id, oppId, isHome, fdr);
+    gwXP += projection.xp || 0;
+    opponents.push(VG.teams[oppId]?.short_name || "?");
+    venues.push(isHome ? "H" : "A");
+    difficulties.push(fdr);
+  });
+
+  return {
+    gwXP: +gwXP.toFixed(2),
+    fixtureCount: teamFixtures.length,
+    opponents,
+    oppName: opponents.join(" + "),
+    venue: venues.every(v => v === venues[0]) ? venues[0] : "H/A",
+    fdr: +(difficulties.reduce((sum, value) => sum + value, 0) / difficulties.length).toFixed(1)
+  };
+};
+
 VG.computePerGWPicks = (squad, gw, fixtures) => {
   // Compute single-GW xP for each squad member
   const gwXP = squad.map(p => {
     const data = VG.players[p.id];
     if (!data) return { ...p, gwXP: 0, gwOpp: "", gwVenue: "", gwFDR: 3 };
-    const teamId = p.teamId;
-    const f = fixtures.find(fi => fi.event === gw && (fi.team_h === teamId || fi.team_a === teamId));
-    if (!f) return { ...p, gwXP: (p.totalXP || 0) / 12, gwOpp: "N/A", gwVenue: "?", gwFDR: 3 };
-    const isHome = f.team_h === teamId;
-    const oppId = isHome ? f.team_a : f.team_h;
-    const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
-    const res = VG.computeFixtureXP(p.id, oppId, isHome, fdr);
+    const projection = VG.computePlayerGWProjection(p, gw, fixtures);
     return {
       ...p,
-      gwXP: +res.xp.toFixed(2),
-      gwOpp: VG.teams[oppId]?.short_name || "?",
-      gwVenue: isHome ? "H" : "A",
-      gwFDR: fdr
+      gwXP: projection.gwXP,
+      gwOpp: projection.oppName,
+      gwVenue: projection.venue,
+      gwFDR: projection.fdr,
+      fixtureCount: projection.fixtureCount
     };
   });
 
@@ -845,34 +878,35 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
       }
     }
 
-    // Phase 5: Local search — random single-player swaps to escape greedy local optima
-    // Try N random swaps, keep improvements, occasionally accept worse solutions (simulated annealing)
-    let currentXP = squad.reduce((s, p) => s + p.totalXP, 0);
-    const bestLocalXP = currentXP;
+    // Phase 5: deterministic best-improvement single-player local search
     for (let iter = 0; iter < 50; iter++) {
-      const idx = Math.floor(Math.random() * squad.length);
-      const cur = squad[idx];
-      const candidates = players.filter(p =>
-        p.id !== cur.id && !inSquad.has(p.id) && isAvailable(p) &&
-        p.positionId === cur.positionId &&
-        (clubCounts[p.teamId] || 0) < 3 && p.teamId !== cur.teamId
-      );
-      if (candidates.length === 0) continue;
-      const cand = candidates[Math.floor(Math.random() * candidates.length)];
-      const costDiff = +(cand.price - cur.price).toFixed(1);
-      if (costDiff > remaining()) continue;
-      const gain = cand.totalXP - cur.totalXP;
-      // Accept if improvement, or with low probability if worse (annealing)
-      const temp = 0.3 * (1 - iter / 50);
-      if (gain > 0 || (gain > -3 && Math.random() < temp)) {
+      let bestSwap = null;
+      for (let idx = 0; idx < squad.length; idx++) {
+        const cur = squad[idx];
+        for (const cand of players) {
+          if (cand.id === cur.id || inSquad.has(cand.id) || !isAvailable(cand)) continue;
+          if (cand.positionId !== cur.positionId) continue;
+          if (cand.teamId !== cur.teamId && (clubCounts[cand.teamId] || 0) >= 3) continue;
+          const costDiff = +(cand.price - cur.price).toFixed(1);
+          if (costDiff > remaining()) continue;
+          const gain = cand.totalXP - cur.totalXP;
+          if (gain <= 0) continue;
+          if (!bestSwap || gain > bestSwap.gain || (gain === bestSwap.gain && costDiff < bestSwap.costDiff)) {
+            bestSwap = { idx, cur, cand, costDiff, gain };
+          }
+        }
+      }
+      if (!bestSwap) break;
+
+      const { idx, cur, cand, costDiff } = bestSwap;
+      if (cand.teamId !== cur.teamId) {
         clubCounts[cur.teamId] = (clubCounts[cur.teamId] || 1) - 1;
         clubCounts[cand.teamId] = (clubCounts[cand.teamId] || 0) + 1;
-        inSquad.delete(cur.id);
-        inSquad.add(cand.id);
-        squad[idx] = { ...cand };
-        spent = +(spent + costDiff).toFixed(1);
-        currentXP += gain;
       }
+      inSquad.delete(cur.id);
+      inSquad.add(cand.id);
+      squad[idx] = { ...cand };
+      spent = +(spent + costDiff).toFixed(1);
     }
 
     // Evaluate this squad's total XP
@@ -1011,7 +1045,7 @@ VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, 
   for (let i = 0; i < n; i++) allVars.push('x' + i);
   lp += ' squad: ' + allVars.join(' + ') + ' = 15\n';
 
-  // Constraint 2: position counts (GK=2, DEF 3-5, MID 3-5, FWD 1-3)
+  // Constraint 2: exact FPL squad composition (2 GK, 5 DEF, 5 MID, 3 FWD)
   [1, 2, 3, 4].forEach(pos => {
     const posVars = [];
     for (let i = 0; i < n; i++) {
@@ -1019,15 +1053,7 @@ VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, 
     }
     if (posVars.length === 0) return;
     const posExpr = posVars.join(' + ');
-    if (pos === 1) {
-      lp += ' gk_exact: ' + posExpr + ' = 2\n';
-    } else if (pos === 4) {
-      lp += ' fwd_min: ' + posExpr + ' >= 1\n';
-      lp += ' fwd_max: ' + posExpr + ' <= 3\n';
-    } else {
-      lp += ' pos' + pos + '_min: ' + posExpr + ' >= 3\n';
-      lp += ' pos' + pos + '_max: ' + posExpr + ' <= 5\n';
-    }
+    lp += ' pos' + pos + '_exact: ' + posExpr + ' = ' + target[pos] + '\n';
   });
 
   // Constraint 3: budget
@@ -1556,21 +1582,23 @@ VG.computeCaptainRotation = (squad, allXP, fixtures, startGW, nGWs) => {
   const rotation = [];
 
   for (let gw = startGW; gw < startGW + nGWs; gw++) {
-    const gwFix = fixtures.filter(f => f.event === gw);
     const candidates = squadXP.map(p => {
-      const f = gwFix.find(fi => fi.team_h === p.teamId || fi.team_a === p.teamId);
-      const isHome = f ? f.team_h === p.teamId : false;
-      const oppId = f ? (isHome ? f.team_a : f.team_h) : null;
-      const fdr = f ? (isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3)) : 0;
-      const oppName = oppId ? (VG.teams[oppId]?.short_name || "?") : "BLANK";
-      const gwXP = p.gwXP || (p.totalXP / Math.max(nGWs, 1));
-      return { ...p, fdr, oppName, isHome, gwXP };
+      const projection = VG.computePlayerGWProjection(p, gw, fixtures);
+      return {
+        ...p,
+        fdr: projection.fdr,
+        oppName: projection.oppName,
+        isHome: projection.venue === "H",
+        venue: projection.venue,
+        fixtureCount: projection.fixtureCount,
+        gwXP: projection.gwXP
+      };
     }).sort((a, b) => b.gwXP - a.gwXP);
 
     rotation.push({
       gw,
       top3: candidates.slice(0, 3),
-      dgw: gwFix.length >= 2
+      dgw: candidates.some(p => p.fixtureCount >= 2)
     });
   }
   return rotation;
@@ -2056,22 +2084,28 @@ VG.render.ticker = (ticker, startGW, nGWs) => {
 // ── Lineup Intelligence: optimal bench/start suggestions ───────────────
 VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
   if (!squad || squad.length < 11 || !allXP || !fixtures) return null;
-  const gwFix = fixtures.filter(f => f.event === gw);
   const players = squad.map(p => {
     const xp = allXP.find(a => a.id === (p.element || p.id));
     if (!xp) return null;
-    const f = gwFix.find(fi => fi.team_h === xp.teamId || fi.team_a === xp.teamId);
-    const isHome = f ? f.team_h === xp.teamId : null;
-    const fdr = f ? (isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3)) : 3;
-    const oppTeamId = f ? (isHome ? f.team_a : f.team_h) : null;
-    const oppName = oppTeamId && VG.teams[oppTeamId] ? VG.teams[oppTeamId].short_name : '?';
+    const projection = VG.computePlayerGWProjection(xp, gw, fixtures);
     const data = VG.players[xp.id];
     const status = data ? data.status : 'a';
     const minutes = parseInt(data?.minutes || '0');
     const starts = parseInt(data?.starts || '0');
     const isNailed = starts >= 25 && minutes > 2000;
     const isDoubtful = status === 'd' || status === 'u';
-    return { ...xp, fdr, oppName, isHome: isHome ? 'H' : 'A', status, isNailed, isDoubtful };
+    return {
+      ...xp,
+      totalXP: projection.gwXP,
+      gwXP: projection.gwXP,
+      fixtureCount: projection.fixtureCount,
+      fdr: projection.fdr,
+      oppName: projection.oppName,
+      isHome: projection.venue,
+      status,
+      isNailed,
+      isDoubtful
+    };
   }).filter(Boolean);
 
   // Separate by position
@@ -2093,6 +2127,7 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
     { DEF: 4, MID: 3, FWD: 3 },
     { DEF: 5, MID: 3, FWD: 2 },
     { DEF: 4, MID: 5, FWD: 1 },
+    { DEF: 5, MID: 4, FWD: 1 },
   ];
 
   let bestPicks = null;
@@ -2112,12 +2147,10 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
       byPos[4].slice(0, fmt.FWD),
     ];
     const starting = picks.flat();
-    const bench4 = [
-      byPos[1].slice(1, 2),
-      byPos[2].slice(fmt.DEF, fmt.DEF + 1),
-      byPos[3].slice(fmt.MID, fmt.MID + 1),
-      byPos[4].slice(fmt.FWD, fmt.FWD + 1),
-    ].flat().filter(Boolean);
+    const startingIds = new Set(starting.map(p => p.id));
+    const bench4 = players
+      .filter(p => !startingIds.has(p.id))
+      .sort((a, b) => (a.positionId === 1 ? -1 : b.positionId === 1 ? 1 : b.totalXP - a.totalXP));
 
     const total = starting.reduce((s, p) => s + p.totalXP, 0);
     if (total > bestScore) {
@@ -2135,8 +2168,8 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
     if (p.isDoubtful) reasons.push('⚠ Doubtful — monitor team news');
     if (!p.isNailed && p.fdr >= 4) reasons.push('Tough fixture, rotation risk');
     if (p.fdr <= 2) reasons.push('Excellent fixture — attack/clean sheet opportunity');
-    if (p.totalXP >= 40) reasons.push(`High projected return (${p.totalXP.toFixed(1)} xP)`);
-    if (p.totalXP < 20) reasons.push('Low xP projection — consider benching');
+    if (p.totalXP >= 7) reasons.push(`High projected return (${p.totalXP.toFixed(1)} xP)`);
+    if (p.totalXP < 3) reasons.push('Low xP projection — consider benching');
     if (reasons.length === 0) reasons.push('Solid pick based on xP projection');
     return { name: p.name, position: p.position, totalXP: p.totalXP, fdr: p.fdr, oppName: p.oppName, isHome: p.isHome, reasons, positionId: p.positionId };
   });
@@ -2144,7 +2177,7 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
   const benchReasoning = bestPicks.bench.map(p => {
     const reasons = [];
     if (p.fdr >= 4) reasons.push(`Tough fixture (FDR ${p.fdr}) — benched`);
-    if (p.totalXP < 25) reasons.push(`Lower xP (${p.totalXP.toFixed(1)}) than starters`);
+    if (p.totalXP < 4) reasons.push(`Lower xP (${p.totalXP.toFixed(1)}) than starters`);
     if (p.isDoubtful) reasons.push('Doubtful — risk of 0 minutes');
     if (p.fdr <= 2) reasons.push(`Easy fixture (FDR ${p.fdr}) — could haul from bench`);
     if (reasons.length === 0) reasons.push('Bench option — monitor for rotation');
@@ -2174,7 +2207,7 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
 VG.getCaptainReasoning = (cap, fixtures, gw) => {
   if (!cap) return { summary: 'No captain selected', details: [] };
   const reasons = [];
-  if (cap.isDoubful) reasons.push('⚠ Doubtful — have a VC ready');
+  if (cap.isDoubtful || cap.status === 'd' || cap.status === 'u') reasons.push('⚠ Doubtful — have a VC ready');
   if (cap.fdr <= 2) reasons.push(`Easy fixture (FDR ${cap.fdr}) — high scoring potential`);
   if (cap.fdr >= 4) reasons.push(`Tough fixture (FDR ${cap.fdr}) — consider alternatives`);
   if (cap.gwXP >= 7) reasons.push(`Elite projection (${cap.gwXP.toFixed(1)} xP) — premium captaincy`);
@@ -2184,8 +2217,13 @@ VG.getCaptainReasoning = (cap, fixtures, gw) => {
   if (cap.positionId === 3 && (cap.price || 0) >= 9) reasons.push('Premium midfielder — consistent point scorer');
   if (cap.positionId === 1 || cap.positionId === 2) reasons.push('Defender/GK captain is very high variance');
 
-  const isHome = cap.isHome === 'H';
-  const venue = isHome ? 'at home' : 'away';
+  const venue = cap.isHome === 'H'
+    ? 'at home'
+    : cap.isHome === 'A'
+      ? 'away'
+      : cap.isHome === 'H/A'
+        ? 'across home and away fixtures'
+        : 'without a scheduled fixture';
   const summary = `${cap.name} (${cap.position}) ${venue} vs ${cap.oppName} (FDR ${cap.fdr}) · ${cap.gwXP.toFixed(1)} xP`;
   return { summary, details: reasons };
 };

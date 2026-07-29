@@ -1,4 +1,4 @@
-# VibeGaffer v5.1
+# VibeGaffer v5.2.1
 
 **FPL Optimization Engine** | Powered by [Astraiva](https://astraiva.com) | Author: Tushant Sharma
 
@@ -32,7 +32,7 @@ This is a **pure static web app** deployed on GitHub Pages. Zero backend, zero C
                    │ reads local JSON
 ┌──────────────────┴───────────────────────────────────┐
 │                  docs/data/*.json                      │
-│  bootstrap.json (514 players) + fixtures.json (380)   │
+│  bootstrap.json (~560 players) + fixtures.json (380)  │
 │  Auto-updated every 15 min by GitHub Actions           │
 └──────────────────┬───────────────────────────────────┘
                    │ fetched from
@@ -61,9 +61,9 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.1)
+## Features (v5.2.1)
 
-### Squad Optimization (5-Phase Greedy + Local Search, Injury-Aware)
+### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
 | Phase | What It Does |
 |-------|-------------|
@@ -72,7 +72,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 | 2 | Cheapest filler — fills bench with minimum-cost starters |
 | 3 | Upgrade pass — iteratively swaps worst player for best affordable upgrade |
 | 4 | Cross-position rebalancing — paired swaps across positions |
-| 5 | Local search — 50 random swaps with simulated annealing to escape local optima |
+| 5 | Deterministic local search — repeatedly applies the best affordable improving swap |
 
 All phases filter out injured/suspended/unavailable players (`status !== 'a' && status !== 'd'`).
 
@@ -201,12 +201,12 @@ VibeGaffer/
 ├── README.md                           # This file
 ├── .github/workflows/fetch-data.yml    # Cron job: fetch FPL data every 15 min
 ├── docs/                               # GitHub Pages root (deployed)
-│   ├── index.html                      # Main HTML (737 lines)
-│   ├── app.js                          # Core engine (1875 lines)
+│   ├── index.html                      # Main HTML (~860 lines)
+│   ├── app.js                          # Core engine (~2500 lines)
 │   ├── style.css                       # All styles (275 lines)
 │   ├── .nojekyll                       # Prevents Jekyll processing
 │   └── data/
-│       ├── bootstrap.json              # Player data (514 active players)
+│       ├── bootstrap.json              # Player data (~560 active players)
 │       └── fixtures.json               # 380 fixtures with FDR
 ├── app.py                              # Original Python Streamlit (not used)
 ├── backend.py                          # Original FastAPI backend (not used)
@@ -267,20 +267,20 @@ curl -o docs/data/fixtures.json "https://fantasy.premierleague.com/api/fixtures/
 ### Test the Engine
 
 ```bash
-node test_v5.js  # Requires bootstrap.json and fixtures.json in docs/data/
+npm test
 ```
 
 ---
 
 ## Testing
 
-Tests are in `C:\Users\Tushant\AppData\Local\Temp\opencode\test_v5.js` (local only). Run with:
+Tests are committed in `tests/run.js` and run automatically in GitHub Actions. Run locally with:
 
 ```bash
-node test_v5.js
+npm test
 ```
 
-**41/42 tests pass** (1 expected: backup GKs with 0 starts have low xP).
+**46/46 tests pass.**
 
 Test coverage:
 - Optimizer: squad size, formation validity, captain, budget
@@ -303,7 +303,7 @@ Test coverage:
 
 ---
 
-## Current Results (v5.0, preseason data)
+## Historical Results Snapshot (v5.0 preseason data)
 
 | Strategy | xP (5 GW) | Formation | Captain |
 |----------|-----------|-----------|---------|
@@ -319,8 +319,9 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
-| v5.1 | — | Injury-aware optimizer, multi-week transfer planner, league analyzer |
-| v5.1 | — | Injury-aware optimizer, ILP solver (HiGHS WASM), bookmaker odds, transfer planner, league analyzer |
+| v5.2.1 | — | Correct single-GW lineup/captain projections, DGW detection, strategy routing, exact ILP constraints, deterministic fallback, odds fix, CI tests |
+| v5.2 | `498566a` | Lineup intelligence, captain explanations, squad DNA analysis |
+| v5.1 | — | Injury-aware optimizer, ILP solver, bookmaker odds, transfer planner, league analyzer |
 | v5.0 | `c6cc293` | Bug fixes, pos-badge CSS, edge case guards |
 | v4.3 | `39c86c0` | Captain rotation planner, chip timeline, dynamic strategy tab |
 | v4.2 | `78d9588` | xpComponents in Compare tab, transfer roadmap |
@@ -338,21 +339,19 @@ Test coverage:
 
 ---
 
-## TODO (Remaining Improvements)
+## Remaining Improvements
 
-- [x] ~~Injury/suspension data integration~~ (v5.1: all optimizer phases filter injured players)
-- [x] ~~Multi-week transfer planning with hit optimization~~ (v5.1: computeTransferPlan)
-- [x] ~~League analyzer~~ (v5.1: analyzeLeague with ownership analysis)
-- [x] ~~Team-specific minutes/rotation model~~ (v5.1: start-rate model with sub risk + confidence regression)
-- [x] ~~Exponential form weighting~~ (v5.1: hot streaks 1.3x power, cold 0.7x power)
-- [x] ~~ILP solver (PuLP/HiGHS via WebAssembly)~~ (v5.1: highs-js from CDN, falls back to greedy)
-- [x] ~~Bookmaker odds integration~~ (v5.1: The-Odds-API via GitHub Actions → odds.json, adjusts xP engine)
+- Split the monolithic `docs/app.js` and inline UI script into testable modules.
+- Archive or remove the unused Python/Docker implementation.
+- Escape all API-derived strings before inserting them through `innerHTML`.
+- Reduce automated bootstrap-data commit churn.
+- Add browser-level smoke tests for the eight UI tabs.
 
 ---
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.1
+- **Application**: VibeGaffer v5.2.1
 - **Company**: Astraiva
 - **Author**: Tushant Sharma
 - **License**: Proprietary

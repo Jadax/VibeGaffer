@@ -148,8 +148,8 @@ jobs:
               away = find_team_id(event.get('away_team', ''))
               h2h = {}
               totals = {}
-              for bm_name, bm_markets in event.get('bookmakers', {}).items():
-                  for market in bm_markets:
+              for bookmaker in event.get('bookmakers', []):
+                  for market in bookmaker.get('markets', []):
                       if market['key'] == 'h2h' and market.get('outcomes'):
                           for o in market['outcomes']:
                               if o['name'] == event.get('home_team', ''): h2h['home'] = float(o['price'])
@@ -157,8 +157,12 @@ jobs:
                               elif o['name'] == 'Draw': h2h['draw'] = float(o['price'])
                       elif market['key'] == 'totals' and market.get('outcomes'):
                           for o in market['outcomes']:
-                              if o['name'] == 'Over': totals['over'] = float(o['point'])
-                              elif o['name'] == 'Under': totals['under'] = float(o['point'])
+                              if o['name'] == 'Over':
+                                  totals['point'] = float(o['point'])
+                                  totals['over'] = float(o['price'])
+                              elif o['name'] == 'Under':
+                                  totals['point'] = float(o['point'])
+                                  totals['under'] = float(o['price'])
               if h2h:
                   mapped.append({
                       'home': home, 'away': away,

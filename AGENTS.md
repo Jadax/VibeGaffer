@@ -4,7 +4,7 @@ This file provides context for AI models working on the VibeGaffer codebase.
 
 ## Quick Status
 
-- **Current version**: v5.2
+- **Current version**: v5.2.1
 - **Architecture**: Pure static HTML/CSS/JS on GitHub Pages (no backend)
 - **Live URL**: https://jadax.github.io/VibeGaffer/
 - **Data**: Auto-fetched every 15 min via GitHub Actions cron → `docs/data/*.json`
@@ -15,10 +15,10 @@ This file provides context for AI models working on the VibeGaffer codebase.
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `docs/app.js` | 1875 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips |
-| `docs/index.html` | 737 | All UI: 8 tabs, rendering, Chart.js radar/bar, inline JS |
+| `docs/app.js` | ~2500 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips |
+| `docs/index.html` | ~860 | All UI: 8 tabs, rendering, Chart.js radar/bar, inline JS |
 | `docs/style.css` | 275 | All styles |
-| `docs/data/bootstrap.json` | ~1.3MB | Player data (514 active, 20 teams) |
+| `docs/data/bootstrap.json` | ~1.3MB | Player data (~560 active, 20 teams) |
 | `docs/data/fixtures.json` | ~118KB | 380 fixtures with FDR |
 | `.github/workflows/fetch-data.yml` | 61 | Cron job: fetch FPL data every 15 min |
 
@@ -32,9 +32,9 @@ Originally Python Backend (FastAPI) + Streamlit Frontend. Replaced with static a
 - No server to keep alive
 - FPL API is public, no auth needed for reads
 
-### Why No ILP Solver?
+### Optimizer Fallback
 
-The optimizer is a 5-phase greedy algorithm with local search. A proper ILP solver (PuLP/HiGHS) would give globally optimal solutions but requires WebAssembly. The greedy approach produces good results (~382 xP over 5 GWs) in ~65ms.
+The primary balanced optimizer uses HiGHS WebAssembly for a globally optimal squad. If the CDN or WASM load fails, the app falls back to a deterministic 5-phase greedy optimizer with local search.
 
 ### xP Engine Design
 
@@ -118,18 +118,18 @@ Start-rate model using last season data:
 
 ## Known Issues
 
-1. **Greedy optimizer**: Can miss global optima (no ILP solver)
+1. **Greedy fallback**: Can miss the global optimum when HiGHS cannot load
 2. **Pre-season data**: Team strengths all 0, form 0.0 — fallback estimates used
-3. **No bookmaker odds**: External data source needed (not in FPL API)
+3. **Bookmaker odds**: Requires the optional `ODDS_API_KEY` repository secret
 4. **Python files are dead code**: `app.py`, `backend.py`, `data_loader.py`, `xp_engine.py`, `optimizer.py` are from old architecture
 
 ## Testing
 
-Tests are at `C:\Users\Tushant\AppData\Local\Temp\opencode\test_v5.js` (local only, not committed).
+Tests are committed in `tests/run.js` and run in GitHub Actions.
 
-Run: `node test_v5.js`
+Run: `npm test`
 
-41/42 tests pass (1 expected: backup GKs with 0 starts have low xP).
+46/46 tests pass.
 
 ## Commit Convention
 

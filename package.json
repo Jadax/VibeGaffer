@@ -1,0 +1,11 @@
+{
+  "name": "vibegaffer",
+  "version": "5.2.1",
+  "private": true,
+  "description": "Static Fantasy Premier League optimization and planning engine",
+  "license": "UNLICENSED",
+  "scripts": {
+    "check": "node --check docs/app.js",
+    "test": "node tests/run.js"
+  }
+}
