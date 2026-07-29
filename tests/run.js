@@ -157,6 +157,7 @@ check("Doubtful captain warning is shown", captainReason.details.some(detail => 
 const indexSource = fs.readFileSync(indexPath, "utf8");
 check("Premium/value dropdown routes through strategy optimizer", indexSource.includes('VG.optimizeStrategies(allXP, 100, VG.allFixtures, gw, horizon)[strategy]'));
 check("Tab preloader defines its DOM helper", /VG\.preloadTabs = async \(gw, horizon\) => \{\r?\n  const el = id => document\.getElementById\(id\);/.test(indexSource));
+check("Release assets are cache-busted", indexSource.includes("app.js?v=5.2.1") && indexSource.includes("style.css?v=5.2.1"));
 
 const appSource = fs.readFileSync(appPath, "utf8");
 check("ILP uses exact GK constraint", appSource.includes("' pos' + pos + '_exact: '"));
