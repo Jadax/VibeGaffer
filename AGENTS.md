@@ -4,10 +4,10 @@ This file provides context for AI models working on the VibeGaffer codebase.
 
 ## Quick Status
 
-- **Current version**: v5.2.1
+- **Current version**: v5.3.0
 - **Architecture**: Pure static HTML/CSS/JS on GitHub Pages (no backend)
 - **Live URL**: https://jadax.github.io/VibeGaffer/
-- **Data**: Auto-fetched every 15 min via GitHub Actions cron → `docs/data/*.json`
+- **Data**: Auto-fetched on a deadline-aware GitHub Actions schedule → `docs/data/*.json` (30 min inside 6h of a deadline, 2-hourly within 36h, 6-hourly otherwise)
 - **ILP Solver**: highs-js (HiGHS WASM) loaded from CDN, falls back to greedy
 - **Odds**: The-Odds-API free tier (500 req/month), fetched once per GW when deadline is within 30h → `docs/data/odds.json`
 
@@ -15,18 +15,18 @@ This file provides context for AI models working on the VibeGaffer codebase.
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `docs/app.js` | ~2500 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips |
-| `docs/index.html` | ~860 | All UI: 8 tabs, rendering, Chart.js radar/bar, inline JS |
+| `docs/app.js` | ~2400 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips |
+| `docs/index.html` | ~870 | All UI: 8 tabs, CSP, rendering, Chart.js radar/bar, inline JS |
 | `docs/style.css` | 275 | All styles |
 | `docs/data/bootstrap.json` | ~1.3MB | Player data (~560 active, 20 teams) |
 | `docs/data/fixtures.json` | ~118KB | 380 fixtures with FDR |
-| `.github/workflows/fetch-data.yml` | 61 | Cron job: fetch FPL data every 15 min |
+| `.github/workflows/fetch-data.yml` | ~125 | Deadline-aware FPL data fetch |
 
 ## Architecture Decisions
 
 ### Why Static?
 
-Originally Python Backend (FastAPI) + Streamlit Frontend. Replaced with static app because:
+Originally Python Backend (FastAPI) + Streamlit Frontend; deleted in v5.3.0. Replaced with static app because:
 - GitHub Pages is free with zero maintenance
 - No CORS issues (same-origin JSON reads)
 - No server to keep alive
@@ -52,7 +52,19 @@ The xP engine computes per-fixture expected points using:
 
 ### Injury-Aware Optimizer (v5.1)
 
-All 6 optimizer phases filter out injured/suspended/unavailable players (`status !== 'a' && status !== 'd'`). Doubtful players are still eligible but should be manually checked by users.
+All optimizer phases filter out injured/suspended/unavailable players via the shared `VG.isAvailable`. Doubtful players are still eligible but should be manually checked by users.
+
+### Shared Helpers (v5.3.0)
+
+Four near-identical formation/XI-selection blocks were collapsed into `VG.pickBestXI`. Use these rather than reimplementing:
+
+- `VG.esc(value)` → HTML-escape anything API-derived before it reaches `innerHTML`. **Required** for league/manager names, which other FPL users control.
+- `VG.isAvailable(p)` → injury filter
+- `VG.fixtureFDR(fixture, teamId)` → difficulty from that team's perspective
+- `VG.pickBestXI(squad, key)` → `{ formation, starting, bench, byPos, startingXP }`; `key` is `"totalXP"` or `"gwXP"`
+- `VG.countFixtureDifficulty(squad, fixtures, gw)` → `{ easy, hard }`
+- `VG.emptyDraftResult(budget)` → the empty-squad result shape
+- `VG.FORMATIONS` → the seven legal `[DEF, MID, FWD]` shapes
 
 ### Minutes Model (v5.1)
 
@@ -87,8 +99,8 @@ Start-rate model using last season data:
 - `VG.analyzeFixtureSwings(startGW, nGWs, fixtures)` → easy/hard run detection
 - `VG.buildFixtureTicker(startGW, nGWs, fixtures)` → per-team fixture grid
 - `VG.computeLineupAdvice(squad, allXP, fixtures, gw)` → optimal lineup with per-player reasoning (v5.2)
-- `VG.getCaptainReasoning(cap, fixtures, gw)` → natural-language captain explanation (v5.2)
-- `VG.getSquadAnalysis(result, allXP, fixtures, gw)` → strengths/weaknesses squad DNA (v5.2)
+- `VG.getCaptainReasoning(cap)` → natural-language captain explanation (v5.2)
+- `VG.getSquadAnalysis(result, fixtures, gw)` → strengths/weaknesses squad DNA (v5.2)
 
 ### League Analyzer (v5.1)
 - `VG.analyzeLeague(leagueId, currentGW)` → fetches classic league, compares squads, ownership analysis, differentials, outliers, template detection
@@ -118,10 +130,11 @@ Start-rate model using last season data:
 
 ## Known Issues
 
-1. **Greedy fallback**: Can miss the global optimum when HiGHS cannot load
+1. **Greedy fallback**: Can miss the global optimum when HiGHS cannot load. Note highs-js publishes `window.Module`, **not** `window.Highs` — reading the wrong global silently disabled ILP entirely before v5.3.0.
 2. **Pre-season data**: Team strengths all 0, form 0.0 — fallback estimates used
 3. **Bookmaker odds**: Requires the optional `ODDS_API_KEY` repository secret
-4. **Python files are dead code**: `app.py`, `backend.py`, `data_loader.py`, `xp_engine.py`, `optimizer.py` are from old architecture
+4. **CSP needs `'unsafe-inline'`**: the UI uses inline `onclick=` handlers and a large inline `<script>`, so the CSP cannot lock down script execution. `VG.esc` is the real XSS defence.
+5. **CORS proxies**: `allorigins.win` / `corsproxy.io` fallbacks receive the user's team and league IDs.
 
 ## Testing
 
@@ -129,7 +142,7 @@ Tests are committed in `tests/run.js` and run in GitHub Actions.
 
 Run: `npm test`
 
-46/46 tests pass.
+68/68 tests pass.
 
 ## Commit Convention
 

@@ -3,11 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- 'unsafe-inline' is still required by the inline <script> and onclick= handlers;
+       the real XSS defence is VG.esc() at every render site. Tighten this by moving
+       to external handlers + a nonce if the UI is ever modularised. -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'none';
+    script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net;
+    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+    font-src https://fonts.gstatic.com;
+    img-src 'self' data:;
+    connect-src 'self' https://fantasy.premierleague.com https://cdn.jsdelivr.net
+                https://api.allorigins.win https://corsproxy.io;
+    base-uri 'none';
+    form-action 'none'">
   <title>VibeGaffer — FPL Intelligence | Astraiva</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.2.1">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=5.2.1"></script>
+  <link rel="stylesheet" href="style.css?v=5.3.0">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+          integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="app.js?v=5.3.0"></script>
 </head>
 <body>
 
@@ -16,7 +31,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Astraiva</strong> · Tushant Sharma · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.2.1</span></div>
+    <div><span class="badge pulse-glow">v5.3.0</span></div>
 </div>
 
 <div class="app">
@@ -124,7 +139,7 @@
 </div>
 </div>
 
-<div class="footer">VibeGaffer v5.2.1 · Astraiva · Built by Tushant Sharma</div>
+<div class="footer">VibeGaffer v5.3.0 · Astraiva · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -167,9 +182,11 @@ VG.run = async () => {
     el("results").style.display = "block";
     el("squadContent").innerHTML = loader("Fetching player data...");
 
-    VG.bootstrapData = await VG.loadBootstrap();
-    VG.buildMaps(VG.bootstrapData);
-    VG.allFixtures = await VG.loadFixtures();
+    if (!VG.bootstrapData || !VG.players) {
+      VG.bootstrapData = await VG.loadBootstrap();
+      VG.buildMaps(VG.bootstrapData);
+    }
+    if (!VG.allFixtures) VG.allFixtures = await VG.loadFixtures();
 
     const gw = parseInt(el("gameweek").value);
     const horizon = parseInt(el("horizon").value);
@@ -211,16 +228,20 @@ VG.run = async () => {
       const allSquad = allXP.filter(p => fullIds.includes(p.id)).sort((a, b) => b.totalXP - a.totalXP);
       // Compute per-GW picks for transfer squad
       const gwPicks = [];
-      const allGWs = [...new Set(VG.allFixtures.map(f => f.event))].sort((a, b) => a - b).filter(g => g >= gw);
-      allGWs.forEach(g => gwPicks.push(VG.computePerGWPicks(allSquad, g, VG.allFixtures)));
+      const horizonGWs = [...new Set(VG.allFixtures.map(f => f.event))]
+        .sort((a, b) => a - b)
+        .filter(g => g >= gw && g < gw + horizon);
+      horizonGWs.forEach(g => gwPicks.push(VG.computePerGWPicks(allSquad, g, VG.allFixtures)));
       const starting11 = gwPicks[0]?.starting || allSquad.slice(0, 11);
       const bench4 = gwPicks[0]?.bench || allSquad.slice(11, 15);
       const gotCap = gwPicks[0]?.gotCap || starting11.filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2);
       const chips = VG.evaluateChips(allSquad, gwPicks, gw, VG.allFixtures);
       result = {
         ...transferResult, chipAdvice: chips, starting: starting11, bench: bench4,
-        totalCost: 0, budgetRemaining: bank, formation: gwPicks[0]?.formation || { DEF: 4, MID: 4, FWD: 2 },
-        totalXP: gwPicks.reduce((s, g) => s + g.gwTotalXP, 0), mode: "transfer", gotCap, gwPicks, squad: allSquad
+        totalCost: +allSquad.reduce((s, p) => s + (p.price || 0), 0).toFixed(1),
+        budgetRemaining: bank, formation: gwPicks[0]?.formation || { DEF: 4, MID: 4, FWD: 2 },
+        totalXP: +gwPicks.reduce((s, g) => s + g.gwTotalXP, 0).toFixed(1),
+        mode: "transfer", gotCap, gwPicks, squad: allSquad
       };
     }
 
@@ -239,19 +260,19 @@ VG.run = async () => {
     if (result.transfersIn?.length || result.transfersOut?.length) {
       html += '<div class="section-title">Transfers</div>';
       if (result.hitWarning) {
-        html += `<div class="hit-warning">⚠️ ${result.hitWarning}</div>`;
+        html += `<div class="hit-warning">⚠️ ${VG.esc(result.hitWarning)}</div>`;
       }
       html += '<div class="transfer-grid">';
       html += '<div class="transfer-col"><h4 style="color:#00ff87;">IN</h4>';
-      result.transfersIn.forEach(p => html += `<div class="transfer-item in"><div class="name" style="color:#00ff87;">${p.name}</div><div class="meta">${p.position} · £${p.price.toFixed(1)}m · ${(p.totalXP || 0).toFixed(1)} xP</div></div>`);
+      result.transfersIn.forEach(p => html += `<div class="transfer-item in"><div class="name" style="color:#00ff87;">${VG.esc(p.name)}</div><div class="meta">${VG.esc(p.position)} · £${p.price.toFixed(1)}m · ${(p.totalXP || 0).toFixed(1)} xP</div></div>`);
       html += '</div><div class="transfer-col"><h4 style="color:#ef4444;">OUT</h4>';
-      result.transfersOut.forEach(p => html += `<div class="transfer-item out"><div class="name" style="color:#ef4444;">${p.name}</div><div class="meta">${p.position} · £${p.price.toFixed(1)}m</div></div>`);
+      result.transfersOut.forEach(p => html += `<div class="transfer-item out"><div class="name" style="color:#ef4444;">${VG.esc(p.name)}</div><div class="meta">${VG.esc(p.position)} · £${p.price.toFixed(1)}m</div></div>`);
       html += '</div></div>';
       if (result.hitCost > 0) {
         html += `<div style="text-align:center;color:#ef4444;font-size:0.75rem;font-weight:600;margin-top:8px;">Hit Cost: -${result.hitCost} pts</div>`;
         if (result.hitDetails?.length > 0) {
           result.hitDetails.forEach(h => {
-            html += `<div style="text-align:center;color:#fbbf24;font-size:0.7rem;margin-top:2px;">↳ ${h.name}: breaks even in ~${h.breakEvenGWs} GWs (${h.gwAvgGain} pts/GW avg)</div>`;
+            html += `<div style="text-align:center;color:#fbbf24;font-size:0.7rem;margin-top:2px;">↳ ${VG.esc(h.name)}: breaks even in ~${h.breakEvenGWs} GWs (${h.gwAvgGain} pts/GW avg)</div>`;
           });
         }
       } else if (result.freeTransfersUsed <= 1) {
@@ -273,13 +294,13 @@ VG.run = async () => {
           const xp = allXP.find(p => p.id === pid);
           if (!xp) return;
           const posCls = VG.POS_SHIRT[xp.positionId];
-          html += `<tr><td style="color:#e2e8f0;"><span class="pos-badge ${posCls}" style="font-size:0.55rem;padding:1px 4px;">${xp.position}</span> ${xp.name}</td><td style="color:#475569;">£${xp.price.toFixed(1)}m</td>`;
+          html += `<tr><td style="color:#e2e8f0;"><span class="pos-badge ${posCls}" style="font-size:0.55rem;padding:1px 4px;">${VG.esc(xp.position)}</span> ${VG.esc(xp.name)}</td><td style="color:#475569;">£${xp.price.toFixed(1)}m</td>`;
           roadmap.forEach(r => {
             const p = r.players.find(pl => pl.id === pid);
             if (!p) { html += '<td style="text-align:center;color:#334155;">-</td>'; return; }
             const bg = p.fdr === 0 ? '#1e1b4b' : p.fdr <= 2 ? 'rgba(34,197,94,0.15)' : p.fdr === 3 ? 'rgba(255,255,255,0.03)' : p.fdr >= 4 ? 'rgba(239,68,68,0.15)' : 'transparent';
             const color = p.fdr === 0 ? '#475569' : p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#94a3b8';
-            html += `<td style="text-align:center;background:${bg};color:${color};font-weight:600;">${p.oppName}${p.isHome ? '' : ' (A)'}</td>`;
+            html += `<td style="text-align:center;background:${bg};color:${color};font-weight:600;">${VG.esc(p.oppName)}${p.isHome ? '' : ' (A)'}</td>`;
           });
           html += '</tr>';
         });
@@ -293,9 +314,9 @@ VG.run = async () => {
             r.recommendations.slice(0, 2).forEach(rec => {
               html += `<div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:0.7rem;">`;
               html += `<span style="color:#475569;font-weight:600;">GW${r.gw}</span>`;
-              html += `<span style="color:#ef4444;text-decoration:line-through;">${rec.out} <span style="color:#64748b;">(${rec.outOpp}${rec.outFDR >= 4 ? ' ⚠' : ''})</span></span>`;
+              html += `<span style="color:#ef4444;text-decoration:line-through;">${VG.esc(rec.out)} <span style="color:#64748b;">(${VG.esc(rec.outOpp)}${rec.outFDR >= 4 ? ' ⚠' : ''})</span></span>`;
               html += `<span style="color:#475569;">→</span>`;
-              html += `<span style="color:#00ff87;">${rec.in} <span style="color:#64748b;">(${rec.inOpp} £${rec.inPrice.toFixed(1)}m +${rec.gain})</span></span>`;
+              html += `<span style="color:#00ff87;">${VG.esc(rec.in)} <span style="color:#64748b;">(${VG.esc(rec.inOpp)} £${rec.inPrice.toFixed(1)}m +${rec.gain})</span></span>`;
               html += `</div>`;
             });
           });
@@ -316,14 +337,14 @@ VG.run = async () => {
           const fdrColor = p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#94a3b8';
           html += '<div class="lineup-player" style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(30,41,59,0.4);border-radius:6px;margin-bottom:4px;border-left:3px solid ' + fdrColor + ';">';
           html += '<span class="pos-badge ' + VG.POS_SHIRT[p.positionId] + '" style="font-size:0.6rem;">' + p.position + '</span>';
-          html += '<span style="color:#e2e8f0;font-weight:500;font-size:0.75rem;">' + p.name + '</span>';
-          html += '<span style="color:#64748b;font-size:0.65rem;">' + (p.isHome === 'H' ? p.oppName : p.isHome === 'A' ? 'A ' + p.oppName : p.isHome + ' ' + p.oppName) + '</span>';
+          html += '<span style="color:#e2e8f0;font-weight:500;font-size:0.75rem;">' + VG.esc(p.name) + '</span>';
+          html += '<span style="color:#64748b;font-size:0.65rem;">' + VG.esc(p.isHome === 'H' ? p.oppName : p.isHome === 'A' ? 'A ' + p.oppName : p.isHome + ' ' + p.oppName) + '</span>';
           html += '<span style="color:' + fdrColor + ';font-size:0.65rem;font-weight:600;">FDR ' + p.fdr + '</span>';
           html += '<span style="color:#00ff87;font-size:0.65rem;margin-left:auto;">' + p.totalXP.toFixed(1) + ' xP</span>';
           html += '</div>';
           // Reasoning row
           html += '<div style="margin:-2px 0 6px 16px;font-size:0.6rem;color:#64748b;font-style:italic;">';
-          html += p.reasons.join(' · ');
+          html += VG.esc(p.reasons.join(' · '));
           html += '</div>';
         });
 
@@ -334,8 +355,8 @@ VG.run = async () => {
             const fdrColor = p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#64748b';
             html += '<div style="display:flex;align-items:center;gap:8px;padding:4px 10px;background:rgba(30,41,59,0.2);border-radius:4px;margin-bottom:2px;border-left:2px solid ' + fdrColor + ';">';
             html += '<span class="pos-badge ' + VG.POS_SHIRT[p.positionId] + '" style="font-size:0.55rem;padding:1px 3px;">' + p.position + '</span>';
-            html += '<span style="color:#94a3b8;font-size:0.7rem;">' + p.name + '</span>';
-            html += '<span style="color:#64748b;font-size:0.6rem;">· ' + p.reasons[0] + '</span>';
+            html += '<span style="color:#94a3b8;font-size:0.7rem;">' + VG.esc(p.name) + '</span>';
+            html += '<span style="color:#64748b;font-size:0.6rem;">· ' + VG.esc(p.reasons[0]) + '</span>';
             html += '</div>';
           });
         }
@@ -356,16 +377,16 @@ VG.run = async () => {
       const c = result.gotCap[0];
       const v = result.gotCap[1];
       html += '<div class="section-title">Captaincy</div><div class="captaincy-row">';
-      html += `<div class="cap-card primary"><div class="cap-role" style="color:#fbbf24;">Captain</div><div class="cap-name">${c.name}</div><div class="cap-stats"><span style="color:#fbbf24;">${(c.gwXP || c.totalXP || 0).toFixed(1)} xP</span> · ${c.position} · ${c.teamName}${c.gwOpp ? ' · ' + c.gwVenue + ' vs ' + c.gwOpp : ''}</div></div>`;
-      html += `<div class="cap-card secondary"><div class="cap-role" style="color:#06b6d4;">Vice</div><div class="cap-name">${v.name}</div><div class="cap-stats"><span style="color:#06b6d4;">${(v.gwXP || v.totalXP || 0).toFixed(1)} xP</span> · ${v.position} · ${v.teamName}${v.gwOpp ? ' · ' + v.gwVenue + ' vs ' + v.gwOpp : ''}</div></div>`;
+      html += `<div class="cap-card primary"><div class="cap-role" style="color:#fbbf24;">Captain</div><div class="cap-name">${VG.esc(c.name)}</div><div class="cap-stats"><span style="color:#fbbf24;">${(c.gwXP || c.totalXP || 0).toFixed(1)} xP</span> · ${VG.esc(c.position)} · ${VG.esc(c.teamName)}${c.gwOpp ? ' · ' + VG.esc(c.gwVenue + ' vs ' + c.gwOpp) : ''}</div></div>`;
+      html += `<div class="cap-card secondary"><div class="cap-role" style="color:#06b6d4;">Vice</div><div class="cap-name">${VG.esc(v.name)}</div><div class="cap-stats"><span style="color:#06b6d4;">${(v.gwXP || v.totalXP || 0).toFixed(1)} xP</span> · ${VG.esc(v.position)} · ${VG.esc(v.teamName)}${v.gwOpp ? ' · ' + VG.esc(v.gwVenue + ' vs ' + v.gwOpp) : ''}</div></div>`;
       html += '</div>';
       // Captain reasoning
       const capReason = VG.getCaptainReasoning(Object.assign({}, c, { isHome: c.gwVenue, oppName: c.gwOpp, fdr: c.gwFDR, gwXP: c.gwXP || c.totalXP }), VG.allFixtures, gw);
       if (capReason && capReason.details.length > 0) {
         html += '<div style="margin-top:8px;padding:10px 14px;background:rgba(251,191,36,0.05);border-radius:8px;border-left:3px solid #fbbf24;">';
         html += '<div style="font-size:0.7rem;color:#fbbf24;font-weight:600;">Why This Captain?</div>';
-        html += '<div style="font-size:0.7rem;color:#e2e8f0;margin-top:4px;">' + capReason.summary + '</div>';
-        html += '<div style="margin-top:4px;font-size:0.65rem;color:#64748b;">' + capReason.details.join(' · ') + '</div>';
+        html += '<div style="font-size:0.7rem;color:#e2e8f0;margin-top:4px;">' + VG.esc(capReason.summary) + '</div>';
+        html += '<div style="margin-top:4px;font-size:0.65rem;color:#64748b;">' + VG.esc(capReason.details.join(' · ')) + '</div>';
         html += '</div>';
       }
     }
@@ -382,9 +403,9 @@ VG.run = async () => {
           r.top3.forEach((p, i) => {
             const fdrColor = p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#94a3b8';
             const fdrBg = p.fdr <= 2 ? 'rgba(34,197,94,0.12)' : p.fdr >= 4 ? 'rgba(239,68,68,0.12)' : 'transparent';
-            html += `<td style="color:#e2e8f0;${i === 0 ? 'font-weight:700;' : ''}">${p.name}</td>`;
+            html += `<td style="color:#e2e8f0;${i === 0 ? 'font-weight:700;' : ''}">${VG.esc(p.name)}</td>`;
             html += `<td style="color:#00ff87;font-weight:600;">${p.gwXP.toFixed(1)}</td>`;
-            html += `<td style="background:${fdrBg};color:${fdrColor};font-weight:600;">${p.oppName}${p.venue === 'A' ? ' (A)' : p.venue === 'H/A' ? ' (H/A)' : ''} (${p.fdr || '?'})</td>`;
+            html += `<td style="background:${fdrBg};color:${fdrColor};font-weight:600;">${VG.esc(p.oppName)}${p.venue === 'A' ? ' (A)' : p.venue === 'H/A' ? ' (H/A)' : ''} (${p.fdr || '?'})</td>`;
           });
           html += '</tr>';
         });
@@ -433,7 +454,7 @@ VG.run = async () => {
           html += '</div>';
           // Captain info
           if (gs.capName) {
-            html += `<div style="font-size:0.55rem;color:#64748b;margin-top:3px;">C: ${gs.capName}</div>`;
+            html += `<div style="font-size:0.55rem;color:#64748b;margin-top:3px;">C: ${VG.esc(gs.capName)}</div>`;
           }
           html += '</div>';
         });
@@ -465,11 +486,11 @@ VG.run = async () => {
         html += `<div class="strategy-stat"><span class="label">Total xP</span><span class="value">${s.totalXP.toFixed(1)}</span></div>`;
         html += `<div class="strategy-stat"><span class="label">Formation</span><span class="value">${s.formation.DEF}-${s.formation.MID}-${s.formation.FWD}</span></div>`;
         html += `<div class="strategy-stat"><span class="label">Cost</span><span class="value">£${s.totalCost.toFixed(1)}m</span></div>`;
-        html += `<div class="strategy-stat"><span class="label">Captain</span><span class="value">${s.gotCap[0]?.name || '?'}</span></div>`;
+        html += `<div class="strategy-stat"><span class="label">Captain</span><span class="value">${VG.esc(s.gotCap[0]?.name || '?')}</span></div>`;
         html += `</div>`;
         html += `<div class="strategy-players">`;
         s.starting.slice(0, 5).forEach(p => {
-          html += `<div class="strategy-player">${p.name} <span class="pos">${p.position}</span> £${p.price.toFixed(1)}m</div>`;
+          html += `<div class="strategy-player">${VG.esc(p.name)} <span class="pos">${VG.esc(p.position)}</span> £${p.price.toFixed(1)}m</div>`;
         });
         html += `</div>`;
         html += `</div>`;
@@ -488,7 +509,7 @@ VG.run = async () => {
         html += `<div class="gw-card ${fdrClass}">`;
         html += `<div class="gw-card-header"><span class="gw-card-num">GW${gp.gw}</span><span class="gw-card-xp">${gp.gwTotalXP.toFixed(1)} xP</span></div>`;
         html += `<div class="gw-card-formation">${fmt.DEF}-${fmt.MID}-${fmt.FWD}</div>`;
-        html += `<div class="gw-card-cap">C: ${cap?.name || '?'} ${cap?.gwOpp ? `<span class="${cap.gwVenue === 'H' ? 'home' : 'away'}">${cap.gwVenue} ${cap.gwOpp}</span>` : ''}</div>`;
+        html += `<div class="gw-card-cap">C: ${VG.esc(cap?.name || '?')} ${cap?.gwOpp ? `<span class="${cap.gwVenue === 'H' ? 'home' : 'away'}">${VG.esc(cap.gwVenue + ' ' + cap.gwOpp)}</span>` : ''}</div>`;
         if (gp.dgwPlayers?.length > 0) html += `<div class="gw-card-dgw">DGW ⚡</div>`;
         html += '</div>';
       });
@@ -523,7 +544,7 @@ VG.run = async () => {
         const barSaves = ((xc.xpSaves || 0) / total * 100).toFixed(0);
         html += `<div class="squad-item" onclick="this.querySelector('.squad-breakdown').classList.toggle('show')" style="cursor:pointer;">`;
         html += `<div class="pos-badge ${posCls}">${VG.POSITIONS[p.positionId]}</div>`;
-        html += `<div class="info"><div class="pname">${p.name}</div><div class="pteam">${p.teamName}</div></div>`;
+        html += `<div class="info"><div class="pname">${VG.esc(p.name)}</div><div class="pteam">${VG.esc(p.teamName)}</div></div>`;
         html += `<div class="pprice">£${p.price.toFixed(1)}m</div>`;
         html += `<div class="pxp">${(p.totalXP || 0).toFixed(1)}</div>`;
         html += `<div class="squad-breakdown">`;
@@ -555,7 +576,7 @@ VG.run = async () => {
     const sel = el("compareSelect");
     sel.innerHTML = "";
     allXP.sort((a, b) => a.name.localeCompare(b.name)).forEach(p => {
-      sel.innerHTML += `<option value="${p.name}">${p.name} (${p.position} · ${p.teamName})</option>`;
+      sel.innerHTML += `<option value="${p.id}">${VG.esc(p.name)} (${VG.esc(p.position)} · ${VG.esc(p.teamName)})</option>`;
     });
     sel.onchange = () => VG.renderComparison();
 
@@ -568,7 +589,7 @@ VG.run = async () => {
       el("squadContent").innerHTML = loader("Retrying... (attempt " + VG._runRetries + "/3)");
       setTimeout(() => VG.run(), 2000);
     } else {
-      el("squadContent").innerHTML = `<div style="background:rgba(239,68,68,0.05);border:1px solid rgba(239,68,68,0.2);border-radius:12px;padding:20px;text-align:center;color:#ef4444;"><strong>Error:</strong> ${e.message}<br><span style="font-size:0.75rem;color:#64748b;">Check console (F12) for details.</span></div>`;
+      el("squadContent").innerHTML = `<div style="background:rgba(239,68,68,0.05);border:1px solid rgba(239,68,68,0.2);border-radius:12px;padding:20px;text-align:center;color:#ef4444;"><strong>Error:</strong> ${VG.esc(e.message)}<br><span style="font-size:0.75rem;color:#64748b;">Check console (F12) for details.</span></div>`;
       VG._runRetries = 0;
     }
   }
@@ -591,7 +612,7 @@ VG.preloadTabs = async (gw, horizon) => {
     if (bestRuns.length === 0) fixtureHTML += '<p style="color:#334155;font-size:0.7rem;">No clear easy runs</p>';
     bestRuns.forEach(s => {
       const runTag = s.maxEasyRun >= 3 ? `<span class="swing-run easy">🔥 ${s.maxEasyRun} GW run (GW${s.easyRunGWs})</span>` : '';
-      fixtureHTML += `<div class="swing-card"><span class="swing-name">${s.name}</span><span class="swing-avg">FDR ${s.avgFDR}</span>${runTag}</div>`;
+      fixtureHTML += `<div class="swing-card"><span class="swing-name">${VG.esc(s.name)}</span><span class="swing-avg">FDR ${s.avgFDR}</span>${runTag}</div>`;
     });
     fixtureHTML += '</div>';
     fixtureHTML += '<div class="swing-col"><div class="swing-header" style="color:#ef4444;">Hard Runs</div>';
@@ -618,12 +639,12 @@ VG.preloadTabs = async (gw, horizon) => {
       const falling = risks.filter(r => r.risk === "falling" || r.risk === "likely_fall").slice(0, 10);
       if (!rising.length) ph += '<p style="color:#334155;">No clear risers</p>';
       rising.forEach(r => {
-        ph += `<div class="price-card"><div><div class="name">${r.name}</div><div class="detail">${r.pos} · £${r.price.toFixed(1)}m</div></div><span class="risk-badge rise">${r.risk.replace('_',' ')}</span></div>`;
+        ph += `<div class="price-card"><div><div class="name">${VG.esc(r.name)}</div><div class="detail">${VG.esc(r.pos)} · £${r.price.toFixed(1)}m</div></div><span class="risk-badge rise">${VG.esc(r.risk.replace('_',' '))}</span></div>`;
       });
       ph += '</div><div><div class="section-title" style="font-size:0.8rem;">Fallers</div>';
       if (!falling.length) ph += '<p style="color:#334155;">No clear fallers</p>';
       falling.forEach(r => {
-        ph += `<div class="price-card"><div><div class="name">${r.name}</div><div class="detail">${r.pos} · £${r.price.toFixed(1)}m</div></div><span class="risk-badge fall">${r.risk.replace('_',' ')}</span></div>`;
+        ph += `<div class="price-card"><div><div class="name">${VG.esc(r.name)}</div><div class="detail">${VG.esc(r.pos)} · £${r.price.toFixed(1)}m</div></div><span class="risk-badge fall">${VG.esc(r.risk.replace('_',' '))}</span></div>`;
       });
       ph += '</div></div>';
       document.getElementById("priceContent").innerHTML = ph;
@@ -650,7 +671,7 @@ VG.preloadTabs = async (gw, horizon) => {
       diffs.forEach((p, i) => {
         const rank = i + 1;
         const ownColor = (p.ownership || 0) <= 2 ? '#00ff87' : (p.ownership || 0) <= 5 ? '#fbbf24' : '#94a3b8';
-        dh += `<tr><td style="color:#e2e8f0;">${rank}. ${p.name}</td><td>${p.position}</td><td>${p.teamName}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td>${(p.bps || 0)}</td><td>${(p.defconPer90 || 0).toFixed(2)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
+        dh += `<tr><td style="color:#e2e8f0;">${rank}. ${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td>${(p.bps || 0)}</td><td>${(p.defconPer90 || 0).toFixed(2)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
       });
       dh += '</table>';
       if (diffs.length === 0) dh = '<p style="color:#475569;">No differentials found matching criteria (low ownership + high xP)</p>';
@@ -691,9 +712,9 @@ VG.preloadTabs = async (gw, horizon) => {
           gwPlan.transfers.forEach(t => {
             const hitTag = t.isHit ? ' <span style="color:#ef4444;font-size:0.65rem;">(HIT)</span>' : '';
             ph += `<div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:0.75rem;">`;
-            ph += `<span style="color:#ef4444;text-decoration:line-through;">${t.out.name}</span>`;
+            ph += `<span style="color:#ef4444;text-decoration:line-through;">${VG.esc(t.out.name)}</span>`;
             ph += `<span style="color:#475569;">→</span>`;
-            ph += `<span style="color:#00ff87;">${t.in.name}</span>${hitTag}`;
+            ph += `<span style="color:#00ff87;">${VG.esc(t.in.name)}</span>${hitTag}`;
             ph += `<span style="color:#64748b;margin-left:auto;">+${t.cumGain.toFixed(1)} xP</span>`;
             ph += `</div>`;
           });
@@ -719,7 +740,7 @@ VG.preloadTabs = async (gw, horizon) => {
       const league = await VG.analyzeLeague(leagueId, gw);
       if (league) {
         let lh = `<div class="chip-sequence">`;
-        lh += `<div class="chip-card"><div class="chip-label">League</div><div class="chip-score" style="color:#e2e8f0;font-size:0.8rem;">${league.leagueName}</div><div class="chip-advice">${league.fetchedSquads} of ${league.totalSquads} teams analyzed</div></div>`;
+        lh += `<div class="chip-card"><div class="chip-label">League</div><div class="chip-score" style="color:#e2e8f0;font-size:0.8rem;">${VG.esc(league.leagueName)}</div><div class="chip-advice">${league.fetchedSquads} of ${league.totalSquads} teams analyzed</div></div>`;
         lh += `<div class="chip-card"><div class="chip-label">Differentials</div><div class="chip-score" style="color:#00ff87;">${league.differentials.length}</div><div class="chip-advice">Low-owned picks in your squad</div></div>`;
         lh += `<div class="chip-card"><div class="chip-label">Template</div><div class="chip-score" style="color:#fbbf24;">${league.templateIds.length}</div><div class="chip-advice">Players ≥30% owned in league</div></div>`;
         lh += `<div class="chip-card"><div class="chip-label">Outliers</div><div class="chip-score" style="color:#ef4444;">${league.outliers.length}</div><div class="chip-advice">Popular picks you're missing</div></div>`;
@@ -730,7 +751,7 @@ VG.preloadTabs = async (gw, horizon) => {
           lh += '<div style="margin-top:14px;"><div class="section-title" style="font-size:0.8rem;color:#00ff87;">Your Differentials</div>';
           lh += '<table class="data-table" style="font-size:0.72rem;"><tr><th>Player</th><th>Pos</th><th>League Own%</th><th>Captains</th></tr>';
           league.differentials.forEach(p => {
-            lh += `<tr><td style="color:#e2e8f0;">${p.name}</td><td>${p.position}</td><td style="color:#00ff87;">${p.ownershipPct}%</td><td>${p.captains}</td></tr>`;
+            lh += `<tr><td style="color:#e2e8f0;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td style="color:#00ff87;">${p.ownershipPct}%</td><td>${p.captains}</td></tr>`;
           });
           lh += '</table></div>';
         }
@@ -740,7 +761,7 @@ VG.preloadTabs = async (gw, horizon) => {
           lh += '<div style="margin-top:14px;"><div class="section-title" style="font-size:0.8rem;color:#ef4444;">Popular Picks You\'re Missing</div>';
           lh += '<table class="data-table" style="font-size:0.72rem;"><tr><th>Player</th><th>Pos</th><th>League Own%</th><th>Captains</th></tr>';
           league.outliers.forEach(p => {
-            lh += `<tr><td style="color:#e2e8f0;">${p.name}</td><td>${p.position}</td><td style="color:#ef4444;">${p.ownershipPct}%</td><td>${p.captains}</td></tr>`;
+            lh += `<tr><td style="color:#e2e8f0;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td style="color:#ef4444;">${p.ownershipPct}%</td><td>${p.captains}</td></tr>`;
           });
           lh += '</table></div>';
         }
@@ -750,7 +771,7 @@ VG.preloadTabs = async (gw, horizon) => {
           lh += '<div style="margin-top:14px;"><div class="section-title" style="font-size:0.8rem;">League Standings</div>';
           lh += '<table class="data-table" style="font-size:0.72rem;"><tr><th>#</th><th>Manager</th><th>GW</th><th>Total</th><th>Captain</th></tr>';
           league.squads.forEach(s => {
-            lh += `<tr><td style="color:#94a3b8;">${s.rank || "-"}</td><td style="color:#e2e8f0;">${s.name}</td><td>${s.gwPoints}</td><td style="color:#fbbf24;">${s.totalPoints}</td><td style="color:#94a3b8;">${s.captain}</td></tr>`;
+            lh += `<tr><td style="color:#94a3b8;">${VG.esc(s.rank || "-")}</td><td style="color:#e2e8f0;">${VG.esc(s.name)}</td><td>${VG.esc(s.gwPoints)}</td><td style="color:#fbbf24;">${VG.esc(s.totalPoints)}</td><td style="color:#94a3b8;">${VG.esc(s.captain)}</td></tr>`;
           });
           lh += '</table></div>';
         }
@@ -776,19 +797,19 @@ VG.preloadTabs = async (gw, horizon) => {
 
 VG.renderComparison = () => {
   const sel = document.getElementById("compareSelect");
-  const selected = Array.from(sel.selectedOptions).map(o => o.value).slice(0, 3);
+  const selected = Array.from(sel.selectedOptions)
+    .map(o => VG.allXP.find(x => x.id === parseInt(o.value)))
+    .filter(Boolean).slice(0, 3);
   if (selected.length < 2) { document.getElementById("compareTable").innerHTML = ""; return; }
   const colors = ['#00ff87', '#7c3aed', '#fbbf24'];
 
   // ── Radar: xP components (the real comparison) ──
   const radarLabels = ["Appearance", "Clean Sheet", "Goals", "Assists", "Bonus", "DEFCON", "Saves"];
   const radarDatasets = [];
-  selected.forEach((name, i) => {
-    const p = VG.allXP.find(x => x.name === name);
-    if (!p) return;
+  selected.forEach((p, i) => {
     const xc = p.xpComponents || {};
     radarDatasets.push({
-      label: name,
+      label: p.name,
       data: [xc.xpAppearance || 0, xc.xpCS || 0, xc.xpGoals || 0, xc.xpAssists || 0, xc.xpBonus || 0, xc.xpDEFCON || 0, xc.xpSaves || 0],
       borderColor: colors[i], backgroundColor: colors[i] + "18", borderWidth: 2, pointRadius: 3
     });
@@ -807,16 +828,13 @@ VG.renderComparison = () => {
   });
 
   // ── Stacked xP breakdown bar chart ──
-  const barLabels = selected;
+  const barLabels = selected.map(p => p.name);
   const barComponents = ['xpAppearance', 'xpCS', 'xpGoals', 'xpAssists', 'xpBonus', 'xpDEFCON', 'xpSaves'];
   const barColors = ['#64748b', '#3b82f6', '#22c55e', '#a78bfa', '#fbbf24', '#f97316', '#06b6d4'];
   const barNames = ['Appearance', 'Clean Sheet', 'Goals', 'Assists', 'Bonus', 'DEFCON', 'Saves'];
   const barDatasets = barComponents.map((comp, ci) => ({
     label: barNames[ci],
-    data: selected.map(name => {
-      const p = VG.allXP.find(x => x.name === name);
-      return p?.xpComponents?.[comp] || 0;
-    }),
+    data: selected.map(p => p.xpComponents?.[comp] || 0),
     backgroundColor: barColors[ci]
   }));
 
@@ -840,11 +858,9 @@ VG.renderComparison = () => {
 
   // ── Table: raw stats + xP components ──
   let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>App</th><th>CS</th><th>Goals</th><th>Assists</th><th>Bonus</th><th>DEFCON</th><th>Saves</th></tr>';
-  selected.forEach((name) => {
-    const p = VG.allXP.find(x => x.name === name);
-    if (!p) return;
+  selected.forEach((p) => {
     const xc = p.xpComponents || {};
-    tableHtml += `<tr><td style="color:#e2e8f0;">${name}</td><td>${p.position}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
+    tableHtml += `<tr><td style="color:#e2e8f0;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${(xc.xpAppearance || 0).toFixed(1)}</td>`;
     tableHtml += `<td>${(xc.xpCS || 0).toFixed(1)}</td>`;
     tableHtml += `<td>${(xc.xpGoals || 0).toFixed(1)}</td>`;

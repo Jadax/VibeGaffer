@@ -6,6 +6,30 @@ VG.POSITIONS_R = { GK: 1, DEF: 2, MID: 3, FWD: 4 };
 VG.POS_TARGET = { 1: 2, 2: 5, 3: 5, 4: 3 };
 VG.POS_SHIRT = { 1: "gk", 2: "def", 3: "mid", 4: "fwd" };
 VG.CACHE_TTL = 1800000;
+// Legal outfield shapes as [DEF, MID, FWD] — GK is always exactly 1
+VG.FORMATIONS = [
+  [3, 4, 3], [3, 5, 2], [4, 3, 3], [4, 4, 2], [4, 5, 1], [5, 3, 2], [5, 4, 1]
+];
+
+// ── Shared helpers ────────────────────────────────────────────────────
+// Escape API-derived strings before they reach innerHTML. Player names come
+// from the FPL API, but league/manager/team names are chosen by other users
+// and must never be trusted as markup.
+VG.esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+));
+
+// Injury filter: available or doubtful only (excludes injured/suspended/unavailable)
+VG.isAvailable = (p) => {
+  const data = VG.players[p.id];
+  return !data || data.status === "a" || data.status === "d";
+};
+
+// Difficulty a team faces in a fixture, from that team's perspective
+VG.fixtureFDR = (f, teamId) => {
+  if (!f) return 3;
+  return (f.team_h === teamId ? f.team_h_difficulty : f.team_a_difficulty) || 3;
+};
 
 VG.TEAM_COLORS = {
   1: { home: "#EF0107", away: "#FFFFFF" },
@@ -115,12 +139,9 @@ VG.loadSquad = async (tid, gw) => {
 
 VG.buildMaps = (data) => {
   VG.players = {};
-  VG.playersByTeam = {};
   VG.teams = {};
   data.elements.forEach(p => {
     VG.players[p.id] = p;
-    if (!VG.playersByTeam[p.team]) VG.playersByTeam[p.team] = [];
-    VG.playersByTeam[p.team].push(p.id);
   });
   data.teams.forEach(t => { VG.teams[t.id] = t; });
 
@@ -193,7 +214,6 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const reds = parseInt(p.red_cards || "0");
   const ownGoals = parseInt(p.own_goals || "0");
   const penMiss = parseInt(p.penalties_missed || "0");
-  const totalPts = parseInt(p.total_points || "0");
   const ppg = parseFloat(p.points_per_game || "0");
   const form = parseFloat(p.form || "0");
   const bps = parseInt(p.bps || "0");
@@ -222,7 +242,6 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   // Minutes probability — start-rate model using last season data
   const seasonGames = 38;
   const gamesPlayed = starts || Math.max(1, Math.ceil(mins / 80));
-  const avgMins = gamesPlayed > 0 ? mins / gamesPlayed : 0;
 
   // Start rate: how often the player started when available
   // GKs almost always start when in squad; outfield players vary more
@@ -493,8 +512,8 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
     upcoming.forEach(f => {
       const isHome = f.team_h === teamId;
       const oppId = isHome ? f.team_a : f.team_h;
-      const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
-      const res = VG.computeFixtureXP(pid, oppId, isHome, fdr || 3);
+      const fdr = VG.fixtureFDR(f, teamId);
+      const res = VG.computeFixtureXP(pid, oppId, isHome, fdr);
       res.gw = f.event;
       res.opponent = VG.teams[oppId]?.short_name || "?";
       res.venue = isHome ? "H" : "A";
@@ -582,7 +601,7 @@ VG.computePlayerGWProjection = (player, gw, fixtures) => {
   teamFixtures.forEach(f => {
     const isHome = f.team_h === player.teamId;
     const oppId = isHome ? f.team_a : f.team_h;
-    const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
+    const fdr = VG.fixtureFDR(f, player.teamId);
     const projection = VG.computeFixtureXP(player.id, oppId, isHome, fdr);
     gwXP += projection.xp || 0;
     opponents.push(VG.teams[oppId]?.short_name || "?");
@@ -598,6 +617,60 @@ VG.computePlayerGWProjection = (player, gw, fixtures) => {
     venue: venues.every(v => v === venues[0]) ? venues[0] : "H/A",
     fdr: +(difficulties.reduce((sum, value) => sum + value, 0) / difficulties.length).toFixed(1)
   };
+};
+
+// Pick the highest-scoring legal XI from a 15-man squad, ranking by `key`
+// (totalXP for horizon-wide picks, gwXP for a single gameweek).
+// Returns the bench unsorted — callers order it to taste.
+VG.pickBestXI = (squad, key = "totalXP") => {
+  const byPos = { 1: [], 2: [], 3: [], 4: [] };
+  squad.forEach(p => { if (byPos[p.positionId]) byPos[p.positionId].push(p); });
+  Object.values(byPos).forEach(arr => arr.sort((a, b) => (b[key] || 0) - (a[key] || 0)));
+
+  let formation = null, startingXP = -Infinity;
+  VG.FORMATIONS.forEach(([defN, midN, fwdN]) => {
+    if (!byPos[1].length || byPos[2].length < defN || byPos[3].length < midN || byPos[4].length < fwdN) return;
+    let xp = byPos[1][0][key] || 0;
+    for (let i = 0; i < defN; i++) xp += byPos[2][i][key] || 0;
+    for (let i = 0; i < midN; i++) xp += byPos[3][i][key] || 0;
+    for (let i = 0; i < fwdN; i++) xp += byPos[4][i][key] || 0;
+    if (xp > startingXP) { startingXP = xp; formation = { DEF: defN, MID: midN, FWD: fwdN }; }
+  });
+  if (!formation) { formation = { DEF: 4, MID: 4, FWD: 2 }; startingXP = 0; }
+
+  const starting = [];
+  const bench = [];
+  if (byPos[1][0]) starting.push(byPos[1][0]);
+  if (byPos[1][1]) bench.push(byPos[1][1]);
+  [2, 3, 4].forEach(pos => {
+    const n = formation[VG.POSITIONS[pos]];
+    byPos[pos].forEach((p, i) => { if (i < n) starting.push(p); else bench.push(p); });
+  });
+  while (starting.length < 11 && bench.length > 0) starting.push(bench.shift());
+
+  return { formation, starting: starting.slice(0, 11), bench, byPos, startingXP };
+};
+
+VG.emptyDraftResult = (budget) => ({
+  mode: "draft", squad: [], starting: [], bench: [],
+  formation: { DEF: 4, MID: 4, FWD: 2 },
+  totalCost: 0, budgetRemaining: budget, totalXP: 0, benchXP: 0,
+  gotCap: [], gwPicks: []
+});
+
+// Tally how many squad members face easy (FDR<=2) / hard (FDR>=4) fixtures in a GW
+VG.countFixtureDifficulty = (squad, fixtures, gw) => {
+  const gwFix = fixtures.filter(f => f.event === gw);
+  let easy = 0, hard = 0;
+  squad.forEach(p => {
+    const tid = p.teamId;
+    const f = gwFix.find(fi => fi.team_h === tid || fi.team_a === tid);
+    if (!f) return;
+    const fdr = VG.fixtureFDR(f, tid);
+    if (fdr <= 2) easy++;
+    if (fdr >= 4) hard++;
+  });
+  return { easy, hard };
 };
 
 VG.computePerGWPicks = (squad, gw, fixtures) => {
@@ -616,42 +689,7 @@ VG.computePerGWPicks = (squad, gw, fixtures) => {
     };
   });
 
-  // Group by position, sort by gwXP desc
-  const byPos = { 1: [], 2: [], 3: [], 4: [] };
-  gwXP.forEach(p => byPos[p.positionId].push(p));
-  Object.values(byPos).forEach(arr => arr.sort((a, b) => b.gwXP - a.gwXP));
-
-  // Try all valid formations, pick the one with highest total GW xP
-  const formations = [
-    [3, 4, 3], [3, 5, 2], [4, 3, 3], [4, 4, 2], [4, 5, 1], [5, 3, 2], [5, 4, 1]
-  ];
-  let bestFormation = null, bestGWXP = -1;
-  formations.forEach(([defN, midN, fwdN]) => {
-    if (byPos[2].length < defN || byPos[3].length < midN || byPos[4].length < fwdN) return;
-    let xp = byPos[1][0]?.gwXP || 0;
-    for (let i = 0; i < defN; i++) xp += byPos[2][i].gwXP;
-    for (let i = 0; i < midN; i++) xp += byPos[3][i].gwXP;
-    for (let i = 0; i < fwdN; i++) xp += byPos[4][i].gwXP;
-    if (xp > bestGWXP) { bestGWXP = xp; bestFormation = { DEF: defN, MID: midN, FWD: fwdN }; }
-  });
-  if (!bestFormation) bestFormation = { DEF: 4, MID: 4, FWD: 2 };
-
-  // Build starting XI and bench
-  const starting = [];
-  const bench = [];
-  starting.push(byPos[1][0]);
-  if (byPos[1][1]) bench.push(byPos[1][1]);
-
-  [2, 3, 4].forEach(pos => {
-    const n = bestFormation[VG.POSITIONS[pos]];
-    byPos[pos].forEach((p, i) => {
-      if (i < n) starting.push(p); else bench.push(p);
-    });
-  });
-
-  // Ensure 11 starters
-  while (starting.length < 11 && bench.length > 0) starting.push(bench.shift());
-  while (starting.length < 11) starting.push(bench.shift());
+  const { formation: bestFormation, starting, bench } = VG.pickBestXI(gwXP, "gwXP");
 
   const cap = [...starting].filter(p => p.positionId !== 1).sort((a, b) => b.gwXP - a.gwXP);
   const gwTotalXP = +starting.reduce((s, p) => s + (p.gwXP || 0), 0).toFixed(2);
@@ -674,7 +712,7 @@ VG.computePerGWPicks = (squad, gw, fixtures) => {
 
 // ── Optimizer: maximize total xP within budget ──────────────────────────
 VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12) => {
-  const target = { 1: 2, 2: 5, 3: 5, 4: 3 };
+  const target = VG.POS_TARGET;
   let bestSquad = null, bestStrategyXP = -1, bestSpent = 0;
 
   // Try multiple starting strategies to find global optimum
@@ -693,18 +731,13 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
       inSquad.add(p.id);
     };
 
-    // Injury filter: exclude injured/suspended/unavailable players
-    const isAvailable = (p) => {
-      const data = VG.players[p.id];
-      return !data || data.status === 'a' || data.status === 'd'; // available or doubtful only
-    };
 
     // Phase 1a: Seed with must-have premiums (highest xP per position)
     // This ensures expensive captains like Haaland/Saka aren't priced out by budget reserve
     // For MIDs, seed top 2 (e.g. Saka + Bruno) since they're captain-viable
     const seeds = [];
     [1, 2, 3, 4].forEach(function(pos) {
-      const candidates = players.filter(function(p) { return p.positionId === pos && !inSquad.has(p.id) && isAvailable(p); })
+      const candidates = players.filter(function(p) { return p.positionId === pos && !inSquad.has(p.id) && VG.isAvailable(p); })
         .sort(function(a, b) { return b.totalXP - a.totalXP; });
       seeds.push(candidates[0]);
       if (pos === 3 && candidates[1]) seeds.push(candidates[1]);
@@ -721,11 +754,11 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
     // This ensures premium MIDs like Bruno aren't excluded just because DEFs are filled first
     let byValue;
     if (strategy === 'value') {
-      byValue = players.filter(isAvailable).sort((a, b) => (b._sortBy || b.xpPerPrice) - (a._sortBy || a.xpPerPrice));
+      byValue = players.filter(VG.isAvailable).sort((a, b) => (b._sortBy || b.xpPerPrice) - (a._sortBy || a.xpPerPrice));
     } else if (strategy === 'xp') {
-      byValue = players.filter(isAvailable).sort((a, b) => b.totalXP - a.totalXP);
+      byValue = players.filter(VG.isAvailable).sort((a, b) => b.totalXP - a.totalXP);
     } else { // mixed
-      byValue = players.filter(isAvailable).sort((a, b) => {
+      byValue = players.filter(VG.isAvailable).sort((a, b) => {
         const scoreA = (a._sortBy || a.xpPerPrice) * 0.5 + (a.totalXP / 10) * 0.5;
         const scoreB = (b._sortBy || b.xpPerPrice) * 0.5 + (b.totalXP / 10) * 0.5;
         return scoreB - scoreA;
@@ -765,7 +798,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
         const need = target[pos] - squad.filter(s => s.positionId === pos).length;
         if (need > 0) posNeeded2[pos] = need;
       });
-      const fillers = players.filter(isAvailable).sort((a, b) => a.price - b.price);
+      const fillers = players.filter(VG.isAvailable).sort((a, b) => a.price - b.price);
       for (const p of fillers) {
         if (squad.length >= 15) break;
         if (inSquad.has(p.id)) continue;
@@ -790,7 +823,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
         const cur = squad[i];
         let bestCand = null, bestGain = 0;
         for (const p of players) {
-          if (inSquad.has(p.id) || !isAvailable(p)) continue;
+          if (inSquad.has(p.id) || !VG.isAvailable(p)) continue;
           if (p.positionId !== cur.positionId) continue;
           const costDiff = +(p.price - cur.price).toFixed(1);
           if (costDiff <= 0 || costDiff > remaining()) continue;
@@ -835,7 +868,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
           // Find best replacement for sA in same position
           let bestA = null, bestAGain = -Infinity;
           for (const p of players) {
-            if (inSquad.has(p.id) || !isAvailable(p)) continue;
+            if (inSquad.has(p.id) || !VG.isAvailable(p)) continue;
             if (p.positionId !== sA.positionId) continue;
             if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== sA.teamId) continue;
             const gain = p.totalXP - sA.totalXP;
@@ -844,7 +877,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
           if (!bestA) continue;
           // Find best replacement for sB in same position, fitting remaining budget
           for (const p of players) {
-            if (inSquad.has(p.id) || p.id === bestA.p.id || !isAvailable(p)) continue;
+            if (inSquad.has(p.id) || p.id === bestA.p.id || !VG.isAvailable(p)) continue;
             if (p.positionId !== sB.positionId) continue;
             if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== sB.teamId) continue;
             const costDiffB = +(p.price - sB.price).toFixed(1);
@@ -884,7 +917,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
       for (let idx = 0; idx < squad.length; idx++) {
         const cur = squad[idx];
         for (const cand of players) {
-          if (cand.id === cur.id || inSquad.has(cand.id) || !isAvailable(cand)) continue;
+          if (cand.id === cur.id || inSquad.has(cand.id) || !VG.isAvailable(cand)) continue;
           if (cand.positionId !== cur.positionId) continue;
           if (cand.teamId !== cur.teamId && (clubCounts[cand.teamId] || 0) >= 3) continue;
           const costDiff = +(cand.price - cur.price).toFixed(1);
@@ -919,46 +952,10 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
   }
 
   const squad = bestSquad;
-  if (!squad || squad.length < 11) {
-    return { mode: "draft", squad: [], starting: [], bench: [], formation: { DEF: 4, MID: 4, FWD: 2 }, totalCost: 0, budgetRemaining: budget, totalXP: 0, benchXP: 0, gotCap: [], gwPicks: [] };
-  }
+  if (!squad || squad.length < 11) return VG.emptyDraftResult(budget);
   const spent = bestSpent;
 
-  // Select starting XI: pick the highest xP player at each position for the formation
-  const byPos = { 1: [], 2: [], 3: [], 4: [] };
-  squad.forEach(p => byPos[p.positionId].push(p));
-  Object.values(byPos).forEach(arr => arr.sort((a, b) => b.totalXP - a.totalXP));
-
-  // Choose best formation (1-3-5-1, 1-4-4-1, 1-5-3-1, 1-4-3-2, 1-3-4-2)
-  const formations = [
-    [3, 4, 3], [3, 5, 2], [4, 3, 3], [4, 4, 2], [4, 5, 1], [5, 3, 2], [5, 4, 1]
-  ];
-  let bestFormation = null, bestTotalXP = 0;
-  formations.forEach(([defN, midN, fwdN]) => {
-    if (byPos[2].length < defN || byPos[3].length < midN || byPos[4].length < fwdN) return;
-    let xp = 0;
-    xp += byPos[1][0].totalXP;
-    for (let i = 0; i < defN; i++) xp += byPos[2][i].totalXP;
-    for (let i = 0; i < midN; i++) xp += byPos[3][i].totalXP;
-    for (let i = 0; i < fwdN; i++) xp += byPos[4][i].totalXP;
-    if (xp > bestTotalXP) { bestTotalXP = xp; bestFormation = { DEF: defN, MID: midN, FWD: fwdN }; }
-  });
-  if (!bestFormation) bestFormation = { DEF: 4, MID: 4, FWD: 2 };
-
-  const starting = [];
-  const bench = [];
-  starting.push(byPos[1][0]);
-  if (byPos[1][1]) bench.push(byPos[1][1]);
-
-  [2, 3, 4].forEach(pos => {
-    const n = bestFormation[VG.POSITIONS[pos]];
-    byPos[pos].forEach((p, i) => {
-      if (i < n) starting.push(p); else bench.push(p);
-    });
-  });
-
-  // Ensure 11 starters
-  while (starting.length < 11 && bench.length > 0) starting.push(bench.shift());
+  const { formation: bestFormation, starting, bench } = VG.pickBestXI(squad, "totalXP");
   bench.sort((a, b) => a.positionId - b.positionId || b.totalXP - a.totalXP);
 
   // Per-GW picks: best XI/formation/captain for each GW in the horizon
@@ -991,22 +988,31 @@ VG._loadHighs = async () => {
   if (VG._highsReady) return VG._highsReady;
   if (VG._highsLoading) return null;
   VG._highsLoading = true;
+  // highs-js is an Emscripten MODULARIZE build: it publishes `window.Module`,
+  // not `window.Highs`. Reading the wrong global made every ILP solve throw
+  // and silently drop to the greedy fallback.
+  const highsFactory = () => window.Module || window.Highs;
   try {
     // Load highs-js from CDN — no build step needed
-    if (!window.Highs) {
+    if (typeof highsFactory() !== 'function') {
       const script = document.createElement('script');
       script.src = 'https://cdn.jsdelivr.net/npm/highs@1.8.0/build/highs.js';
+      script.integrity = 'sha384-TuRRrTGgc1fvxkUfyHE5NU0JOtUfCV9LzQ6nLhIGaGFtv37yuaq6d9SGfWDnZEYC';
+      script.crossOrigin = 'anonymous';
+      script.referrerPolicy = 'no-referrer';
       document.head.appendChild(script);
       await new Promise((resolve, reject) => {
         script.onload = resolve;
-        script.onerror = reject;
-        setTimeout(reject, 8000);
+        script.onerror = () => reject(new Error('highs.js failed to load'));
+        setTimeout(() => reject(new Error('highs.js load timed out')), 8000);
       });
     }
-    const highs = await window.Highs({
+    if (typeof highsFactory() !== 'function') throw new Error('highs-js exposed no factory');
+    const highs = await highsFactory()({
       locateFile: (file) => 'https://cdn.jsdelivr.net/npm/highs@1.8.0/build/' + file
     });
     VG._highsReady = highs;
+    VG._highsLoading = false;
     return highs;
   } catch (e) {
     console.warn('[VG] HiGHS WASM load failed, using greedy fallback:', e.message);
@@ -1022,7 +1028,7 @@ VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, 
     return VG.optimizeDraft(players, budget, fixtures, startGW, nGWs);
   }
 
-  const target = { 1: 2, 2: 5, 3: 5, 4: 3 };
+  const target = VG.POS_TARGET;
   const n = players.length;
   if (n === 0) {
     return { mode: "draft", squad: [], starting: [], bench: [], formation: { DEF: 4, MID: 4, FWD: 2 }, totalCost: 0, budgetRemaining: budget, totalXP: 0, benchXP: 0, gotCap: [], gwPicks: [] };
@@ -1110,36 +1116,7 @@ VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, 
     const spent = selected.reduce((s, p) => s + (p.price || 0), 0);
 
     // Select starting XI: best formation
-    const byPos = { 1: [], 2: [], 3: [], 4: [] };
-    selected.forEach(p => byPos[p.positionId].push(p));
-    Object.values(byPos).forEach(arr => arr.sort((a, b) => b.totalXP - a.totalXP));
-
-    const formations = [
-      [3, 4, 3], [3, 5, 2], [4, 3, 3], [4, 4, 2], [4, 5, 1], [5, 3, 2], [5, 4, 1]
-    ];
-    let bestFormation = null, bestTotalXP = 0;
-    formations.forEach(([defN, midN, fwdN]) => {
-      if (byPos[2].length < defN || byPos[3].length < midN || byPos[4].length < fwdN) return;
-      let xp = 0;
-      xp += byPos[1][0].totalXP;
-      for (let i = 0; i < defN; i++) xp += byPos[2][i].totalXP;
-      for (let i = 0; i < midN; i++) xp += byPos[3][i].totalXP;
-      for (let i = 0; i < fwdN; i++) xp += byPos[4][i].totalXP;
-      if (xp > bestTotalXP) { bestTotalXP = xp; bestFormation = { DEF: defN, MID: midN, FWD: fwdN }; }
-    });
-    if (!bestFormation) bestFormation = { DEF: 4, MID: 4, FWD: 2 };
-
-    const starting = [];
-    const bench = [];
-    starting.push(byPos[1][0]);
-    if (byPos[1][1]) bench.push(byPos[1][1]);
-    [2, 3, 4].forEach(pos => {
-      const n = bestFormation[VG.POSITIONS[pos]];
-      byPos[pos].forEach((p, i) => {
-        if (i < n) starting.push(p); else bench.push(p);
-      });
-    });
-    while (starting.length < 11 && bench.length > 0) starting.push(bench.shift());
+    const { formation: bestFormation, starting, bench } = VG.pickBestXI(selected, "totalXP");
     bench.sort((a, b) => a.positionId - b.positionId || b.totalXP - a.totalXP);
 
     // Per-GW picks
@@ -1206,11 +1183,6 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, st
   startGW = startGW || 1;
   nGWs = nGWs || 5;
 
-  const isAvailable = (p) => {
-    const data = VG.players[p.id];
-    return !data || data.status === 'a' || data.status === 'd';
-  };
-
   const currentIds = new Set(currentSquad.map(p => p.element));
   const candidates = [];
 
@@ -1221,7 +1193,7 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, st
     if (!cXP) return;
     const pos = cXP.positionId;
     const upgrades = players.filter(p =>
-      p.id !== pid && !currentIds.has(p.id) && isAvailable(p) &&
+      p.id !== pid && !currentIds.has(p.id) && VG.isAvailable(p) &&
       p.positionId === pos &&
       p.price <= cPrice + bank + 0.1 &&
       p.totalXP > cXP.totalXP + 1.0
@@ -1391,9 +1363,7 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
     const badFixCount = squad.filter(p => {
       const f = fixtures.find(fi => fi.event === gw && (fi.team_h === p.teamId || fi.team_a === p.teamId));
       if (!f) return false;
-      const isH = f.team_h === p.teamId;
-      const fdr = isH ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
-      return fdr >= 4;
+      return VG.fixtureFDR(f, p.teamId) >= 4;
     }).length;
 
     // Injuries are the strongest WC trigger
@@ -1505,7 +1475,7 @@ VG.buildFixtureTicker = (startGW, nGWs, fixtures) => {
       if (f) {
         const isHome = f.team_h === t.id;
         const oppId = isHome ? f.team_a : f.team_h;
-        row.fdr.push({ gw, fdr: isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3), opp: VG.teams[oppId]?.short_name || "", isHome });
+        row.fdr.push({ gw, fdr: VG.fixtureFDR(f, t.id), opp: VG.teams[oppId]?.short_name || "", isHome });
       } else {
         row.fdr.push({ gw, fdr: 0, opp: "", isHome: false });
       }
@@ -1526,7 +1496,7 @@ VG.analyzeFixtureSwings = (startGW, nGWs, fixtures) => {
       if (f) {
         const isHome = f.team_h === t.id;
         const oppId = isHome ? f.team_a : f.team_h;
-        const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
+        const fdr = VG.fixtureFDR(f, t.id);
         fdrs.push(fdr);
         fixtures_list.push({ gw, fdr, opp: VG.teams[oppId]?.short_name || "", isHome });
       } else {
@@ -1612,7 +1582,6 @@ VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
   const roadmap = [];
   const squadIds = new Set(squad.map(p => p.element || p.id));
   const squadXP = allXP.filter(p => squadIds.has(p.id));
-  const bank = 0; // Simplified — assume neutral budget
 
   for (let gw = startGW; gw < startGW + nGWs; gw++) {
     const gwFix = fixtures.filter(f => f.event === gw);
@@ -1626,7 +1595,7 @@ VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
       const f = gwFix.find(fi => fi.team_h === xp.teamId || fi.team_a === xp.teamId);
       const isHome = f ? f.team_h === xp.teamId : false;
       const oppId = f ? (isHome ? f.team_a : f.team_h) : null;
-      const fdr = f ? (isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3)) : 0;
+      const fdr = f ? VG.fixtureFDR(f, xp.teamId) : 0;
       const oppName = oppId ? (VG.teams[oppId]?.short_name || "?") : "BLANK";
       const gwXP = xp.gwXP || (xp.totalXP / Math.max(nGWs, 1));
 
@@ -1651,7 +1620,7 @@ VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
         const best = upgrades[0];
         const bestF = gwFix.find(f => f.team_h === best.teamId || f.team_a === best.teamId);
         const bestIsHome = bestF ? bestF.team_h === best.teamId : false;
-        const bestFDR = bestF ? (bestIsHome ? (bestF.team_h_difficulty || 3) : (bestF.team_a_difficulty || 3)) : 3;
+        const bestFDR = VG.fixtureFDR(bestF, best.teamId);
         const bestOppId = bestF ? (bestIsHome ? bestF.team_a : bestF.team_h) : null;
         const bestOpp = bestOppId ? (VG.teams[bestOppId]?.short_name || "?") : "?";
 
@@ -1679,11 +1648,6 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
 
   bank = bank || 0;
   freeTransfers = Math.max(freeTransfers || 1, 1);
-
-  const isAvailable = (p) => {
-    const data = VG.players[p.id];
-    return !data || data.status === 'a' || data.status === 'd';
-  };
 
   // Build per-GW xP maps for all players
   const allXPMap = {};
@@ -1724,7 +1688,7 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
       if (!info) return;
       const f = gwFix.find(fi => fi.team_h === info.teamId || fi.team_a === info.teamId);
       const isHome = f ? f.team_h === info.teamId : false;
-      const fdr = f ? (isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3)) : 3;
+      const fdr = VG.fixtureFDR(f, info.teamId);
       const oppId = f ? (isHome ? f.team_a : f.team_h) : null;
       const oppName = oppId ? (VG.teams[oppId]?.short_name || "?") : "BLANK";
       squadGWXP.push({ id: pid, xp, price: currentSquadPrices[pid] || info.price, positionId: info.positionId, position: info.position, name: info.name, teamId: info.teamId, totalXP: info.totalXP, fdr, oppName, isHome });
@@ -1744,7 +1708,7 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
 
       const candidates = allXP.filter(p =>
         !currentSquadIds.has(p.id) && !usedIds.has(p.id) &&
-        p.positionId === weak.positionId && isAvailable(p) &&
+        p.positionId === weak.positionId && VG.isAvailable(p) &&
         p.price <= weak.price + remainingBank + 0.5
       );
 
@@ -1758,7 +1722,6 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
           cumGain += newXP - oldXP;
         }
         const cost = +(cand.price - weak.price).toFixed(1);
-        cumGain -= cost > 0 ? 0 : 0; // Cost doesn't subtract xP, just constrains budget
 
         if (cumGain > 1.0) { // Minimum 1 xP gain to consider
           transferOpts.push({
@@ -1972,6 +1935,8 @@ VG.render = {};
 
 VG.render.pitch = (result) => {
   const starting = result.starting || [];
+  // Divide by the horizon actually used, not a hardcoded 12
+  const nGWs = Math.max(result.gwPicks?.length || VG.currentHorizon || 1, 1);
   const gotCap = result.gotCap || [];
   const rows = [];
   // Build from GK up
@@ -2005,12 +1970,12 @@ VG.render.pitch = (result) => {
       const isVice = gotCap.length > 1 && p.id === gotCap[1].id;
       html += `<div class="player-card ${VG.POS_SHIRT[p.positionId]}" style="left:${xPct}%;top:${rd.y}%;" data-pid="${p.id}">`;
       html += `<div class="player-shirt" style="background:${teamColor.home};color:${teamColor.away};">`;
-      html += `<div class="player-number">${p.positionId === 1 ? VG.teams[p.teamId]?.short_name || "GK" : (VG.players[p.id]?.shirt_number || "")}</div>`;
+      html += `<div class="player-number">${VG.esc(p.positionId === 1 ? VG.teams[p.teamId]?.short_name || "GK" : (VG.players[p.id]?.shirt_number || ""))}</div>`;
       html += '</div>';
       html += `<div class="player-info">`;
-      html += `<div class="player-name">${p.name}</div>`;
-      html += `<div class="player-meta">${p.teamName} · £${p.price.toFixed(1)}m</div>`;
-      html += `<div class="player-xp">${(p.totalXP / 12).toFixed(1)} xP/GW</div>`;
+      html += `<div class="player-name">${VG.esc(p.name)}</div>`;
+      html += `<div class="player-meta">${VG.esc(p.teamName)} · £${p.price.toFixed(1)}m</div>`;
+      html += `<div class="player-xp">${(p.totalXP / nGWs).toFixed(1)} xP/GW</div>`;
       html += '</div>';
       if (isCaptain) html += '<div class="captain-badge">C</div>';
       if (isVice) html += '<div class="vice-badge">V</div>';
@@ -2029,8 +1994,8 @@ VG.render.bench = (bench) => {
     const teamColor = VG.TEAM_COLORS[p.teamId] || { home: "#555", away: "#fff" };
     html += `<div class="bench-card ${VG.POS_SHIRT[p.positionId]}">`;
     html += `<div class="bench-position">${VG.POSITIONS[p.positionId]}${i + 1}</div>`;
-    html += `<div class="bench-shirt" style="background:${teamColor.home};color:${teamColor.away};">${VG.teams[p.teamId]?.short_name || ""}</div>`;
-    html += `<div class="bench-name">${p.name}</div>`;
+    html += `<div class="bench-shirt" style="background:${teamColor.home};color:${teamColor.away};">${VG.esc(VG.teams[p.teamId]?.short_name || "")}</div>`;
+    html += `<div class="bench-name">${VG.esc(p.name)}</div>`;
     html += `<div class="bench-details">£${p.price.toFixed(1)}m · ${(p.totalXP || 0).toFixed(1)} xP</div>`;
     html += '</div>';
   });
@@ -2057,10 +2022,10 @@ VG.render.chipCard = (label, color, advice) => {
   const scoreBar = advice.score > 0 ? `<div class="chip-score-bar"><div class="chip-score-fill" style="width:${Math.min(advice.score / 1.2, 100)}%;background:${advice.recommend ? color : '#334155'}"></div></div>` : '';
   return `<div class="chip${active}" style="border-color:${advice.recommend ? color : 'rgba(255,255,255,0.06)'}">
     <div class="chip-header"><div class="chip-label" style="color:${color}">${label}</div><div class="chip-action" style="color:${textColor}">${advice.recommend ? "PLAY" : "Hold"}</div></div>
-    <div class="chip-reason">${advice.reason}</div>
+    <div class="chip-reason">${VG.esc(advice.reason)}</div>
     ${scoreBar}
     <div class="chip-timing" style="color:#64748b;">${bestGWText}</div>
-    ${advice.tip ? `<div class="chip-tip" style="color:#94a3b8;font-size:0.65rem;margin-top:4px;font-style:italic;">💡 ${advice.tip}</div>` : ''}
+    ${advice.tip ? `<div class="chip-tip" style="color:#94a3b8;font-size:0.65rem;margin-top:4px;font-style:italic;">💡 ${VG.esc(advice.tip)}</div>` : ''}
   </div>`;
 };
 
@@ -2070,10 +2035,10 @@ VG.render.ticker = (ticker, startGW, nGWs) => {
   for (let gw = startGW; gw < startGW + nGWs; gw++) html += `<th>GW${gw}</th>`;
   html += '</tr></thead><tbody>';
   Object.entries(ticker).forEach(([, row]) => {
-    html += `<tr><td class="ticker-team">${row.name}</td>`;
+    html += `<tr><td class="ticker-team">${VG.esc(row.name)}</td>`;
     row.fdr.forEach(cell => {
       const bg = fdrColors[cell.fdr] || "#334155";
-      html += `<td><div class="fdr-chip" style="background:${bg}20;color:${bg};border:1px solid ${bg}40">${cell.fdr > 0 ? cell.opp + (cell.isHome ? " (H)" : " (A)") : "–"}</div></td>`;
+      html += `<td><div class="fdr-chip" style="background:${bg}20;color:${bg};border:1px solid ${bg}40">${cell.fdr > 0 ? VG.esc(cell.opp) + (cell.isHome ? " (H)" : " (A)") : "–"}</div></td>`;
     });
     html += '</tr>';
   });
@@ -2108,59 +2073,13 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
     };
   }).filter(Boolean);
 
-  // Separate by position
-  const byPos = { 1: [], 2: [], 3: [], 4: [] };
-  players.forEach(p => byPos[p.positionId]?.push(p));
+  // `totalXP` was overwritten above with this GW's projection, so rank on it
+  const { formation: bestFmt, starting, bench, byPos, startingXP: bestScore } =
+    VG.pickBestXI(players, "totalXP");
+  if (!starting.length) return null;
 
-  // Sort each position by xP
-  Object.values(byPos).forEach(arr => arr.sort((a, b) => b.totalXP - a.totalXP));
-
-  // Determine formation based on xP distribution (non-GK)
-  const outfield = [...byPos[4], ...byPos[3], ...byPos[2]];
-  outfield.sort((a, b) => b.totalXP - a.totalXP);
-
-  // Try formations: 3-4-3, 3-5-2, 4-4-2, 4-3-3, 5-3-2, 4-5-1
-  const formations = [
-    { DEF: 3, MID: 4, FWD: 3 },
-    { DEF: 3, MID: 5, FWD: 2 },
-    { DEF: 4, MID: 4, FWD: 2 },
-    { DEF: 4, MID: 3, FWD: 3 },
-    { DEF: 5, MID: 3, FWD: 2 },
-    { DEF: 4, MID: 5, FWD: 1 },
-    { DEF: 5, MID: 4, FWD: 1 },
-  ];
-
-  let bestPicks = null;
-  let bestFmt = null;
-  let bestScore = -1;
-
-  for (const fmt of formations) {
-    const defs = byPos[2].length;
-    const mids = byPos[3].length;
-    const fwds = byPos[4].length;
-    if (defs < fmt.DEF || mids < fmt.MID || fwds < fmt.FWD) continue;
-
-    const picks = [
-      byPos[1].slice(0, 1), // GK
-      byPos[2].slice(0, fmt.DEF),
-      byPos[3].slice(0, fmt.MID),
-      byPos[4].slice(0, fmt.FWD),
-    ];
-    const starting = picks.flat();
-    const startingIds = new Set(starting.map(p => p.id));
-    const bench4 = players
-      .filter(p => !startingIds.has(p.id))
-      .sort((a, b) => (a.positionId === 1 ? -1 : b.positionId === 1 ? 1 : b.totalXP - a.totalXP));
-
-    const total = starting.reduce((s, p) => s + p.totalXP, 0);
-    if (total > bestScore) {
-      bestScore = total;
-      bestPicks = { starting, bench: bench4, formation: fmt };
-      bestFmt = fmt;
-    }
-  }
-
-  if (!bestPicks) return null;
+  bench.sort((a, b) => (a.positionId === 1 ? -1 : b.positionId === 1 ? 1 : b.totalXP - a.totalXP));
+  const bestPicks = { starting, bench, formation: bestFmt };
 
   // Generate per-player start/bench reasoning
   const reasoning = bestPicks.starting.map(p => {
@@ -2185,9 +2104,10 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
   });
 
   // Formation comparison
-  const altFormations = formations.filter(f =>
-    f.DEF !== bestFmt.DEF || f.MID !== bestFmt.MID || f.FWD !== bestFmt.FWD
-  ).slice(0, 3).map(f => {
+  const altFormations = VG.FORMATIONS
+    .map(([DEF, MID, FWD]) => ({ DEF, MID, FWD }))
+    .filter(f => f.DEF !== bestFmt.DEF || f.MID !== bestFmt.MID || f.FWD !== bestFmt.FWD)
+    .slice(0, 3).map(f => {
     const d = byPos[2].length >= f.DEF ? byPos[2].slice(0, f.DEF) : [];
     const m = byPos[3].length >= f.MID ? byPos[3].slice(0, f.MID) : [];
     const fw = byPos[4].length >= f.FWD ? byPos[4].slice(0, f.FWD) : [];
@@ -2204,7 +2124,7 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
   };
 };
 
-VG.getCaptainReasoning = (cap, fixtures, gw) => {
+VG.getCaptainReasoning = (cap) => {
   if (!cap) return { summary: 'No captain selected', details: [] };
   const reasons = [];
   if (cap.isDoubtful || cap.status === 'd' || cap.status === 'u') reasons.push('⚠ Doubtful — have a VC ready');
@@ -2228,7 +2148,7 @@ VG.getCaptainReasoning = (cap, fixtures, gw) => {
   return { summary, details: reasons };
 };
 
-VG.getSquadAnalysis = (result, allXP, fixtures, gw) => {
+VG.getSquadAnalysis = (result, fixtures, gw) => {
   if (!result || !result.squad) return null;
   const squad = result.squad;
   const weaknesses = [];
@@ -2254,16 +2174,7 @@ VG.getSquadAnalysis = (result, allXP, fixtures, gw) => {
   if (maxTeam && maxTeam[1] >= 4) weaknesses.push(`4 players from ${maxTeam[0]} — overexposed`);
 
   // Fixture difficulty
-  const gwFix = fixtures.filter(f => f.event === gw);
-  let easyFix = 0, hardFix = 0;
-  squad.forEach(p => {
-    const f = gwFix.find(fi => fi.team_h === p.teamId || fi.team_a === p.teamId);
-    if (!f) return;
-    const isH = f.team_h === p.teamId;
-    const fdr = isH ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
-    if (fdr <= 2) easyFix++;
-    if (fdr >= 4) hardFix++;
-  });
+  const { easy: easyFix, hard: hardFix } = VG.countFixtureDifficulty(squad, fixtures, gw);
   if (easyFix >= 6) strengths.push(`${easyFix} players with great fixtures (FDR 1-2)`);
   if (hardFix >= 4) weaknesses.push(`${hardFix} players with tough fixtures (FDR 4-5)`);
 
@@ -2349,7 +2260,7 @@ VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
     const chipAdvice = result.chipAdvice || {};
 
     // Squad strengths and weaknesses
-    const analysis = VG.getSquadAnalysis(result, allXP, fixtures, gw);
+    const analysis = VG.getSquadAnalysis(result, fixtures, gw);
     if (analysis) {
       html += `<div class="tips-section">`;
       html += `<div class="tips-section-header">📊 Squad DNA — Strengths & Weaknesses</div>`;
@@ -2358,7 +2269,7 @@ VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
         html += `<div style="background:rgba(0,255,135,0.04);border-radius:8px;padding:10px;">`;
         html += `<div style="color:#00ff87;font-size:0.65rem;font-weight:700;text-transform:uppercase;margin-bottom:4px;">✅ Strengths</div>`;
         analysis.strengths.forEach(s => {
-          html += `<div style="font-size:0.7rem;color:#94a3b8;margin-top:3px;">▸ ${s}</div>`;
+          html += `<div style="font-size:0.7rem;color:#94a3b8;margin-top:3px;">▸ ${VG.esc(s)}</div>`;
         });
         html += `</div>`;
       }
@@ -2405,17 +2316,7 @@ VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
     }
 
     // Fixture difficulty
-    const gwFix = fixtures.filter(f => f.event === gw);
-    let hardFixtures = 0;
-    squad.forEach(sp => {
-      const xp = allXP.find(p => p.id === (sp.element || sp.id));
-      if (!xp) return;
-      const f = gwFix.find(fi => fi.team_h === xp.teamId || fi.team_a === xp.teamId);
-      if (!f) return;
-      const isHome = f.team_h === xp.teamId;
-      const fdr = isHome ? (f.team_h_difficulty || 3) : (f.team_a_difficulty || 3);
-      if (fdr >= 4) hardFixtures++;
-    });
+    const hardFixtures = VG.countFixtureDifficulty(squad, fixtures, gw).hard;
     if (hardFixtures >= 6) {
       tips.push({
         title: `${hardFixtures} Players with Hard Fixtures (FDR 4-5)`,
@@ -2482,9 +2383,9 @@ VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
       html += `<div class="tips-section-header">📊 Your Squad Analysis</div>`;
       tips.forEach(tip => {
         html += `<div class="tip-card" style="border-left:3px solid #00ff87;">`;
-        html += `<div class="tip-title">${tip.title}</div>`;
-        html += `<div class="tip-text">${tip.text}</div>`;
-        html += `<div class="tip-source">— ${tip.source}</div>`;
+        html += `<div class="tip-title">${VG.esc(tip.title)}</div>`;
+        html += `<div class="tip-text">${VG.esc(tip.text)}</div>`;
+        html += `<div class="tip-source">— ${VG.esc(tip.source)}</div>`;
         html += `</div>`;
       });
       html += `</div>`;
@@ -2494,12 +2395,12 @@ VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
   // ── Static championship tips ──
   VG.TIPS.forEach(section => {
     html += `<div class="tips-section">`;
-    html += `<div class="tips-section-header">${section.icon} ${section.category}</div>`;
+    html += `<div class="tips-section-header">${section.icon} ${VG.esc(section.category)}</div>`;
     section.tips.forEach(tip => {
       html += `<div class="tip-card">`;
-      html += `<div class="tip-title">${tip.title}</div>`;
-      html += `<div class="tip-text">${tip.text}</div>`;
-      html += `<div class="tip-source">— ${tip.source}</div>`;
+      html += `<div class="tip-title">${VG.esc(tip.title)}</div>`;
+      html += `<div class="tip-text">${VG.esc(tip.text)}</div>`;
+      html += `<div class="tip-source">— ${VG.esc(tip.source)}</div>`;
       html += `</div>`;
     });
     html += `</div>`;

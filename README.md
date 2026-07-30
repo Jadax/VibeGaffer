@@ -1,4 +1,4 @@
-# VibeGaffer v5.2.1
+# VibeGaffer v5.3.0
 
 **FPL Optimization Engine** | Powered by [Astraiva](https://astraiva.com) | Author: Tushant Sharma
 
@@ -44,7 +44,7 @@ This is a **pure static web app** deployed on GitHub Pages. Zero backend, zero C
 
 ### Data Pipeline
 
-1. **GitHub Actions** (`fetch-data.yml`) runs every 15 minutes via cron
+1. **GitHub Actions** (`fetch-data.yml`) runs on a deadline-aware schedule: every 30 min inside the 6h before a deadline, 2-hourly within 36h, 6-hourly otherwise
 2. Fetches `bootstrap-static/` (player data) and `fixtures/` from FPL API
 3. Falls back to CORS proxies if direct fetch fails
 4. Commits JSON to `docs/data/` on `main` branch
@@ -52,7 +52,7 @@ This is a **pure static web app** deployed on GitHub Pages. Zero backend, zero C
 
 ### Why Static?
 
-The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It was replaced with a pure static app because:
+The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It was removed in v5.3.0. The static app replaced it because:
 - GitHub Pages is free with zero maintenance
 - No CORS issues (same-origin JSON reads)
 - No server to keep alive
@@ -61,7 +61,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.2.1)
+## Features (v5.3.0)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -199,27 +199,23 @@ Personalized tips generated from actual squad data:
 ```
 VibeGaffer/
 ├── README.md                           # This file
-├── .github/workflows/fetch-data.yml    # Cron job: fetch FPL data every 15 min
+├── package.json                        # Version + npm scripts (check, test)
+├── .github/workflows/
+│   ├── fetch-data.yml                  # Deadline-aware FPL data fetch
+│   ├── fetch-odds.yml                  # Bookmaker odds (optional, needs secret)
+│   └── test.yml                        # CI: node --check + npm test
 ├── docs/                               # GitHub Pages root (deployed)
-│   ├── index.html                      # Main HTML (~860 lines)
-│   ├── app.js                          # Core engine (~2500 lines)
+│   ├── index.html                      # All UI: 8 tabs, CSP, inline JS (~870 lines)
+│   ├── app.js                          # Core engine (~2400 lines)
 │   ├── style.css                       # All styles (275 lines)
 │   ├── .nojekyll                       # Prevents Jekyll processing
 │   └── data/
 │       ├── bootstrap.json              # Player data (~560 active players)
-│       └── fixtures.json               # 380 fixtures with FDR
-├── app.py                              # Original Python Streamlit (not used)
-├── backend.py                          # Original FastAPI backend (not used)
-├── data_loader.py                      # Original data loader (not used)
-├── xp_engine.py                        # Original xP engine (not used)
-├── optimizer.py                        # Original optimizer (not used)
-├── Dockerfile                          # Original Docker config (not used)
-├── docker-compose.yml                  # Original Docker config (not used)
-├── requirements.txt                    # Original Python deps (not used)
+│       ├── fixtures.json               # 380 fixtures with FDR
+│       └── odds.json                   # Bookmaker odds (optional)
+├── tests/run.js                        # Regression suite (68 checks)
 └── .gitignore
 ```
-
-**Note**: The Python files (`app.py`, `backend.py`, etc.) are from the original architecture and are kept in the repo but not used in deployment. The live app is the static `docs/` directory.
 
 ---
 
@@ -280,7 +276,7 @@ Tests are committed in `tests/run.js` and run automatically in GitHub Actions. R
 npm test
 ```
 
-**46/46 tests pass.**
+**68/68 tests pass.**
 
 Test coverage:
 - Optimizer: squad size, formation validity, captain, budget
@@ -319,7 +315,8 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
-| v5.2.1 | — | Correct single-GW lineup/captain projections, DGW detection, strategy routing, exact ILP constraints, deterministic fallback, odds fix, CI tests |
+| v5.3.0 | — | Escaped all API-derived HTML (mini-league XSS), SRI + CSP, fixed the HiGHS global so the ILP solver actually runs, horizon-aware pitch xP, compare-by-id, deadline-aware data cron, removed the unused Python/Docker stack, deduped the four XI-selection copies |
+| v5.2.1 | `00bf512` | Correct single-GW lineup/captain projections, DGW detection, strategy routing, exact ILP constraints, deterministic fallback, odds fix, CI tests |
 | v5.2 | `498566a` | Lineup intelligence, captain explanations, squad DNA analysis |
 | v5.1 | — | Injury-aware optimizer, ILP solver, bookmaker odds, transfer planner, league analyzer |
 | v5.0 | `c6cc293` | Bug fixes, pos-badge CSS, edge case guards |
@@ -332,26 +329,29 @@ Test coverage:
 
 ## Known Limitations
 
-1. **ILP solver WASM**: HiGHS WASM is ~4MB, loaded from CDN on first optimization. Falls back to greedy if CDN unavailable.
+1. **ILP solver WASM**: HiGHS WASM is loaded from CDN on first optimization. Falls back to greedy if the CDN is unavailable or the browser blocks WebAssembly.
 2. **Pre-season data**: All team strengths are 0, form is 0.0 — fallback estimates used.
 3. **Bookmaker odds**: Requires `ODDS_API_KEY` secret in GitHub Actions (The-Odds-API free tier, 500 req/month). Without key, app works fine without odds.
-4. **Python files are dead code**: `app.py`, `backend.py`, `data_loader.py`, `xp_engine.py`, `optimizer.py` from old architecture.
+4. **CSP is weakened by inline handlers**: `script-src` still needs `'unsafe-inline'` because the UI uses inline `onclick=` and a large inline `<script>`. Escaping (`VG.esc`) is the primary XSS defence; the CSP is defence-in-depth.
+5. **CORS proxies see user identifiers**: when the FPL API is unreachable directly, requests carrying your team/league ID fall back through `allorigins.win` / `corsproxy.io`.
 
 ---
 
 ## Remaining Improvements
 
 - Split the monolithic `docs/app.js` and inline UI script into testable modules.
-- Archive or remove the unused Python/Docker implementation.
-- Escape all API-derived strings before inserting them through `innerHTML`.
-- Reduce automated bootstrap-data commit churn.
+- Replace inline `onclick=` handlers with delegated listeners so the CSP can drop `'unsafe-inline'`.
+- Trim `bootstrap.json` to the ~35 fields the engine reads (currently ships 105).
+- Move `docs/data/` to its own branch to keep `main` history clean.
+- Drop the third-party CORS proxies, or gate them behind explicit user consent.
+- Replace `VG.TEAM_COLORS` season-specific team IDs with `short_name` keys.
 - Add browser-level smoke tests for the eight UI tabs.
 
 ---
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.2.1
+- **Application**: VibeGaffer v5.3.0
 - **Company**: Astraiva
 - **Author**: Tushant Sharma
 - **License**: Proprietary
