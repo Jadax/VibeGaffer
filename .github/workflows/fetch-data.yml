@@ -10,6 +10,13 @@ on:
     paths:
       - '.github/workflows/fetch-data.yml'  # Rerun when workflow changes
 
+# Two runs rewriting the same 1.3 MB JSON will always conflict on rebase,
+# so never let them overlap. Queue instead of cancelling: a skipped run is
+# a skipped data refresh.
+concurrency:
+  group: fetch-data
+  cancel-in-progress: false
+
 jobs:
   fetch:
     runs-on: ubuntu-latest
@@ -121,8 +128,31 @@ jobs:
           git add docs/data/
           if git diff --staged --quiet; then
             echo "No changes"
-          else
-            git commit -m "data: auto-fetch FPL data [skip ci]"
-            git pull --rebase --autostash origin main
-            git push
+            exit 0
           fi
+          git commit -m "data: auto-fetch FPL data [skip ci]"
+
+          # These files are generated wholesale, so a rebase against a
+          # competing refresh conflicts every time. On rejection, take the
+          # remote tip and replay our freshly fetched data on top of it.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "Push rejected — replaying data onto the new remote tip"
+            cp docs/data/bootstrap.json /tmp/bootstrap.json
+            cp docs/data/fixtures.json /tmp/fixtures.json
+            git fetch origin main
+            git reset --hard origin/main
+            cp /tmp/bootstrap.json docs/data/bootstrap.json
+            cp /tmp/fixtures.json docs/data/fixtures.json
+            git add docs/data/
+            if git diff --staged --quiet; then
+              echo "Remote already has this data"
+              exit 0
+            fi
+            git commit -m "data: auto-fetch FPL data [skip ci]"
+          done
+          echo "Could not push after 3 attempts"
+          exit 1
