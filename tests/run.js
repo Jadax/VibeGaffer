@@ -5,6 +5,8 @@ const root = path.resolve(__dirname, "..");
 const appPath = path.join(root, "docs", "app.js");
 const indexPath = path.join(root, "docs", "index.html");
 const oddsWorkflowPath = path.join(root, ".github", "workflows", "fetch-odds.yml");
+const dataWorkflowPath = path.join(root, ".github", "workflows", "fetch-data.yml");
+const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const bootstrap = JSON.parse(fs.readFileSync(path.join(root, "docs", "data", "bootstrap.json"), "utf8"));
 const fixtures = JSON.parse(fs.readFileSync(path.join(root, "docs", "data", "fixtures.json"), "utf8"));
 
@@ -140,7 +142,7 @@ check("Transfer roadmap covers five GWs", VG.computeTransferRoadmap(draft.squad,
 check("Transfer planner covers five GWs", VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 1)?.schedule.length === 5);
 check("Chip engine evaluates every chip", Object.keys(VG.evaluateChips(draft.squad, draft.gwPicks, 1, fixtures)).includes("triple_captain"));
 
-section("v5.2.1 regressions");
+section("Regressions");
 const captainReason = VG.getCaptainReasoning({
   name: "Test",
   position: "MID",
@@ -157,7 +159,10 @@ check("Doubtful captain warning is shown", captainReason.details.some(detail => 
 const indexSource = fs.readFileSync(indexPath, "utf8");
 check("Premium/value dropdown routes through strategy optimizer", indexSource.includes('VG.optimizeStrategies(allXP, 100, VG.allFixtures, gw, horizon)[strategy]'));
 check("Tab preloader defines its DOM helper", /VG\.preloadTabs = async \(gw, horizon\) => \{\r?\n  const el = id => document\.getElementById\(id\);/.test(indexSource));
-check("Release assets are cache-busted", indexSource.includes("app.js?v=5.2.1") && indexSource.includes("style.css?v=5.2.1"));
+check(
+  `Release assets are cache-busted to package version ${pkg.version}`,
+  indexSource.includes(`app.js?v=${pkg.version}`) && indexSource.includes(`style.css?v=${pkg.version}`)
+);
 
 const appSource = fs.readFileSync(appPath, "utf8");
 check("ILP uses exact GK constraint", appSource.includes("' pos' + pos + '_exact: '"));
@@ -168,6 +173,38 @@ const oddsWorkflow = fs.readFileSync(oddsWorkflowPath, "utf8");
 check("Odds workflow handles bookmaker arrays", oddsWorkflow.includes("for bookmaker in event.get('bookmakers', []):"));
 check("Odds workflow reads bookmaker markets", oddsWorkflow.includes("bookmaker.get('markets', [])"));
 check("Odds workflow no longer calls .items() on bookmakers", !oddsWorkflow.includes("event.get('bookmakers', {}).items()"));
+
+section("v5.3.0 hardening");
+
+check("esc() neutralises angle brackets", VG.esc('<img src=x onerror=alert(1)>') === "&lt;img src=x onerror=alert(1)&gt;");
+check("esc() escapes quotes and ampersands", VG.esc(`"&'`) === "&quot;&amp;&#39;");
+check("esc() handles null and undefined", VG.esc(null) === "" && VG.esc(undefined) === "");
+check(
+  "Attacker-controlled league names are escaped before render",
+  indexSource.includes("VG.esc(league.leagueName)") && indexSource.includes("VG.esc(s.name)")
+);
+check("CDN scripts pin an SRI hash", indexSource.includes('integrity="sha384-') && appSource.includes("script.integrity = 'sha384-"));
+check("A Content-Security-Policy is declared", indexSource.includes("Content-Security-Policy") && indexSource.includes("default-src 'none'"));
+
+check("Formation list is defined once", appSource.split("[3, 4, 3], [3, 5, 2]").length - 1 === 1);
+check("Availability filter is defined once", appSource.split("VG.isAvailable = (p)").length - 1 === 1);
+check("FDR extraction is centralised", !appSource.includes("team_h_difficulty || 3) : (f.team_a_difficulty"));
+check("Shared XI picker is used by every optimizer", appSource.split("VG.pickBestXI(").length - 1 >= 4);
+
+check("Pitch xP/GW respects the selected horizon", !appSource.includes("p.totalXP / 12"));
+check("Compare tab matches players by id, not name", !indexSource.includes("x.name === name") && indexSource.includes("x.id === parseInt(o.value)"));
+check("Transfer mode reports a real squad value", !indexSource.includes("totalCost: 0, budgetRemaining: bank"));
+check("Transfer mode honours the xP horizon", indexSource.includes("g >= gw && g < gw + horizon"));
+check("HiGHS loading flag is cleared on success", /VG\._highsReady = highs;\s*\n\s*VG\._highsLoading = false;/.test(appSource));
+check("Optimize does not refetch bootstrap when already loaded", indexSource.includes("if (!VG.bootstrapData || !VG.players)"));
+check("HiGHS is read from the global it actually publishes", appSource.includes("window.Module || window.Highs"));
+check("CSP permits WebAssembly without allowing eval", indexSource.includes("'wasm-unsafe-eval'") && !indexSource.includes("'unsafe-eval' "));
+
+const dataWorkflow = fs.readFileSync(dataWorkflowPath, "utf8");
+check("Data fetch fails fast on HTTP errors so fallbacks fire", dataWorkflow.includes("curl -sfL"));
+check("Data fetch is deadline-aware, not a flat 15-minute cron", !dataWorkflow.includes("'*/15 * * * *'"));
+
+check("Python implementation is gone", !fs.existsSync(path.join(root, "app.py")) && !fs.existsSync(path.join(root, "optimizer.py")));
 
 section("Summary");
 console.log(`${passed} passed, ${failed} failed`);
