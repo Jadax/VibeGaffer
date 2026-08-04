@@ -18,11 +18,11 @@
     form-action 'none'">
   <title>VibeGaffer — FPL Intelligence | Astraiva</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.4.0">
+  <link rel="stylesheet" href="style.css?v=5.4.1">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
           integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=5.4.0"></script>
+  <script src="app.js?v=5.4.1"></script>
 </head>
 <body>
 
@@ -31,7 +31,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Astraiva</strong> · Tushant Sharma · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.4.0</span></div>
+    <div><span class="badge pulse-glow">v5.4.1</span></div>
 </div>
 
 <div class="app">
@@ -146,7 +146,7 @@
 </div>
 </div>
 
-<div class="footer">VibeGaffer v5.4.0 · Astraiva · Built by Tushant Sharma</div>
+<div class="footer">VibeGaffer v5.4.1 · Astraiva · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -663,11 +663,19 @@ VG.preloadTabs = async (gw, horizon) => {
           console.warn("[VG] Live:", err);
           document.getElementById("liveContent").innerHTML = '<p style="color:#475569;">Live data unavailable.</p>';
         });
-      // Auto-refresh every 5 min during a live GW
+      // Auto-refresh every 5 min during a live GW. Self-reschedules so it
+      // keeps polling rather than firing once; clearTimeout below still
+      // cancels the whole chain when a new run supersedes this one.
       clearTimeout(VG._liveTimer);
-      VG._liveTimer = setTimeout(() => {
-        VG.renderLive(liveGW, liveTeam).then(h => { document.getElementById("liveContent").innerHTML = h; }).catch(() => {});
-      }, 5 * 60 * 1000);
+      const scheduleLiveRefresh = () => {
+        VG._liveTimer = setTimeout(() => {
+          VG.renderLive(liveGW, liveTeam)
+            .then(h => { document.getElementById("liveContent").innerHTML = h; })
+            .catch(() => {})
+            .finally(scheduleLiveRefresh);
+        }, 5 * 60 * 1000);
+      };
+      scheduleLiveRefresh();
     }
   } catch(e) {
     console.warn("[VG] Live:", e);

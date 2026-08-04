@@ -4,14 +4,17 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 ## Handover Status
 
-- **Current version**: v5.4.0 (unreleased — feature work + hardening pass complete but **NOT committed**)
-- **Uncommitted work**:
-  - v5.3 feature set implemented & browser-verified: **Live tab**, **Smart Captaincy** (blank risk + VC insurance EV), **Differential Matrix**
-  - v5.4 feature set implemented & browser-verified: **Understat forecast odds** (free w/d/l per fixture → xP engine), **Real xG/xA** (Understat priors blended into xP + new columns), **Injury & Availability Watch** (fitness/news feed in Strategy tab), **Team Strength Ratings** (npxG/npxGA → attack/defence/overall indices, ranks, 1-5 rating in Fixtures tab), **xG regression due/over flags** (Understat xG vs actual goals → green DUE / red OVER badges in Compare + Differentials tabs)
+- **Current version**: v5.4.1 (committed as `93fa865` + a post-review fix commit, live on `main`)
+- **v5.4.0 shipped**:
+  - v5.3 feature set: **Live tab**, **Smart Captaincy** (blank risk + VC insurance EV), **Differential Matrix**
+  - v5.4 feature set: **Understat forecast odds** (free w/d/l per fixture → xP engine), **Real xG/xA** (Understat priors blended into xP + new columns), **Injury & Availability Watch** (fitness/news feed in Strategy tab), **Team Strength Ratings** (npxG/npxGA → attack/defence/overall indices, ranks, 1-5 rating in Fixtures tab), **xG regression due/over flags** (Understat xG vs actual goals → green DUE / red OVER badges in Compare + Differentials tabs)
   - Hardening pass: removed dead params (`optimizeTransfers` `fixtures`, `evaluateChips` `startGW`, `render.tips` `nGWs`, `computeTransferPlan` `freeTransfers`), removed dead state (`outCandidates`, `breakEvenGW`, `gwXPold/new`, `usedFreeTransfers`, `netAfterHit`, `activeStrategy`, dead `currentIds` mutation), added shared fixture helpers (`VG.fixtureInfo`, `VG.teamFixtures`, `VG.fixturesForGW`), consolidated the two price functions onto one model (fixed a latent bug: old code read `stats.transfers_in`, which does not exist on the real live API — the real fields are top-level `transfers_in_event`/`transfers_out_event`), fixed a `~?%` captain-share display bug, fixed captain-fallback duplication, hardened `simulateAutoSubs`/`predictBonus` edge cases (DGW bonus accumulation, missing `liveMinutes` guard), deduped `buildFixtureTicker`/`analyzeFixtureSwings` onto `VG.teamFixtureRow`, replaced `VG.TEAM_COLORS` numeric-ID keys with `short_name` keys via `VG.teamColor()` (robust to promotion/relegation)
-- **Tests**: 112/112 pass (`npm test`), verified after all hardening + v5.4 edits
+- **Post-commit review fixes** (v5.4.1, applied after `93fa865`):
+  - `render.tips`'s weaknesses bullets skipped `VG.esc()` while the strengths bullets right above them didn't — inconsistent with the codebase's escape-everything-API-derived convention. Team names aren't attacker-controlled today (unlike league/manager names), so this wasn't exploitable, but it's the same class of bug v5.3.0 hardened against. Fixed in `docs/app.js`.
+  - The Live tab's "auto-refresh every 5 min" comment described recurring behaviour, but was a single `setTimeout` that fired once and stopped. Made it self-reschedule in `docs/index.html`.
+- **Tests**: 112/112 pass (`npm test`), verified after all hardening + v5.4 edits + the two fixes above
 - **State**: `docs/app.js` ~2960 lines, `docs/index.html` ~935 lines; both syntax-check clean
-- **Next model TODO**: commit v5.4 + hardening (see **Commit Convention**), then optionally implement **Remaining Improvements** below.
+- **Next model TODO**: v5.4.1 is committed. Optionally implement **Remaining Improvements** below.
 
 ## Quick Status
 
