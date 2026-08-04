@@ -1,3 +1,5 @@
+// VibeGaffer v5.4.0 — pure static FPL analytics (GitHub Pages, no backend)
+// Docs: README.md / AGENTS.md · Data: docs/data/*.json via GitHub Actions
 const VG = {};
 
 VG.FPL = "https://fantasy.premierleague.com/api";
@@ -31,27 +33,120 @@ VG.fixtureFDR = (f, teamId) => {
   return (f.team_h === teamId ? f.team_h_difficulty : f.team_a_difficulty) || 3;
 };
 
+// One-stop per-team fixture derivation. Use this instead of re-deriving
+// isHome/oppId/oppName/fdr by hand — there are ~8 historical copies of this block.
+VG.fixtureInfo = (f, teamId) => {
+  if (!f || !teamId) return { isHome: false, oppId: null, oppName: "BLANK", fdr: 3 };
+  const isHome = f.team_h === teamId;
+  const oppId = isHome ? f.team_a : f.team_h;
+  return {
+    isHome,
+    oppId,
+    oppName: oppId ? (VG.teams[oppId]?.short_name || "?") : "?",
+    fdr: VG.fixtureFDR(f, teamId)
+  };
+};
+
+// All fixtures for one team within a single GW (usually one; two = DGW, zero = BGW)
+VG.teamFixtures = (fixtures, gw, teamId) =>
+  fixtures.filter(f => f.event === gw && (f.team_h === teamId || f.team_a === teamId));
+
+// All fixtures in a gameweek (DGW/BGW detection, per-GW scans)
+VG.fixturesForGW = (fixtures, gw) => fixtures.filter(f => f.event === gw);
+
+// True when a player has played at least one minute (missing = not started)
+VG.hasPlayed = (minutesMap, pid) => (minutesMap[pid] || 0) > 0;
+
+// FPL's minimum legal starting-XI shape (GK>=1, DEF>=3, MID>=2, FWD>=1)
+VG.formationLegal = (players) => {
+  const count = pos => players.filter(p => p.positionId === pos).length;
+  return count(1) >= 1 && count(2) >= 3 && count(3) >= 2 && count(4) >= 1;
+};
+
+// Squad members carrying a non-available status (injured/suspended/unavailable)
+VG.countUnavailable = (squad) => {
+  if (!squad) return 0;
+  return squad.filter(p => {
+    const data = VG.players[p.element || p.id];
+    return data && data.status !== "a";
+  }).length;
+};
+
+// Players with a fitness flag: FPL chance_of_playing_next_round < 100,
+// a non-available status, or an injury news string. Sorted worst-first.
+VG.injuryNews = () => {
+  const out = [];
+  Object.values(VG.players).forEach(p => {
+    const chance = p.chance_of_playing_next_round;
+    const hasNews = p.news && String(p.news).trim().length > 0;
+    const flagged = (chance !== null && chance !== undefined && chance < 100) ||
+                    hasNews ||
+                    (p.status !== "a" && p.status !== "d");
+    if (!flagged) return;
+    out.push({
+      id: p.id,
+      name: p.web_name || p.second_name || p.first_name,
+      team: (VG.teams[p.team] || {}).short_name || "",
+      position: VG.POSITIONS[p.element_type] || "?",
+      chance: (chance === null || chance === undefined) ? 100 : +chance,
+      status: p.status,
+      news: p.news || ""
+    });
+  });
+  out.sort((a, b) => a.chance - b.chance);
+  return out;
+};
+
+// Top 2 non-GK captain candidates by xP key ("totalXP" or "gwXP")
+VG.topCaptainCandidates = (starting, key = "totalXP") =>
+  (starting || [])
+    .filter(p => p.positionId !== 1)
+    .sort((a, b) => (b[key] || 0) - (a[key] || 0))
+    .slice(0, 2);
+
+// Probability of reaching a count threshold when events follow a Poisson rate.
+// Used for DEFCON, whose official two-point award is a match-level threshold.
+VG.poissonAtLeast = (mean, threshold) => {
+  if (mean <= 0 || threshold < 1) return threshold < 1 ? 1 : 0;
+  let probabilityBelow = 0;
+  let term = Math.exp(-mean);
+  for (let k = 0; k < threshold; k++) {
+    probabilityBelow += term;
+    term *= mean / (k + 1);
+  }
+  return Math.max(0, Math.min(1, 1 - probabilityBelow));
+};
+
+// Team kit colors keyed by FPL short_name (robust to promotion/relegation;
+// numeric IDs used to shift every season). Home = primary shirt, away = change.
 VG.TEAM_COLORS = {
-  1: { home: "#EF0107", away: "#FFFFFF" },
-  2: { home: "#DA291C", away: "#FFFFFF" },
-  3: { home: "#003090", away: "#FFFFFF" },
-  4: { home: "#6C1D45", away: "#FFFFFF" },
-  5: { home: "#0057B8", away: "#FDB913" },
-  6: { home: "#FBEE23", away: "#000000" },
-  7: { home: "#C8102E", away: "#FFFFFF" },
-  8: { home: "#FDB913", away: "#1B1B1B" },
-  9: { home: "#EE2737", away: "#FFFFFF" },
-  10: { home: "#003399", away: "#FFFFFF" },
-  11: { home: "#6CABDD", away: "#1C2C5B" },
-  12: { home: "#0057B8", away: "#FFFFFF" },
-  13: { home: "#00B2A9", away: "#FFFFFF" },
-  14: { home: "#003090", away: "#FFFFFF" },
-  15: { home: "#003090", away: "#FBEE23" },
-  16: { home: "#EE2737", away: "#FFFFFF" },
-  17: { home: "#132257", away: "#FFFFFF" },
-  18: { home: "#FFFFFF", away: "#DB0007" },
-  19: { home: "#7A263A", away: "#FFFFFF" },
-  20: { home: "#FDB913", away: "#000000" }
+  ARS: { home: "#EF0107", away: "#FFFFFF" },
+  AVL: { home: "#670E36", away: "#95BFE5" },
+  BOU: { home: "#DA291C", away: "#1B1B1B" },
+  BRE: { home: "#E30613", away: "#FFFFFF" },
+  BHA: { home: "#0057B8", away: "#FFFFFF" },
+  CHE: { home: "#034694", away: "#FFFFFF" },
+  COV: { home: "#00A5DF", away: "#FFFFFF" },
+  CRY: { home: "#1B458F", away: "#FDB913" },
+  EVE: { home: "#003399", away: "#FFFFFF" },
+  FUL: { home: "#FFFFFF", away: "#000000" },
+  HUL: { home: "#F0A81E", away: "#000000" },
+  IPS: { home: "#003399", away: "#FFFFFF" },
+  LEE: { home: "#FFCD00", away: "#FFFFFF" },
+  LIV: { home: "#C8102E", away: "#FFFFFF" },
+  MCI: { home: "#6CABDD", away: "#1C2C5B" },
+  MUN: { home: "#DA291C", away: "#FFFFFF" },
+  NEW: { home: "#241F20", away: "#FFFFFF" },
+  NFO: { home: "#DD0000", away: "#FFFFFF" },
+  TOT: { home: "#132257", away: "#FFFFFF" },
+  SUN: { home: "#EB172B", away: "#000000" }
+};
+
+// Home kit color for a player/team, by FPL short_name, with neutral fallback.
+VG.teamColor = (teamRef) => {
+  if (!teamRef) return "#38bdf8";
+  const short = typeof teamRef === "string" ? teamRef : (VG.teams[teamRef] || {}).short_name;
+  return (VG.TEAM_COLORS[short] && VG.TEAM_COLORS[short].home) || "#38bdf8";
 };
 
 VG.cache = {
@@ -129,6 +224,48 @@ VG.loadOdds = async () => {
   return [];
 };
 
+// Optional free historical FPL data, generated weekly by GitHub Actions.
+VG.loadHistoryPriors = async () => {
+  try {
+    const r = await fetch("data/history-priors.json", { cache: "no-cache" });
+    const j = r.ok ? await r.json() : null;
+    return j?.players || {};
+  } catch (e) { return {}; }
+};
+
+// Free Understat data (GitHub Actions): player xG/xA priors, team pressing
+// stats, and per-fixture win/draw/loss forecasts. Optional enrichment.
+VG.loadUnderstat = async () => {
+  VG.understatLoaded = true;
+  try {
+    const r = await fetch("data/understat.json", { cache: "no-cache" });
+    const j = r.ok ? await r.json() : null;
+    if (j && j.players && j.teams) {
+      VG.understat = j;
+      Object.keys(j.players).forEach(pid => {
+        const el = VG.players[pid];
+        if (el) el.understat = j.players[pid];
+      });
+      return j;
+    }
+  } catch (e) { console.warn("[VG] Understat data unavailable (optional):", e.message); }
+  VG.understat = null;
+  return null;
+};
+
+VG.applyHistoryPriors = (bootstrap, priors) => {
+  if (!bootstrap?.elements || !priors) return bootstrap;
+  bootstrap.elements.forEach(p => {
+    if (Number(p.minutes || 0) > 0 || Number(p.starts || 0) > 0) return;
+    const prior = priors[String(p.code)];
+    if (!prior || Number(prior.minutes || 0) < 90) return;
+    Object.entries(prior).forEach(([key, value]) => {
+      if (p[key] === undefined || Number(p[key] || 0) === 0) p[key] = value;
+    });
+  });
+  return bootstrap;
+};
+
 VG.loadSquad = async (tid, gw) => {
   const [info, picks] = await Promise.all([
     VG.fetch(VG.FPL + "/entry/" + tid + "/", "team"),
@@ -145,50 +282,18 @@ VG.buildMaps = (data) => {
   });
   data.teams.forEach(t => { VG.teams[t.id] = t; });
 
-  // Pre-season fallback: estimate team strengths from 2025/26 final standings
-  // FPL API uses ~600-1000 range; 800 = average team
-  const fallbackStrengths = {
-    'Arsenal':     { att_h: 1200, att_a: 1150, def_h: 1250, def_a: 1200, ov_h: 1230, ov_a: 1180 },
-    'Man City':    { att_h: 1170, att_a: 1120, def_h: 1130, def_a: 1080, ov_h: 1150, ov_a: 1100 },
-    'Liverpool':   { att_h: 1170, att_a: 1120, def_h: 1150, def_a: 1100, ov_h: 1160, ov_a: 1110 },
-    'Chelsea':     { att_h: 1130, att_a: 1080, def_h: 1090, def_a: 1040, ov_h: 1110, ov_a: 1060 },
-    'Aston Villa': { att_h: 1100, att_a: 1050, def_h: 1080, def_a: 1030, ov_h: 1090, ov_a: 1040 },
-    'Newcastle':   { att_h: 1100, att_a: 1050, def_h: 1110, def_a: 1060, ov_h: 1100, ov_a: 1050 },
-    'Brighton':    { att_h: 1080, att_a: 1030, def_h: 1050, def_a: 1000, ov_h: 1070, ov_a: 1020 },
-    'Bournemouth': { att_h: 1050, att_a: 1000, def_h: 1030, def_a: 980,  ov_h: 1040, ov_a: 990  },
-    'Crystal Palace':{ att_h: 1030, att_a: 980,  def_h: 1050, def_a: 1000, ov_h: 1040, ov_a: 990  },
-    'Fulham':      { att_h: 1020, att_a: 970,  def_h: 1020, def_a: 970,  ov_h: 1020, ov_a: 970  },
-    'Brentford':   { att_h: 1020, att_a: 970,  def_h: 1000, def_a: 950,  ov_h: 1010, ov_a: 960  },
-    'Man Utd':     { att_h: 1070, att_a: 1020, def_h: 1000, def_a: 950,  ov_h: 1040, ov_a: 990  },
-    'Tottenham':   { att_h: 1070, att_a: 1020, def_h: 980,  def_a: 930,  ov_h: 1030, ov_a: 980  },
-    'Wolves':      { att_h: 980,  att_a: 930,  def_h: 950,  def_a: 900,  ov_h: 970,  ov_a: 920  },
-    'West Ham':    { att_h: 1000, att_a: 950,  def_h: 950,  def_a: 900,  ov_h: 980,  ov_a: 930  },
-    'Everton':     { att_h: 950,  att_a: 900,  def_h: 980,  def_a: 930,  ov_h: 960,  ov_a: 910  },
-    'Nottm Forest':{ att_h: 1000, att_a: 950,  def_h: 1020, def_a: 970,  ov_h: 1010, ov_a: 960  },
-    'Leeds':       { att_h: 950,  att_a: 900,  def_h: 920,  def_a: 870,  ov_h: 940,  ov_a: 890  },
-    'Burnley':     { att_h: 910,  att_a: 860,  def_h: 920,  def_a: 870,  ov_h: 910,  ov_a: 860  },
-    'Sunderland':  { att_h: 910,  att_a: 860,  def_h: 900,  def_a: 850,  ov_h: 910,  ov_a: 860  }
-  };
-
+  // Pre-season FPL clears detailed strengths. Build a season-agnostic prior
+  // from the API's own 1-5 team rating, including promoted clubs.
   data.teams.forEach(t => {
     if (t.strength_defence_home === 0 || t.strength_overall_home === 0) {
-      const fb = fallbackStrengths[t.name];
-      if (fb) {
-        t.strength_attack_home = fb.att_h;
-        t.strength_attack_away = fb.att_a;
-        t.strength_defence_home = fb.def_h;
-        t.strength_defence_away = fb.def_a;
-        t.strength_overall_home = fb.ov_h;
-        t.strength_overall_away = fb.ov_a;
-      } else {
-        // Default for any unknown team
-        t.strength_attack_home = 1100;
-        t.strength_attack_away = 1050;
-        t.strength_defence_home = 1100;
-        t.strength_defence_away = 1050;
-        t.strength_overall_home = 1100;
-        t.strength_overall_away = 1050;
-      }
+      const rating = Math.max(1, Math.min(5, Number(t.strength) || 3));
+      const base = 1000 + (rating - 3) * 100;
+      t.strength_attack_home = base + 40;
+      t.strength_attack_away = base - 10;
+      t.strength_defence_home = base + 30;
+      t.strength_defence_away = base - 20;
+      t.strength_overall_home = base + 30;
+      t.strength_overall_away = base - 20;
     }
   });
 
@@ -197,6 +302,68 @@ VG.buildMaps = (data) => {
 };
 
 // ── xP Engine: enhanced with xG/xA, form trends, opponent defense ──────
+
+// Match win/lose probabilities for a fixture. Prefers the free Understat
+// forecast (covers every fixture, no API key), then The-Odds-API h2h odds
+// (optional ODDS_API_KEY). Returns { win, lose, oppWin, source } or null so
+// the xP engine never needs to know where probabilities came from.
+VG._matchWinProbs = (teamId, oppTeamId) => {
+  if (!teamId || !oppTeamId) return null;
+  const thisTeam = VG.teams[teamId];
+  const oppTeam = VG.teams[oppTeamId];
+  if (!thisTeam || !oppTeam) return null;
+  const tShort = thisTeam.short_name;
+  const oShort = oppTeam.short_name;
+
+  // 1. Understat forecast — free, per-fixture w/d/l probabilities.
+  const us = VG.understat;
+  if (us && Array.isArray(us.fixtures)) {
+    let best = null;
+    const nowMs = Date.now();
+    us.fixtures.forEach(f => {
+      const samePair = (f.home === tShort && f.away === oShort) ||
+                       (f.away === tShort && f.home === oShort);
+      if (!samePair || !f.forecast) return;
+      const t = Date.parse(f.datetime);
+      const dist = isNaN(t) ? Infinity : Math.abs(t - nowMs);
+      if (!best || dist < best.dist) best = { f, dist };
+    });
+    if (best) {
+      const w = parseFloat(best.f.forecast.w || 0);
+      const d = parseFloat(best.f.forecast.d || 0);
+      const l = parseFloat(best.f.forecast.l || 0);
+      const total = w + d + l;
+      if (total > 0) {
+        const isHome = best.f.home === tShort;
+        const win = (isHome ? w : l) / total;
+        const lose = (isHome ? l : w) / total;
+        return { win, lose, oppWin: (isHome ? l : w) / total, source: "understat" };
+      }
+    }
+  }
+
+  // 2. Bookmaker h2h odds (optional, requires ODDS_API_KEY)
+  if (VG.oddsData && VG.oddsData.length > 0) {
+    const matchOdds = VG.oddsData.find(o =>
+      (o.home === tShort && o.away === oShort) ||
+      (o.away === tShort && o.home === oShort)
+    );
+    if (matchOdds && matchOdds.h2h) {
+      const h = matchOdds.h2h.home || 3.0;
+      const d = matchOdds.h2h.draw || 3.0;
+      const a = matchOdds.h2h.away || 3.0;
+      const rawH = 1 / h, rawD = 1 / d, rawA = 1 / a;
+      const total = rawH + rawD + rawA;
+      const pH = rawH / total, pD = rawD / total, pA = rawA / total;
+      const isThisHome = matchOdds.home === tShort;
+      const win = isThisHome ? pH : pA;
+      const lose = isThisHome ? pA : pH;
+      return { win, lose, oppWin: isThisHome ? pA : pH, source: "bookmaker" };
+    }
+  }
+  return null;
+};
+
 VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const p = VG.players[pid];
   if (!p) return { xp: 0, mins: 0, cs: 0, goal: 0, assist: 0, bonus: 0 };
@@ -273,6 +440,11 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const confidenceMult = 0.5 + 0.5 * dataConfidence;
   const leagueAvgMinsProb = 0.72; // ~72% of starters play 60+ mins
   minsProb = minsProb * confidenceMult + leagueAvgMinsProb * (1 - confidenceMult);
+  const chance = p.chance_of_playing_next_round;
+  const availability = chance !== null && chance !== undefined
+    ? Math.max(0, Math.min(1, Number(chance) / 100))
+    : p.status === "d" ? 0.75 : 1;
+  minsProb *= availability;
 
   // ── Per-90 rates: prefer FPL pre-computed per-90, fall back to manual ──
   const nineties = mins > 0 ? mins / 90 : 1;
@@ -281,9 +453,21 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const goalsPer90 = goals / nineties;
   const assistsPer90 = assists / nineties;
 
-  // Blend: 60% xG/xA + 40% actual
-  const projGoalsPer90Raw = 0.6 * xGPer90 + 0.4 * goalsPer90;
-  const projAssistsPer90Raw = 0.6 * xAPer90 + 0.4 * assistsPer90;
+  // Understat real xG/xA prior (last completed season, or current season in
+  // season), attached to the element by loadUnderstat. Independent xG source.
+  const usP = p.understat;
+  const realXGPer90 = usP && usP.time > 0 ? (usP.xG || 0) * 90 / usP.time : 0;
+  const realXAPer90 = usP && usP.time > 0 ? (usP.xA || 0) * 90 / usP.time : 0;
+
+  // Blend: 60% FPL xG/xA + 40% actual; swap in the Understat prior when present
+  let projGoalsPer90Raw, projAssistsPer90Raw;
+  if (realXGPer90 > 0 || realXAPer90 > 0) {
+    projGoalsPer90Raw = 0.45 * xGPer90 + 0.35 * realXGPer90 + 0.20 * goalsPer90;
+    projAssistsPer90Raw = 0.45 * xAPer90 + 0.35 * realXAPer90 + 0.20 * assistsPer90;
+  } else {
+    projGoalsPer90Raw = 0.6 * xGPer90 + 0.4 * goalsPer90;
+    projAssistsPer90Raw = 0.6 * xAPer90 + 0.4 * assistsPer90;
+  }
 
   const csRate = cleanSheets / Math.max(gamesPlayed, 1);
   const savesPerGame = saves / Math.max(gamesPlayed, 1);
@@ -309,44 +493,24 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const attMult = fdrMult[fdr] || 1.0;
   const defMult = fdrMult[6 - (fdr || 3)] || 1.0;
 
-  // ── Bookmaker odds adjustment (if available) ──
+  // ── Odds adjustment: free Understat forecast, else bookmaker h2h ──
   let oddsAttMult = 1.0;
   let oddsDefMult = 1.0;
   let oddsCSMult = 1.0;
-  if (VG.oddsData && VG.oddsData.length > 0 && oppTeamId) {
-    const oppTeam = VG.teams[oppTeamId];
-    const thisTeam = VG.teams[p.team];
-    if (oppTeam && thisTeam) {
-      const matchOdds = VG.oddsData.find(o =>
-        (o.home === thisTeam.short_name && o.away === oppTeam.short_name) ||
-        (o.away === thisTeam.short_name && o.home === oppTeam.short_name)
-      );
-      if (matchOdds && matchOdds.h2h) {
-        const h = matchOdds.h2h.home || 3.0;
-        const d = matchOdds.h2h.draw || 3.0;
-        const a = matchOdds.h2h.away || 3.0;
-        // Implied probabilities (remove overround)
-        const rawH = 1 / h, rawD = 1 / d, rawA = 1 / a;
-        const total = rawH + rawD + rawA;
-        const pH = rawH / total, pD = rawD / total, pA = rawA / total;
-        // Determine which side this team is on
-        const isThisHome = matchOdds.home === thisTeam.short_name;
-        const thisWinProb = isThisHome ? pH : pA;
-        const thisLoseProb = isThisHome ? pA : pH;
-        // Attack boost: favorite gets up to 1.15x, underdog gets 0.88x
-        oddsAttMult = 0.88 + 0.27 * thisWinProb;
-        // Defense penalty: underdog concedes more
-        oddsDefMult = 0.88 + 0.27 * thisLoseProb;
-        // Clean sheet: lower if high-scoring game expected (implied from odds)
-        // Use odds-implied goal expectation: if both teams > 40% win prob, expect goals
-        const bothDangerous = (pH > 0.40 && pA > 0.30) || (pA > 0.40 && pH > 0.30);
-        oddsCSMult = bothDangerous ? 0.85 : (thisWinProb > 0.55 ? 1.10 : 1.0);
-        // Clamp all
-        oddsAttMult = Math.max(0.80, Math.min(1.20, oddsAttMult));
-        oddsDefMult = Math.max(0.80, Math.min(1.20, oddsDefMult));
-        oddsCSMult = Math.max(0.75, Math.min(1.15, oddsCSMult));
-      }
-    }
+  const probs = VG._matchWinProbs(p.team, oppTeamId);
+  if (probs) {
+    // Attack boost: favorite gets up to 1.15x, underdog gets 0.88x
+    oddsAttMult = 0.88 + 0.27 * probs.win;
+    // Defense penalty: underdog concedes more
+    oddsDefMult = 0.88 + 0.27 * probs.lose;
+    // Clean sheet: lower if high-scoring game expected (both teams dangerous)
+    const bothDangerous = (probs.win > 0.40 && probs.oppWin > 0.30) ||
+                          (probs.oppWin > 0.40 && probs.win > 0.30);
+    oddsCSMult = bothDangerous ? 0.85 : (probs.win > 0.55 ? 1.10 : 1.0);
+    // Clamp all
+    oddsAttMult = Math.max(0.80, Math.min(1.20, oddsAttMult));
+    oddsDefMult = Math.max(0.80, Math.min(1.20, oddsDefMult));
+    oddsCSMult = Math.max(0.75, Math.min(1.15, oddsCSMult));
   }
 
   // ── Position-specific team strength (attack vs defence, not just overall) ──
@@ -408,7 +572,7 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   let ictBonus = 0;
   if (pos === 1 || pos === 2) {
     ictBonus = Math.min(influencePerGame / 30, 0.3);
-  } else if (pos === 3) {
+  } else if (pos === 3 || pos === 4) {
     ictBonus = Math.min((influencePerGame + creativityPerGame) / 60, 0.3);
   } else {
     ictBonus = Math.min((threatPerGame + creativityPerGame) / 60, 0.3);
@@ -424,31 +588,21 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const CS_PTS = { 1: 4, 2: 4, 3: 1, 4: 0 };
   const APPEARANCE_PTS = 2;
 
-  // ── DEFCON: use API defensive_contribution_per_90 when available ──
-  // Calibrated to real 2025/26 data: top CBs ~1.4 DEFCON pts/game, avg CB ~0.8
+  // ── DEFCON: probability of reaching FPL's match-level threshold ──
   let defconXP = 0;
   if (pos === 2) {
     if (defConPer90 > 0) {
-      const dcPerFixture = defConPer90 * (mins / 90);
-      defconXP = Math.min(dcPerFixture / 6, 2.5) * minsProb * confidenceMult * defMult * defStrMult;
+      defconXP = 2 * VG.poissonAtLeast(defConPer90 * minsProb, 10);
     } else {
-      // Fallback: base 0.65 thresholds/game * team defence quality (divisor 1200)
-      const defconBase = 0.65;
-      const teamDefStr = team ? ((team.strength_defence_home + team.strength_defence_away) / 2 / 1200) : 0.75;
-      defconXP = defconBase * teamDefStr * minsProb * confidenceMult * defMult;
+      defconXP = 0;
     }
   } else if (pos === 3) {
     if (defConPer90 > 0) {
-      const dcPerFixture = defConPer90 * (mins / 90);
-      defconXP = Math.min(dcPerFixture / 8, 1.5) * minsProb * confidenceMult * defMult;
+      defconXP = 2 * VG.poissonAtLeast(defConPer90 * minsProb, 12);
     } else {
-      // DEF MIDs get partial DEFCON (~0.4 thresholds/game)
-      defconXP = 0.4 * minsProb * confidenceMult * defMult;
+      defconXP = 0;
     }
   }
-
-  // ── Captain ceiling bonus ──
-  const captainBonus = (pos === 4) ? 1.15 : (pos === 3) ? (price > 9 ? 1.18 : 1.08) : 1.0;
 
   // ── xP calculation per fixture ──
   const xpAppearance = minsProb * APPEARANCE_PTS;
@@ -460,7 +614,11 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const xpDEFCON = defconXP * 2;
   const xpNegative = minsProb * (yellowsPerGame * 1 + redsPerGame * 3 + ownGoalsPerGame * 2 + penMissPerGame * 2);
 
-  const totalXP = (xpAppearance + xpCS + xpGoals + xpAssists + xpBonus + xpSaves + xpDEFCON - xpNegative) * captainBonus;
+  const modelXP = xpAppearance + xpCS + xpGoals + xpAssists + xpBonus + xpSaves + xpDEFCON - xpNegative;
+  const noPremierLeagueHistory = mins === 0 && starts === 0 && xG === 0 && xA === 0;
+  // FPL supplies an ep_next prior for new signings and promoted-team players.
+  // Blend it conservatively until observed Premier League data exists.
+  const totalXP = noPremierLeagueHistory && epNext > 0 ? 0.6 * modelXP + 0.4 * epNext : modelXP;
 
   return {
     xp: Math.max(totalXP, 0.1),
@@ -472,16 +630,41 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
     defconProb: defconXP,
     fdr,
     xpComponents: {
-      xpAppearance: +(xpAppearance * captainBonus).toFixed(4),
-      xpCS: +(xpCS * captainBonus).toFixed(4),
-      xpGoals: +(xpGoals * captainBonus).toFixed(4),
-      xpAssists: +(xpAssists * captainBonus).toFixed(4),
-      xpBonus: +(xpBonus * captainBonus).toFixed(4),
-      xpSaves: +(xpSaves * captainBonus).toFixed(4),
-      xpDEFCON: +(xpDEFCON * captainBonus).toFixed(4),
-      xpNegative: +(xpNegative * captainBonus).toFixed(4)
+      xpAppearance: +xpAppearance.toFixed(4),
+      xpCS: +xpCS.toFixed(4),
+      xpGoals: +xpGoals.toFixed(4),
+      xpAssists: +xpAssists.toFixed(4),
+      xpBonus: +xpBonus.toFixed(4),
+      xpSaves: +xpSaves.toFixed(4),
+      xpDEFCON: +xpDEFCON.toFixed(4),
+      xpNegative: +xpNegative.toFixed(4)
     }
   };
+};
+
+// xG regression flag: Understat xG vs actual FPL goals (borrowed from FPL
+// Ratings' DUE/OVER and FFHUB's expected-vs-actual). Goals running ahead of
+// chances (diff >= +0.2/90) = "over" (likely to regress); goals lagging
+// chances (diff <= -0.2/90) = "due" (regression should push goals up).
+VG.getRegressionFlag = (pid) => {
+  const p = VG.players[pid];
+  if (!p || !p.understat || !(p.understat.time > 0)) return null;
+  const xG90 = (p.understat.xG || 0) * 90 / p.understat.time;
+  const mins = parseInt(p.minutes || "0");
+  const goals90 = mins > 0 ? (parseInt(p.goals_scored || "0") * 90) / mins : 0;
+  const diff = goals90 - xG90;
+  const flag = diff >= 0.2 ? "over" : diff <= -0.2 ? "due" : "stable";
+  return { flag, diff90: +diff.toFixed(2), xG90: +xG90.toFixed(2), goals90: +goals90.toFixed(2) };
+};
+
+// HTML badge for a regression flag: green DUE (goals should come) / red OVER
+// (running hot, likely to regress) / grey stable. null/stable → empty string.
+VG.regressionBadge = (reg) => {
+  if (!reg || reg.flag === "stable") return "";
+  const d = reg.diff90.toFixed(2);
+  const prefix = d.startsWith("-") ? "" : "+";
+  if (reg.flag === "due") return `<span style="background:rgba(0,255,135,0.12);color:#00ff87;padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;">DUE ${prefix}${d}</span>`;
+  return `<span style="background:rgba(239,68,68,0.12);color:#ef4444;padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;">OVER ${prefix}${d}</span>`;
 };
 
 VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
@@ -510,13 +693,11 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
     totalXP = nGWs * base * 0.6 * vfBonus;
   } else {
     upcoming.forEach(f => {
-      const isHome = f.team_h === teamId;
-      const oppId = isHome ? f.team_a : f.team_h;
-      const fdr = VG.fixtureFDR(f, teamId);
-      const res = VG.computeFixtureXP(pid, oppId, isHome, fdr);
+      const info = VG.fixtureInfo(f, teamId);
+      const res = VG.computeFixtureXP(pid, info.oppId, info.isHome, info.fdr);
       res.gw = f.event;
-      res.opponent = VG.teams[oppId]?.short_name || "?";
-      res.venue = isHome ? "H" : "A";
+      res.opponent = info.oppName;
+      res.venue = info.isHome ? "H" : "A";
       gwDetails.push(res);
       totalXP += res.xp;
       if (res.xpComponents) {
@@ -535,6 +716,7 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   const epNext = parseFloat(p.ep_next || "0");
   const bps = parseInt(p.bps || "0");
   const defConPer90 = parseFloat(p.defensive_contribution_per_90 || "0");
+  const us = p.understat;
 
   return {
     totalXP: +totalXP.toFixed(2),
@@ -558,6 +740,10 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
       xG: +xG.toFixed(2),
       xA: +xA.toFixed(2),
       xGI: +xGI.toFixed(2),
+      realXG: +(us?.xG || 0),
+      realXA: +(us?.xA || 0),
+      realXG90: us && us.time > 0 ? +((us.xG || 0) * 90 / us.time).toFixed(2) : 0,
+      regression: VG.getRegressionFlag(pid),
       trend: +formVsPPG.toFixed(2),
       epNext,
       bps,
@@ -586,9 +772,7 @@ VG.computePlayerGWProjection = (player, gw, fixtures) => {
     return { gwXP: 0, fixtureCount: 0, opponents: [], oppName: "BLANK", venue: "-", fdr: 0 };
   }
 
-  const teamFixtures = fixtures.filter(f =>
-    f.event === gw && (f.team_h === player.teamId || f.team_a === player.teamId)
-  );
+  const teamFixtures = VG.teamFixtures(fixtures, gw, player.teamId);
   if (teamFixtures.length === 0) {
     return { gwXP: 0, fixtureCount: 0, opponents: [], oppName: "BLANK", venue: "-", fdr: 0 };
   }
@@ -599,14 +783,12 @@ VG.computePlayerGWProjection = (player, gw, fixtures) => {
   const difficulties = [];
 
   teamFixtures.forEach(f => {
-    const isHome = f.team_h === player.teamId;
-    const oppId = isHome ? f.team_a : f.team_h;
-    const fdr = VG.fixtureFDR(f, player.teamId);
-    const projection = VG.computeFixtureXP(player.id, oppId, isHome, fdr);
+    const info = VG.fixtureInfo(f, player.teamId);
+    const projection = VG.computeFixtureXP(player.id, info.oppId, info.isHome, info.fdr);
     gwXP += projection.xp || 0;
-    opponents.push(VG.teams[oppId]?.short_name || "?");
-    venues.push(isHome ? "H" : "A");
-    difficulties.push(fdr);
+    opponents.push(info.oppName);
+    venues.push(info.isHome ? "H" : "A");
+    difficulties.push(info.fdr);
   });
 
   return {
@@ -660,7 +842,7 @@ VG.emptyDraftResult = (budget) => ({
 
 // Tally how many squad members face easy (FDR<=2) / hard (FDR>=4) fixtures in a GW
 VG.countFixtureDifficulty = (squad, fixtures, gw) => {
-  const gwFix = fixtures.filter(f => f.event === gw);
+  const gwFix = VG.fixturesForGW(fixtures, gw);
   let easy = 0, hard = 0;
   squad.forEach(p => {
     const tid = p.teamId;
@@ -704,7 +886,7 @@ VG.computePerGWPicks = (squad, gw, fixtures) => {
     gwBenchXP,
     gotCap: cap.slice(0, 2),
     dgwPlayers: gwXP.filter(p => {
-      const f = fixtures.filter(fi => fi.event === gw && (fi.team_h === p.teamId || fi.team_a === p.teamId));
+      const f = VG.teamFixtures(fixtures, gw, p.teamId);
       return f.length >= 2;
     }).map(p => p.id)
   };
@@ -1178,8 +1360,7 @@ VG.optimizeStrategies = (players, budget = 100, fixtures = [], startGW = 1, nGWs
   return results;
 };
 
-VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, startGW, nGWs) => {
-  fixtures = fixtures || [];
+VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGWs) => {
   startGW = startGW || 1;
   nGWs = nGWs || 5;
 
@@ -1207,14 +1388,13 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, st
         // Break-even analysis: linear approximation using per-GW average gain
         const gwAvgGain = +(gain / nGWs).toFixed(2);
         const breakEvenGWs = gwAvgGain > 0 ? Math.ceil(4.0 / gwAvgGain) : null;
-        const breakEvenGW = breakEvenGWs !== null ? Math.min(startGW + breakEvenGWs - 1, startGW + nGWs - 1) : null;
         const breaksEven = breakEvenGWs !== null && breakEvenGWs <= nGWs;
 
         candidates.push({
           out: { id: pid, name: sp.web_name || "?", position: VG.POSITIONS[pos], price: cPrice, totalXP: cXP.totalXP },
           in: { id: best.id, name: best.name, position: best.position, price: best.price, totalXP: best.totalXP },
           gain, cost, netGain: gain,
-          breakEvenGWs, breakEvenGW, breaksEven, gwAvgGain
+          breakEvenGWs, breaksEven, gwAvgGain
         });
       }
   });
@@ -1224,9 +1404,9 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, st
   // Phase 1: Only use free transfers (no hits)
   const outPlayers = [];
   const inPlayers = [];
-  const outCandidates = [];
   let spent = 0;
-  const usedIds = new Set();
+  const usedIds = new Set();      // incoming ids already selected
+  const soldIds = new Set();      // outgoing ids already sold
 
   for (const c of candidates) {
     if (outPlayers.length >= freeTransfers) break;
@@ -1234,11 +1414,9 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, st
     if (spent + c.cost > bank + 0.1) continue;
     outPlayers.push(c.out);
     inPlayers.push(c.in);
-    outCandidates.push(c);
     spent += c.cost;
     usedIds.add(c.in.id);
-    currentIds.delete(c.out.id);
-    currentIds.add(c.in.id);
+    soldIds.add(c.out.id);
   }
 
   // Phase 2: Consider hits with break-even analysis
@@ -1246,6 +1424,7 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, st
   const hitCandidates = [];
   for (const c of candidates) {
     if (usedIds.has(c.in.id)) continue;
+    if (soldIds.has(c.out.id)) continue; // Don't sell the same player twice
     if (!c.breaksEven) continue; // Never breaks even within horizon
     if (c.gwAvgGain < 1.5) continue; // Too small per-GW gain
     hitCandidates.push(c);
@@ -1257,9 +1436,9 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, st
     if (spent + c.cost > bank + 0.1) continue;
     outPlayers.push(c.out);
     inPlayers.push(c.in);
-    outCandidates.push(c);
     spent += c.cost;
     usedIds.add(c.in.id);
+    soldIds.add(c.out.id);
     hitTransfers++;
     hitDetails.push({ name: c.in.name, breakEvenGWs: c.breakEvenGWs, gwAvgGain: c.gwAvgGain });
   }
@@ -1278,7 +1457,7 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, fixtures, st
 };
 
 // ── Chip Engine: multi-GW lookahead with DGW/BGW detection ──────────────
-VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
+VG.evaluateChips = (squad, gwPicks, fixtures) => {
   if (!gwPicks || gwPicks.length === 0) {
     return {
       triple_captain: { recommend: false, reason: "No GW data", bestGW: null, score: 0 },
@@ -1291,7 +1470,7 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
 
   const gwScores = gwPicks.map(gp => {
     const gw = gp.gw;
-    const gwFix = fixtures.filter(f => f.event === gw);
+    const gwFix = VG.fixturesForGW(fixtures, gw);
 
     // DGW/BGW detection
     const teamFixCount = {};
@@ -1361,7 +1540,7 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
     }).length;
     // Count players with tough fixtures this GW
     const badFixCount = squad.filter(p => {
-      const f = fixtures.find(fi => fi.event === gw && (fi.team_h === p.teamId || fi.team_a === p.teamId));
+      const f = VG.teamFixtures(fixtures, gw, p.teamId)[0];
       if (!f) return false;
       return VG.fixtureFDR(f, p.teamId) >= 4;
     }).length;
@@ -1466,20 +1645,77 @@ VG.evaluateChips = (squad, gwPicks, startGW, fixtures) => {
 };
 
 // ── Fixture Ticker ────────────────────────────────────────────────────
+// ── Team Strength Ratings (v5.4) ───────────────────────────────────────
+// Free Understat npxG/npxGA priors -> per-team attack/defence/overall
+// strength indices (100 = league average), 1-20 ranks, and a 1-5 rating
+// (5 = elite). Borrowed pattern from FFHUB's sortable attack/defence FDR
+// ranks, LiveFPL team ratings and FPL Copilot live team strength.
+VG.computeTeamRatings = () => {
+  const us = VG.understat;
+  if (!us || !us.teams || Object.keys(us.teams).length < 4) return null;
+  const entries = Object.entries(us.teams).map(([id, t]) => ({
+    id,
+    npxg90: Number(t.npxg90) || 0,
+    npxga90: Number(t.npxga90) || 0,
+    ppda: Number(t.ppda) || 0,
+    deep: Number(t.deep) || 0
+  }));
+  const avg = (key) => {
+    const vals = entries.map(e => e[key]).filter(v => v > 0);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+  };
+  const avgAtt = avg("npxg90");
+  const avgDef = avg("npxga90");
+  const rows = entries.map(e => {
+    const attIdx = avgAtt > 0 ? (e.npxg90 / avgAtt) * 100 : 100;
+    const defIdx = avgDef > 0 && e.npxga90 > 0 ? (avgDef / e.npxga90) * 100 : 100;
+    const overallIdx = (attIdx + defIdx) / 2;
+    const rating = Math.max(1, Math.min(5, Math.round((overallIdx - 100) / 12 + 3)));
+    return {
+      id: e.id,
+      name: VG.teams[e.id] ? VG.teams[e.id].name : String(e.id),
+      short: VG.teams[e.id] ? VG.teams[e.id].short_name : String(e.id),
+      npxg90: e.npxg90,
+      npxga90: e.npxga90,
+      ppda: e.ppda,
+      deep: e.deep,
+      attIdx: +attIdx.toFixed(0),
+      defIdx: +defIdx.toFixed(0),
+      overallIdx: +overallIdx.toFixed(0),
+      rating
+    };
+  });
+  const rank = (key, outKey) => {
+    rows.slice().sort((a, b) => b[key] - a[key]).forEach((r, i) => { r[outKey] = i + 1; });
+  };
+  rank("attIdx", "attRank");
+  rank("defIdx", "defRank");
+  rank("overallIdx", "overallRank");
+  rows.sort((a, b) => a.overallRank - b.overallRank);
+  return rows;
+};
+
+// Per-team, per-GW fixture rows for a horizon — shared by the fixture ticker
+// and the swing analyser so both never drift apart (two copies used to exist).
+VG.teamFixtureRow = (teamId, startGW, nGWs, fixtures) => {
+  const row = [];
+  for (let gw = startGW; gw < startGW + nGWs; gw++) {
+    const f = VG.teamFixtures(fixtures, gw, teamId)[0];
+    row.push(f ? VG.fixtureInfo(f, teamId) : null);
+  }
+  return row;
+};
+
 VG.buildFixtureTicker = (startGW, nGWs, fixtures) => {
   const ticker = {};
   Object.values(VG.teams).forEach(t => {
     const row = { name: t.short_name || t.name, id: t.id, fdr: [] };
-    for (let gw = startGW; gw < startGW + nGWs; gw++) {
-      const f = fixtures.find(fi => fi.event === gw && (fi.team_h === t.id || fi.team_a === t.id));
-      if (f) {
-        const isHome = f.team_h === t.id;
-        const oppId = isHome ? f.team_a : f.team_h;
-        row.fdr.push({ gw, fdr: VG.fixtureFDR(f, t.id), opp: VG.teams[oppId]?.short_name || "", isHome });
-      } else {
-        row.fdr.push({ gw, fdr: 0, opp: "", isHome: false });
-      }
-    }
+    VG.teamFixtureRow(t.id, startGW, nGWs, fixtures).forEach((info, i) => {
+      const gw = startGW + i;
+      row.fdr.push(info
+        ? { gw, fdr: info.fdr, opp: info.oppName, isHome: info.isHome }
+        : { gw, fdr: 0, opp: "", isHome: false });
+    });
     ticker[t.id] = row;
   });
   return ticker;
@@ -1491,19 +1727,16 @@ VG.analyzeFixtureSwings = (startGW, nGWs, fixtures) => {
   Object.values(VG.teams).forEach(t => {
     const fdrs = [];
     const fixtures_list = [];
-    for (let gw = startGW; gw < startGW + nGWs; gw++) {
-      const f = fixtures.find(fi => fi.event === gw && (fi.team_h === t.id || fi.team_a === t.id));
-      if (f) {
-        const isHome = f.team_h === t.id;
-        const oppId = isHome ? f.team_a : f.team_h;
-        const fdr = VG.fixtureFDR(f, t.id);
-        fdrs.push(fdr);
-        fixtures_list.push({ gw, fdr, opp: VG.teams[oppId]?.short_name || "", isHome });
+    VG.teamFixtureRow(t.id, startGW, nGWs, fixtures).forEach((info, i) => {
+      const gw = startGW + i;
+      if (info) {
+        fdrs.push(info.fdr);
+        fixtures_list.push({ gw, fdr: info.fdr, opp: info.oppName, isHome: info.isHome });
       } else {
         fdrs.push(0);
         fixtures_list.push({ gw, fdr: 0, opp: "BLANK", isHome: false });
       }
-    }
+    });
     const validFdrs = fdrs.filter(f => f > 0);
     const avgFDR = validFdrs.length > 0 ? validFdrs.reduce((a, b) => a + b, 0) / validFdrs.length : 3;
     // Detect runs: 3+ consecutive FDR <= 2 = easy run, 3+ consecutive FDR >= 4 = hard run
@@ -1584,7 +1817,6 @@ VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
   const squadXP = allXP.filter(p => squadIds.has(p.id));
 
   for (let gw = startGW; gw < startGW + nGWs; gw++) {
-    const gwFix = fixtures.filter(f => f.event === gw);
     const gwData = { gw, players: [], problems: [], recommendations: [] };
 
     // Analyze each squad player's fixture
@@ -1592,18 +1824,14 @@ VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
       const pid = sp.element || sp.id;
       const xp = squadXP.find(p => p.id === pid);
       if (!xp) return;
-      const f = gwFix.find(fi => fi.team_h === xp.teamId || fi.team_a === xp.teamId);
-      const isHome = f ? f.team_h === xp.teamId : false;
-      const oppId = f ? (isHome ? f.team_a : f.team_h) : null;
-      const fdr = f ? VG.fixtureFDR(f, xp.teamId) : 0;
-      const oppName = oppId ? (VG.teams[oppId]?.short_name || "?") : "BLANK";
+      const info = VG.fixtureInfo(VG.teamFixtures(fixtures, gw, xp.teamId)[0], xp.teamId);
       const gwXP = xp.gwXP || (xp.totalXP / Math.max(nGWs, 1));
 
-      const info = { name: xp.name, position: xp.position, teamId: xp.teamId, fdr, oppName, isHome, gwXP, id: pid, price: xp.price, totalXP: xp.totalXP };
-      gwData.players.push(info);
+      const infoObj = { name: xp.name, position: xp.position, teamId: xp.teamId, fdr: info.fdr, oppName: info.oppName, isHome: info.isHome, gwXP, id: pid, price: xp.price, totalXP: xp.totalXP };
+      gwData.players.push(infoObj);
 
-      if (fdr >= 4 || fdr === 0) {
-        gwData.problems.push(info);
+      if (info.fdr >= 4 || info.fdr === 0) {
+        gwData.problems.push(infoObj);
       }
     });
 
@@ -1618,15 +1846,11 @@ VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
 
       if (upgrades.length > 0) {
         const best = upgrades[0];
-        const bestF = gwFix.find(f => f.team_h === best.teamId || f.team_a === best.teamId);
-        const bestIsHome = bestF ? bestF.team_h === best.teamId : false;
-        const bestFDR = VG.fixtureFDR(bestF, best.teamId);
-        const bestOppId = bestF ? (bestIsHome ? bestF.team_a : bestF.team_h) : null;
-        const bestOpp = bestOppId ? (VG.teams[bestOppId]?.short_name || "?") : "?";
+        const bestInfo = VG.fixtureInfo(VG.teamFixtures(fixtures, gw, best.teamId)[0], best.teamId);
 
         gwData.recommendations.push({
           out: prob.name, outFDR: prob.fdr, outOpp: prob.oppName,
-          in: best.name, inFDR: bestFDR, inOpp: bestOpp, inPrice: best.price, inXP: best.totalXP,
+          in: best.name, inFDR: bestInfo.fdr, inOpp: bestInfo.oppName, inPrice: best.price, inXP: best.totalXP,
           gain: +(best.totalXP - prob.totalXP).toFixed(1)
         });
       }
@@ -1643,11 +1867,10 @@ VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
 // Simulates squad across N GWs, identifies weakest players each week,
 // finds best replacements, and schedules transfers week-by-week.
 // Only recommends hits if cumulative xP gain exceeds hit cost.
-VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTransfers) => {
+VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank) => {
   if (!squad || squad.length < 11 || !allXP || allXP.length === 0 || !fixtures || fixtures.length === 0) return null;
 
   bank = bank || 0;
-  freeTransfers = Math.max(freeTransfers || 1, 1);
 
   // Build per-GW xP maps for all players
   const allXPMap = {};
@@ -1673,12 +1896,10 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
   const schedule = [];
   let totalHits = 0;
   let totalGainFromHits = 0;
-  let usedFreeTransfers = 0;
   const usedIds = new Set();
 
   for (let gw = startGW; gw < startGW + nGWs; gw++) {
-    const gwFix = fixtures.filter(f => f.event === gw);
-    const gwTransfer = { gw, transfers: [], hitCost: 0, freeUsed: 0, squadXP: 0, cumGain: 0 };
+    const gwTransfer = { gw, transfers: [], hitCost: 0, squadXP: 0 };
 
     // Compute each squad player's GW xP (using per-GW detail, not average)
     const squadGWXP = [];
@@ -1686,12 +1907,8 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
       const xp = perGWXP[gw][pid] || 0;
       const info = allXPMap[pid];
       if (!info) return;
-      const f = gwFix.find(fi => fi.team_h === info.teamId || fi.team_a === info.teamId);
-      const isHome = f ? f.team_h === info.teamId : false;
-      const fdr = VG.fixtureFDR(f, info.teamId);
-      const oppId = f ? (isHome ? f.team_a : f.team_h) : null;
-      const oppName = oppId ? (VG.teams[oppId]?.short_name || "?") : "BLANK";
-      squadGWXP.push({ id: pid, xp, price: currentSquadPrices[pid] || info.price, positionId: info.positionId, position: info.position, name: info.name, teamId: info.teamId, totalXP: info.totalXP, fdr, oppName, isHome });
+      const fInfo = VG.fixtureInfo(VG.teamFixtures(fixtures, gw, info.teamId)[0], info.teamId);
+      squadGWXP.push({ id: pid, xp, price: currentSquadPrices[pid] || info.price, positionId: info.positionId, position: info.position, name: info.name, teamId: info.teamId, totalXP: info.totalXP, fdr: fInfo.fdr, oppName: fInfo.oppName, isHome: fInfo.isHome });
     });
 
     // Only evaluate starters (top 11 by xP) for replacement — bench upgrades rarely matter
@@ -1699,7 +1916,7 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
     const starters = squadGWXP.slice(0, 11);
     const weakStarters = starters.slice(-4); // Bottom 4 starters are replacement candidates
 
-    gwTransfer.squadXP = +starters.slice(0, 11).reduce((s, p) => s + p.xp, 0).toFixed(2);
+    gwTransfer.squadXP = +starters.reduce((s, p) => s + p.xp, 0).toFixed(2);
 
     // Find transfers for weak starters
     const transferOpts = [];
@@ -1724,11 +1941,7 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
         const cost = +(cand.price - weak.price).toFixed(1);
 
         if (cumGain > 1.0) { // Minimum 1 xP gain to consider
-          transferOpts.push({
-            out: weak, in: cand, cost, cumGain,
-            gwXPold: +weak.xp.toFixed(2),
-            gwXPnew: perGWXP[gw][cand.id] || +(cand.totalXP / Math.max(nGWs, 1)).toFixed(2)
-          });
+          transferOpts.push({ out: weak, in: cand, cost, cumGain });
         }
       }
     }
@@ -1736,10 +1949,9 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
     // Sort by cumulative xP gain (best first)
     transferOpts.sort((a, b) => b.cumGain - a.cumGain);
 
-    // Apply transfers: free first, then hits
-    let freeLeft = gw === startGW ? freeTransfers : Math.max(1, freeTransfers - usedFreeTransfers);
-    // After a hit, carry over one free transfer
-    freeLeft = Math.min(freeLeft, 1);
+    // Apply transfers: one free transfer is always available per GW (matches FPL
+    // rollover behaviour of 1 FT/week); any further transfer this GW is a hit.
+    const freeLeft = 1;
 
     let gwHitCost = 0;
     for (const opt of transferOpts) {
@@ -1751,8 +1963,6 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
       if (gwTransfer.transfers.length < freeLeft) {
         // Free transfer
         gwTransfer.transfers.push({ ...opt, isHit: false });
-        gwTransfer.freeUsed++;
-        usedFreeTransfers++;
       } else if (opt.cumGain > 4.0) {
         // Hit is worth it: cumulative gain exceeds 4 pts
         gwHitCost += 4;
@@ -1772,7 +1982,6 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
     }
 
     gwTransfer.hitCost = gwHitCost;
-    gwTransfer.cumGain = +(gwTransfer.transfers.reduce((s, t) => s + t.cumGain, 0) - gwHitCost).toFixed(2);
     schedule.push(gwTransfer);
   }
 
@@ -1780,6 +1989,7 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
   const totalSquadXP = schedule.reduce((s, g) => s + g.squadXP, 0);
   const totalTransfers = schedule.reduce((s, g) => s + g.transfers.length, 0);
   const netGain = +(totalGainFromHits - totalHits).toFixed(2);
+  const freeTransfersUsed = schedule.reduce((s, g) => s + g.transfers.filter(t => !t.isHit).length, 0);
 
   return {
     schedule,
@@ -1788,30 +1998,48 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeTrans
       totalTransfers,
       totalHits,
       netGainFromHits: netGain,
-      freeTransfersUsed: usedFreeTransfers,
+      freeTransfersUsed,
       avgSquadXP: +(totalSquadXP / nGWs).toFixed(2)
     }
   };
 };
 
 // ── Price Change Risk ─────────────────────────────────────────────────
+// Single source of truth for price-movement classification.
+// Reads the real live-API top-level fields (`transfers_in_event` /
+// `transfers_out_event`) with a `stats.*` fallback for synthetic data.
+// Classic community thresholds: ~10.5k net in = rise trigger.
+VG.predictPriceChanges = (liveData) => {
+  if (!liveData || !liveData.elements) return [];
+  const RISE = 10500, LIKELY_RISE = 7000, FALL = 5600, LIKELY_FALL = 4000;
+  const out = [];
+  liveData.elements.forEach(el => {
+    const tIn = (el.transfers_in_event ?? el.stats?.transfers_in ?? 0);
+    const tOut = (el.transfers_out_event ?? el.stats?.transfers_out ?? 0);
+    const net = tIn - tOut;
+    let risk = "stable";
+    if (net >= RISE) risk = "rising";
+    else if (net >= LIKELY_RISE) risk = "likely_rise";
+    else if (net <= -FALL) risk = "falling";
+    else if (net <= -LIKELY_FALL) risk = "likely_fall";
+    if (risk === "stable") return;
+    const p = VG.players[el.id];
+    const name = p ? (p.web_name || p.second_name) : ("#" + el.id);
+    const pos = p ? VG.POSITIONS[p.element_type] : "?";
+    const price = p ? (p.now_cost / 10) : 0;
+    out.push({ id: el.id, name, position: pos, price, net, risk, pct: +(Math.abs(net) / RISE).toFixed(2) });
+  });
+  return out.sort((a, b) => b.pct - a.pct);
+};
+
 VG.getPriceRisk = async () => {
   const data = VG.bootstrapData;
   if (!data) return [];
   try {
     const live = await VG.fetch(VG.FPL + "/event/" + VG.currentGW + "/live/", "live");
-    if (!live || !live.elements) return [];
-    const liveMap = {};
-    live.elements.forEach(e => { liveMap[e.id] = e; });
-    return data.elements.filter(p => liveMap[p.id]).map(p => {
-      const l = liveMap[p.id];
-      const net = (l.transfers_in_event || 0) - (l.transfers_out_event || 0);
-      let risk = "stable";
-      if (net >= 10500) risk = "rising";
-      else if (net >= 7000) risk = "likely_rise";
-      else if (net <= -5600) risk = "falling";
-      else if (net <= -4000) risk = "likely_fall";
-      return { id: p.id, name: p.first_name + " " + p.second_name, pos: VG.POSITIONS[p.element_type], price: p.now_cost / 10, net, risk };
+    return VG.predictPriceChanges(live).map(m => {
+      const p = data.elements.find(e => e.id === m.id);
+      return { id: m.id, name: p ? (p.first_name + " " + p.second_name) : m.name, pos: m.position, price: m.price, net: m.net, risk: m.risk };
     });
   } catch (e) {
     console.warn("[VG] Price risk failed:", e);
@@ -1836,7 +2064,7 @@ VG.analyzeLeague = async (leagueId, currentGW) => {
 
     for (const entry of topEntries) {
       try {
-        const gw = Math.min(currentGW || VG.currentGW || 1, VG.currentGW || 1);
+        const gw = currentGW || VG.currentGW || 1;
         const picksData = await VG.fetch(VG.FPL + "/entry/" + entry.entry + "/event/" + gw + "/picks/", "picks_" + entry.entry);
         if (picksData && picksData.picks) {
           squads.push({
@@ -1933,6 +2161,31 @@ VG.analyzeLeague = async (leagueId, currentGW) => {
 // ── Render Engine ─────────────────────────────────────────────────────
 VG.render = {};
 
+VG.render = VG.render || {};
+VG.render.teamRatings = (ratings) => {
+  if (!ratings || !ratings.length) return '<p style="color:#475569;font-size:0.8rem;">Team strength data unavailable (Understat priors not fetched yet).</p>';
+  const ratingColor = { 1: "#ef4444", 2: "#fb923c", 3: "#64748b", 4: "#86efac", 5: "#22c55e" };
+  const bar = idx => {
+    const w = Math.max(4, Math.min(100, 50 + (idx - 100) / 2));
+    const col = idx >= 105 ? "#22c55e" : idx >= 100 ? "#86efac" : idx >= 95 ? "#fb923c" : "#ef4444";
+    return `<span style="display:inline-block;width:56px;height:6px;background:#1e293b;border-radius:3px;vertical-align:middle;margin-right:6px;"><span style="display:block;height:6px;width:${w}%;background:${col};border-radius:3px;"></span></span><span style="color:${col};font-weight:700;font-size:0.8rem;">${idx}</span>`;
+  };
+  let html = '<div class="ticker-scroll"><table class="ticker-table"><thead><tr><th>Team</th><th>Attack (npxG/90)</th><th>Defence (npxGA/90)</th><th>Overall</th><th>Rating</th><th>Press (PPDA)</th></tr></thead><tbody>';
+  ratings.forEach(r => {
+    const teamColor = VG.teamColor(r.short);
+    html += `<tr>
+      <td class="ticker-team"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${VG.esc(teamColor)};margin-right:6px;"></span>${VG.esc(r.short)}</td>
+      <td>${bar(r.attIdx)} <span style="font-size:0.7rem;color:#64748b;">#${r.attRank}</span></td>
+      <td>${bar(r.defIdx)} <span style="font-size:0.7rem;color:#64748b;">#${r.defRank}</span></td>
+      <td>${bar(r.overallIdx)} <span style="font-size:0.7rem;color:#64748b;">#${r.overallRank}</span></td>
+      <td><span class="fdr-chip" style="background:${ratingColor[r.rating]}20;color:${ratingColor[r.rating]};border:1px solid ${ratingColor[r.rating]}40">${r.rating}/5</span></td>
+      <td style="font-size:0.75rem;color:#94a3b8;">${r.ppda ? r.ppda.toFixed(1) : "–"}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  return html;
+};
+
 VG.render.pitch = (result) => {
   const starting = result.starting || [];
   // Divide by the horizon actually used, not a hardcoded 12
@@ -1965,7 +2218,7 @@ VG.render.pitch = (result) => {
     const n = players.length;
     players.forEach((p, i) => {
       const xPct = n === 1 ? 50 : 12 + 76 * i / (n - 1);
-      const teamColor = VG.TEAM_COLORS[p.teamId] || { home: "#555", away: "#fff" };
+      const teamColor = { home: VG.teamColor(p.teamId), away: "#FFFFFF" };
       const isCaptain = gotCap.length > 0 && p.id === gotCap[0].id;
       const isVice = gotCap.length > 1 && p.id === gotCap[1].id;
       html += `<div class="player-card ${VG.POS_SHIRT[p.positionId]}" style="left:${xPct}%;top:${rd.y}%;" data-pid="${p.id}">`;
@@ -1991,7 +2244,7 @@ VG.render.bench = (bench) => {
   if (!bench.length) return "";
   let html = '<div class="bench-section"><div class="bench-label">SUBSTITUTES</div><div class="bench-grid">';
   bench.forEach((p, i) => {
-    const teamColor = VG.TEAM_COLORS[p.teamId] || { home: "#555", away: "#fff" };
+    const teamColor = { home: VG.teamColor(p.teamId), away: "#FFFFFF" };
     html += `<div class="bench-card ${VG.POS_SHIRT[p.positionId]}">`;
     html += `<div class="bench-position">${VG.POSITIONS[p.positionId]}${i + 1}</div>`;
     html += `<div class="bench-shirt" style="background:${teamColor.home};color:${teamColor.away};">${VG.esc(VG.teams[p.teamId]?.short_name || "")}</div>`;
@@ -2124,7 +2377,7 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
   };
 };
 
-VG.getCaptainReasoning = (cap) => {
+VG.getCaptainReasoning = (cap, fixtures, gw, vice) => {
   if (!cap) return { summary: 'No captain selected', details: [] };
   const reasons = [];
   if (cap.isDoubtful || cap.status === 'd' || cap.status === 'u') reasons.push('⚠ Doubtful — have a VC ready');
@@ -2137,6 +2390,16 @@ VG.getCaptainReasoning = (cap) => {
   if (cap.positionId === 3 && (cap.price || 0) >= 9) reasons.push('Premium midfielder — consistent point scorer');
   if (cap.positionId === 1 || cap.positionId === 2) reasons.push('Defender/GK captain is very high variance');
 
+  // Blank probability (P: fails to play 60+ mins) + vice-captain EV (v5.3)
+  const blank = VG.computeBlankProbability(cap, fixtures, gw);
+  if (blank.pBlank >= 0.30) reasons.push(`⚠ High blank risk (${(blank.pBlank * 100).toFixed(0)}%) — ${blank.reasons[0] || 'rotation risk'}`);
+  else if (blank.pBlank >= 0.15) reasons.push(`Moderate blank risk (${(blank.pBlank * 100).toFixed(0)}%) — ${blank.reasons[0] || 'rotation risk'}`);
+  else reasons.push(`Low blank risk (${(blank.pBlank * 100).toFixed(0)}%) — ${blank.reasons[0] || 'secure minutes'}`);
+
+  const vcEV = VG.computeViceCaptainEV(cap, vice, fixtures, gw);
+  if (vcEV >= 1.0) reasons.push(`💡 Strong VC insurance — a quality vice-captain adds ~${vcEV.toFixed(1)} EV`);
+  else if (vcEV >= 0.5) reasons.push(`Decent VC insurance (${vcEV.toFixed(1)} EV) — pick a low-blank-risk backup`);
+
   const venue = cap.isHome === 'H'
     ? 'at home'
     : cap.isHome === 'A'
@@ -2144,8 +2407,8 @@ VG.getCaptainReasoning = (cap) => {
       : cap.isHome === 'H/A'
         ? 'across home and away fixtures'
         : 'without a scheduled fixture';
-  const summary = `${cap.name} (${cap.position}) ${venue} vs ${cap.oppName} (FDR ${cap.fdr}) · ${cap.gwXP.toFixed(1)} xP`;
-  return { summary, details: reasons };
+  const summary = `${cap.name} (${cap.position}) ${venue} vs ${cap.oppName} (FDR ${cap.fdr}) · ${cap.gwXP.toFixed(1)} xP · blank ${(blank.pBlank * 100).toFixed(0)}%`;
+  return { summary, details: reasons, blank, viceCaptainEV: vcEV };
 };
 
 VG.getSquadAnalysis = (result, fixtures, gw) => {
@@ -2249,7 +2512,7 @@ VG.TIPS = [
   }
 ];
 
-VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
+VG.render.tips = (result, allXP, fixtures, gw) => {
   let html = '';
 
   // ── Dynamic: Your Squad Analysis ──
@@ -2284,11 +2547,32 @@ VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
       html += `</div></div>`;
     }
 
+    // Injury & Availability Watch (FPL fitness flags + news)
+    const injuryWatch = VG.injuryNews().slice(0, 12);
+    if (injuryWatch.length > 0) {
+      html += `<div class="tips-section">`;
+      html += `<div class="tips-section-header">🩹 Injury & Availability Watch</div>`;
+      html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
+      injuryWatch.forEach(p => {
+        const chanceColor = p.chance < 50 ? '#ef4444' : p.chance < 100 ? '#fbbf24' : '#475569';
+        html += `<div style="flex:0 0 auto;min-width:180px;background:rgba(30,41,59,0.5);border-radius:8px;padding:8px 10px;font-size:0.68rem;">`;
+        html += `<div style="display:flex;justify-content:space-between;gap:8px;">`;
+        html += `<span style="color:#e2e8f0;font-weight:600;">${VG.esc(p.name)}</span>`;
+        html += `<span style="color:${chanceColor};font-weight:700;">${p.chance < 100 ? p.chance + '%' : VG.esc(p.status || 'risk')}</span>`;
+        html += `</div>`;
+        html += `<div style="color:#64748b;margin-top:2px;">${VG.esc(p.team)} · ${VG.esc(p.position)}</div>`;
+        if (p.news) html += `<div style="color:#94a3b8;margin-top:3px;">${VG.esc(p.news)}</div>`;
+        html += `</div>`;
+      });
+      html += `</div></div>`;
+    }
+
     // Captain analysis
     if (result.gotCap?.length >= 1) {
       const c = result.gotCap[0];
       const capXP = c.gwXP || c.totalXP || 0;
-      const capShare = result.gwTotalXP > 0 ? ((capXP / result.gwTotalXP) * 100).toFixed(0) : '?';
+      const gwTotal = result.gwTotalXP || result.gwPicks?.[0]?.gwTotalXP || 0;
+      const capShare = gwTotal > 0 ? ((capXP / gwTotal) * 100).toFixed(0) : '?';
       tips.push({
         title: `Captain: ${c.name} (${capXP.toFixed(1)} xP)`,
         text: `Your captain contributes ~${capShare}% of GW${gw} expected points. ${capXP >= 6 ? 'Strong pick — this is a premium captaincy.' : capXP >= 4 ? 'Decent pick — consider alternatives if fixtures worsen.' : 'Weak pick — look for a better option in your squad or via transfer.'}`,
@@ -2297,10 +2581,7 @@ VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
     }
 
     // Injury/doubtful count
-    const injuredCount = squad.filter(p => {
-      const data = VG.players[p.element || p.id];
-      return data && data.status !== 'a';
-    }).length;
+    const injuredCount = VG.countUnavailable(squad);
     if (injuredCount >= 3) {
       tips.push({
         title: `${injuredCount} Injured/Doubtful Players`,
@@ -2405,5 +2686,276 @@ VG.render.tips = (result, allXP, fixtures, gw, nGWs) => {
     });
     html += `</div>`;
   });
+  return html;
+};
+
+// ── Live Gameweek Intelligence (v5.3) ──────────────────────────────────
+VG.loadLive = async (gw) => {
+  try {
+    return await VG.fetch(VG.FPL + "/event/" + gw + "/live/", "live GW" + gw);
+  } catch (e) {
+    console.warn("[VG] Live data failed:", e.message);
+    return null;
+  }
+};
+
+// Compute live points from authoritative `explain` blocks (excludes provisional bonus)
+VG.computeLivePoints = (liveData) => {
+  if (!liveData || !liveData.elements) return {};
+  const pts = {};
+  liveData.elements.forEach(el => {
+    let total = 0;
+    (el.explain || []).forEach(fx => (fx.stats || []).forEach(st => { total += st.points || 0; }));
+    pts[el.id] = total;
+  });
+  return pts;
+};
+
+// Predict bonus points from live BPS (top-3 per fixture, official tie-break rules)
+VG.predictBonus = (liveData, fixtures, gw) => {
+  if (!liveData || !liveData.elements) return {};
+  const gwFix = VG.fixturesForGW(fixtures, gw);
+  const bonus = {};
+  gwFix.forEach(f => {
+    const inFix = [];
+    liveData.elements.forEach(el => {
+      (el.explain || []).forEach(fx => {
+        if (fx.fixture === f.id) {
+          const mins = el.stats.minutes || 0;
+          if (mins > 0) inFix.push({ id: el.id, bps: el.stats.bps || 0 });
+        }
+      });
+    });
+    if (inFix.length < 1) return;
+    inFix.sort((a, b) => b.bps - a.bps);
+    const rank3 = inFix.slice(0, 3);
+    // Tie-break: tied 1st → both 3, next 1; tied 2nd → both 2; tied 3rd → both 1
+    const ptsByRank = [3, 2, 1];
+    let award = [];
+    if (rank3.length === 1) award = [3];
+    else if (rank3[0].bps === rank3[1].bps) {
+      award = rank3.length >= 3 && rank3[0].bps === rank3[2].bps ? [3, 3, 3] : [3, 3, 1];
+    } else if (rank3.length >= 3 && rank3[1].bps === rank3[2].bps) {
+      award = [3, 2, 2];
+    } else {
+      award = rank3.map((_, i) => ptsByRank[i]);
+    }
+    rank3.forEach((p, i) => { if (award[i] !== undefined && award[i] > 0) bonus[p.id] = (bonus[p.id] || 0) + award[i]; });
+  });
+  return bonus;
+};
+
+// Simulate FPL auto-subs: a starter who plays 0 mins is replaced by the first
+// bench player (priority order) who played AND keeps the formation legal.
+// `liveMinutes` = map of playerId → minutes played.
+VG.simulateAutoSubs = (starting, bench, liveMinutes) => {
+  if (!starting || !bench) return { starting, subs: [] };
+  liveMinutes = liveMinutes || {};
+  let adjusted = [...starting];
+  const benchPool = [...bench];
+  const subs = [];
+  const outIds = new Set();
+
+  adjusted.forEach(p => {
+    const pid = p.element || p.id;
+    if (!VG.hasPlayed(liveMinutes, pid)) outIds.add(pid);
+  });
+
+  for (const outPid of outIds) {
+    const out = adjusted.find(p => (p.element || p.id) === outPid);
+    if (!out) continue;
+    for (let i = 0; i < benchPool.length; i++) {
+      const sub = benchPool[i];
+      const subPid = sub.element || sub.id;
+      if (!VG.hasPlayed(liveMinutes, subPid)) continue;
+      const temp = adjusted.filter(p => (p.element || p.id) !== outPid).concat([sub]);
+      if (!VG.formationLegal(temp)) continue;
+      adjusted = temp;
+      benchPool.splice(i, 1);
+      subs.push({ out: outPid, in: subPid });
+      break;
+    }
+  }
+  return { starting: adjusted, subs };
+};
+
+// Captain blank probability: P(fails to play 60+ minutes this GW)
+VG.computeBlankProbability = (cap, fixtures, gw) => {
+  if (!cap) return { pBlank: 0.3, reasons: [] };
+  const reasons = [];
+  let p = 0.05; // base rate
+  const data = VG.players[cap.id];
+  if (data) {
+    const starts = parseInt(data.starts || "0");
+    const minutes = parseInt(data.minutes || "0");
+    if (starts >= 30 && minutes >= 2600) { p += 0.01; reasons.push("Nailed starter (30+ starts)"); }
+    else if (starts >= 25 && minutes >= 2000) { p += 0.05; reasons.push("Regular starter"); }
+    else if (starts >= 15) { p += 0.10; reasons.push("Rotation risk — partial starter"); }
+    else { p += 0.20; reasons.push("Not a nailed starter — high rotation risk"); }
+    if (data.status === "d") { p += 0.25; reasons.push("⚠ Doubtful (status=d)"); }
+    if (data.status === "u") { p += 0.30; reasons.push("⚠ Unavailable risk"); }
+    // FPL fitness flag: chance_of_playing_next_round (null when not flagged)
+    const chance = data.chance_of_playing_next_round;
+    if (chance !== null && chance !== undefined && chance < 100) {
+      const pMiss = Math.max(0, Math.min(1, (100 - Number(chance)) / 100));
+      if (pMiss > 0.1) {
+        p += Math.min(0.35, pMiss * 0.6);
+        reasons.push(chance + "% chance to play this GW (FPL fitness flag)");
+      }
+    }
+  }
+  const gwFix = VG.teamFixtures(fixtures, gw, cap.teamId);
+  gwFix.forEach(f => {
+    const isHome = f.team_h === cap.teamId;
+    const oppId = isHome ? f.team_a : f.team_h;
+    const opp = VG.teams[oppId];
+    const oppStr = opp ? (isHome ? opp.strength_overall_away : opp.strength_overall_home) : 1100;
+    if (!isHome && oppStr >= 1150) { p += 0.06; reasons.push("Away vs strong side — minutes risk"); }
+    if (isHome && oppStr <= 1000) { p -= 0.03; reasons.push("Home vs weak side — locked minutes"); }
+  });
+  const yellows = parseInt(data?.yellow_cards || "0");
+  const games = Math.max(1, parseInt(data?.starts || "0"));
+  if (games > 0 && yellows / games > 0.15) { p += 0.03; reasons.push("Card risk"); }
+  p = Math.max(0.03, Math.min(0.5, p));
+  return { pBlank: +p.toFixed(2), reasons };
+};
+
+// Vice-captain EV: every 10% of captain blank = +1.4 EV from the right VC.
+VG.computeViceCaptainEV = (captain, vice, fixtures, gw) => {
+  if (!captain || !vice) return 0;
+  const { pBlank } = VG.computeBlankProbability(captain, fixtures, gw);
+  const vcXP = vice.gwXP || vice.totalXP || 0;
+  return +(1.4 * (pBlank / 0.10) * Math.min(vcXP / 5, 1.5)).toFixed(2);
+};
+
+// Differential matrix zones (ownership vs xP/£m)
+VG.getDifferentialZone = (p) => {
+  const own = p.ownership || 0;
+  const value = p.xpPerPrice || 0;
+  const highValue = value >= 2.0;
+  if (own < 15 && highValue) return { zone: "gold", label: "Differential Gold", color: "#00ff87" };
+  if (own >= 15 && highValue) return { zone: "anchor", label: "Template Anchor", color: "#3b82f6" };
+  if (own < 15 && !highValue) return { zone: "wait", label: "Wait & See", color: "#fbbf24" };
+  return { zone: "trap", label: "Trap Zone", color: "#ef4444" };
+};
+
+// Build the full Live tab panel: team live points, bonus projections,
+// auto-sub simulation, and price-change velocity.
+VG.renderLive = async (gw, teamId) => {
+  const live = await VG.loadLive(gw);
+  if (!live || !live.elements || live.elements.length === 0) {
+    return '<p style="color:#475569;">No live data available for GW' + gw + '. Live tracking activates when gameweeks are in progress.</p>';
+  }
+
+  const livePts = VG.computeLivePoints(live);
+  const liveMins = {};
+  live.elements.forEach(el => { liveMins[el.id] = el.stats.minutes || 0; });
+  const bonus = VG.predictBonus(live, VG.allFixtures, gw);
+  const priceMoves = VG.predictPriceChanges(live);
+  const gwFixtures = VG.fixturesForGW(VG.allFixtures, gw);
+  let playedFixtures = 0;
+  gwFixtures.forEach(f => { if (f.finished || f.finished_provisional) playedFixtures++; });
+
+  let html = '';
+  html += `<div class="chip-sequence">`;
+  html += `<div class="chip-card"><div class="chip-label">GW${gw} Status</div><div class="chip-score" style="color:#60a5fa;font-size:0.8rem;">${playedFixtures}/${gwFixtures.length}</div><div class="chip-advice">fixtures finished</div></div>`;
+  html += `<div class="chip-card"><div class="chip-label">Live Points</div><div class="chip-score" style="color:#00ff87;">${live.elements.reduce((s, el) => s + (livePts[el.id] || 0), 0)}</div><div class="chip-advice">all players tracked</div></div>`;
+  html += `<div class="chip-card"><div class="chip-label">Price Movers</div><div class="chip-score" style="color:#fbbf24;">${priceMoves.length}</div><div class="chip-advice">rising / falling</div></div>`;
+  html += `</div>`;
+
+  // ── Your team (only if teamId provided) ──
+  if (teamId > 0) {
+    try {
+      const picksData = await VG.fetch(VG.FPL + "/entry/" + teamId + "/event/" + gw + "/picks/", "livepicks");
+      if (picksData && picksData.picks) {
+        const squadPicks = picksData.picks.map(p => {
+          const info = VG.players[p.element];
+          return {
+            element: p.element, id: p.element,
+            positionId: info ? info.element_type : 0,
+            position: info ? VG.POSITIONS[info.element_type] : "?",
+            name: info ? (info.web_name || info.second_name) : ("#" + p.element),
+            teamId: info ? info.team : 0,
+            isCaptain: !!p.is_captain, isVice: !!p.is_vice_captain,
+            multiplier: p.multiplier || 1
+          };
+        });
+        const starting = squadPicks.filter(p => p.multiplier >= 1);
+        const bench = squadPicks.filter(p => p.multiplier === 0);
+        const cap = squadPicks.find(p => p.isCaptain);
+        const vc = squadPicks.find(p => p.isVice);
+
+        const subResult = VG.simulateAutoSubs(starting, bench, liveMins);
+        // Points: starters ×multiplier; auto-subbed bench players count at 1×
+        let startPts = 0;
+        subResult.starting.forEach(p => {
+          const mult = (cap && p.isCaptain) ? Math.max(p.multiplier, 1) : p.multiplier;
+          startPts += (livePts[p.id] || 0) * Math.max(mult, 1);
+        });
+        let benchPts = 0;
+        bench.forEach(p => {
+          if (liveMins[p.id] > 0) benchPts += (livePts[p.id] || 0);
+        });
+        const total = startPts + benchPts;
+        const bp = (cap && bonus[cap.id]) ? bonus[cap.id] * Math.max(cap.multiplier, 1) : 0;
+
+        html += `<div style="margin-top:16px;"><div class="section-title" style="font-size:0.8rem;color:#00ff87;">Your Team · Live GW${gw}</div>`;
+        html += `<div class="chip-sequence">`;
+        html += `<div class="chip-card"><div class="chip-label">Your Points</div><div class="chip-score" style="color:#00ff87;">${total}</div><div class="chip-advice">starting XI × multiplier</div></div>`;
+        html += `<div class="chip-card"><div class="chip-label">Bonus Proj.</div><div class="chip-score" style="color:#fbbf24;">${bonus[cap?.id] ? "+" + bp : "+0"}</div><div class="chip-advice">from live BPS</div></div>`;
+        html += `<div class="chip-card"><div class="chip-label">Auto-subs</div><div class="chip-score" style="color:#60a5fa;">${subResult.subs.length}</div><div class="chip-advice">bench players in</div></div>`;
+        html += `</div>`;
+
+        html += `<table class="data-table" style="font-size:0.72rem;margin-top:10px;"><tr><th>Player</th><th>Pos</th><th>Mins</th><th>Points</th><th>Bonus</th><th>Status</th></tr>`;
+        const all = [...subResult.starting, ...bench];
+        all.forEach(p => {
+          const isBench = bench.includes(p);
+          const playedNow = liveMins[p.id] > 0;
+          const pts = (livePts[p.id] || 0) * (p.isCaptain ? Math.max(p.multiplier, 1) : 1);
+          const st = !isBench
+            ? (playedNow ? '<span style="color:#00ff87;">● playing</span>' : '<span style="color:#ef4444;">● 0 mins — sub risk</span>')
+            : (playedNow ? '<span style="color:#60a5fa;">● on bench (played)</span>' : '<span style="color:#334155;">● bench</span>');
+          html += `<tr><td style="color:#e2e8f0;">${p.isCaptain ? '(C) ' : p.isVice ? '(VC) ' : ''}${VG.esc(p.name)}</td><td>${p.position}</td><td>${liveMins[p.id] ?? 0}'</td><td style="color:#00ff87;">${pts}</td><td style="color:#fbbf24;">${bonus[p.id] ? '+' + bonus[p.id] : '—'}</td><td>${st}</td></tr>`;
+        });
+        html += `</table>`;
+        if (subResult.subs.length > 0) {
+          html += `<div style="margin-top:8px;font-size:0.72rem;color:#60a5fa;">Auto-sub simulation: ${subResult.subs.map(s => `${VG.esc(VG.players[s.out]?.web_name || s.out)} → ${VG.esc(VG.players[s.in]?.web_name || s.in)}`).join(' · ')}</div>`;
+        }
+        html += `</div>`;
+      }
+    } catch (e) {
+      console.warn("[VG] Live team:", e);
+    }
+  }
+
+  // ── Price change velocity ──
+  if (priceMoves.length > 0) {
+    html += `<div style="margin-top:16px;"><div class="section-title" style="font-size:0.8rem;">Price Change Velocity</div>`;
+    html += '<div class="price-grid"><div><div class="section-title" style="font-size:0.7rem;color:#00ff87;">Risers</div>';
+    const rising = priceMoves.filter(r => r.net > 0).slice(0, 8);
+    if (!rising.length) html += '<p style="color:#334155;">No clear risers</p>';
+    rising.forEach(r => html += `<div class="price-card"><div><div class="name">${VG.esc(r.name)}</div><div class="detail">${VG.esc(r.position)} · £${r.price.toFixed(1)}m</div></div><span class="risk-badge rise">${r.risk === "rising" ? "rising" : "likely rise"}</span></div>`);
+    html += '</div><div><div class="section-title" style="font-size:0.7rem;color:#ef4444;">Fallers</div>';
+    const falling = priceMoves.filter(r => r.net < 0).slice(0, 8);
+    if (!falling.length) html += '<p style="color:#334155;">No clear fallers</p>';
+    falling.forEach(r => html += `<div class="price-card"><div><div class="name">${VG.esc(r.name)}</div><div class="detail">${VG.esc(r.position)} · £${r.price.toFixed(1)}m</div></div><span class="risk-badge fall">${r.risk === "falling" ? "falling" : "likely fall"}</span></div>`);
+    html += '</div></div></div>';
+  }
+
+  // ── Bonus projections league ──
+  const bonusRows = Object.entries(bonus)
+    .map(([id, pts]) => {
+      const p = VG.players[id];
+      return { id: +id, pts, name: p ? (p.web_name || p.second_name) : id, pos: p ? VG.POSITIONS[p.element_type] : "?" };
+    })
+    .sort((a, b) => b.pts - a.pts)
+    .slice(0, 12);
+  if (bonusRows.length > 0) {
+    html += `<div style="margin-top:16px;"><div class="section-title" style="font-size:0.8rem;">Projected Bonus (live BPS)</div>`;
+    html += '<table class="data-table" style="font-size:0.72rem;"><tr><th>Player</th><th>Pos</th><th>Bonus</th></tr>';
+    bonusRows.forEach(r => html += `<tr><td style="color:#e2e8f0;">${VG.esc(r.name)}</td><td>${r.pos}</td><td style="color:#fbbf24;">+${r.pts}</td></tr>`);
+    html += '</table></div>';
+  }
+
   return html;
 };

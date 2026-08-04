@@ -1,4 +1,4 @@
-# VibeGaffer v5.3.0
+# VibeGaffer v5.4.0
 
 **FPL Optimization Engine** | Powered by [Astraiva](https://astraiva.com) | Author: Tushant Sharma
 
@@ -33,12 +33,14 @@ This is a **pure static web app** deployed on GitHub Pages. Zero backend, zero C
 ┌──────────────────┴───────────────────────────────────┐
 │                  docs/data/*.json                      │
 │  bootstrap.json (~560 players) + fixtures.json (380)  │
-│  Auto-updated every 15 min by GitHub Actions           │
+│  understat.json (xG/xA + forecasts) + odds.json       │
+│  Auto-updated on a deadline-aware GitHub Actions       │
+│  schedule + weekly Understat/priors fetch              │
 └──────────────────┬───────────────────────────────────┘
                    │ fetched from
 ┌──────────────────┴───────────────────────────────────┐
-│           FPL Official API (fantasy.premierleague.com) │
-│  bootstrap-static/ + fixtures/ + user squad endpoints  │
+│    Free public sources (no key required)              │
+│  FPL API · Understat · vaastav · optional Odds API   │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -49,6 +51,7 @@ This is a **pure static web app** deployed on GitHub Pages. Zero backend, zero C
 3. Falls back to CORS proxies if direct fetch fails
 4. Commits JSON to `docs/data/` on `main` branch
 5. Static app reads local same-origin JSON — zero CORS issues
+6. **Weekly** `fetch-understat.yml` pulls free Understat player xG/xA priors, team npxG/pressing stats, and per-fixture w/d/l forecasts; `fetch-history-priors.yml` reduces the public vaastav FPL dataset to the fields needed for players whose official current-season history is missing. Official FPL data always takes precedence.
 
 ### Why Static?
 
@@ -61,7 +64,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.3.0)
+## Features (v5.4.0)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -168,6 +171,23 @@ Chip Opportunity Timeline: visual bar chart per GW showing TC/BB/WC/FH scores.
 
 - Filters for non-GK players with ownership <= 10% and xP >= 25th percentile
 - Ownership-weighted scoring: xP * trend * (1 - ownership/50)
+- **Differential Matrix (v5.3)**: 4-zone classification per pick — Gold (low owned, high xP/£m), Anchor (template, high value), Wait (low owned, weak value), Trap (popular, weak value)
+
+### Live Gameweek Intelligence (v5.3)
+
+Streams the in-progress gameweek from the FPL `/event/{gw}/live/` endpoint:
+- **Live points** from authoritative `explain` blocks (pre-bonus)
+- **Bonus projections** from live BPS with official tie-break rules (tied 1st → 3-3-1, tied 2nd → 3-2-2)
+- **Auto-sub simulation** — bench-order substitutions that keep the formation legal (GK≥1, DEF≥3, MID≥2, FWD≥1)
+- **Price-change velocity** — risers/fallers from net transfer activity (single classifier, classic ~10.5k rise threshold)
+- **Your team panel** (when a Team ID is set) — live points × multiplier, captain bonus, sub-risk flags
+- Auto-refreshes every 5 minutes while the GW is in progress
+
+### Smart Captaincy (v5.3)
+
+The "Why This Captain?" panel now includes:
+- **Blank probability** — P(fails to play 60+ mins) from starts/minutes history, status (doubtful/unavailable), the FPL `chance_of_playing_next_round` fitness flag, away-vs-strong-side signal, and card risk
+- **Vice-captain insurance EV** — ~1.4 points of expected value per 10% captain-blank probability
 
 ### Dynamic Strategy Tab
 
@@ -178,19 +198,53 @@ Personalized tips generated from actual squad data:
 - Budget analysis
 - Chip opportunity callouts
 - Missing template player warning
+- **Injury & Availability Watch (v5.4)**: fitness/news feed of `chance_of_playing_next_round` flags + injury strings across the player pool
+
+### Understat xG Enrichment (v5.4)
+
+Free Understat data powers a second, independent xG signal and the no-key odds layer:
+- **Understat forecast odds** — per-fixture w/d/l probabilities feed the xP engine (replaces The-Odds-API when the key is unset)
+- **Real xG / xA** — Understat priors blended 60% FPL + 40% Understat into xP, exposed as new columns in Compare and Differentials tabs
+- **Team Strength Ratings** — Understat npxG/npxGA → attack/defence/overall indices (100 = league average), 1-20 ranks, 1-5 rating in the Fixtures tab
+- **xG Regression Flags** — Understat xG vs actual FPL goals → green **DUE** badges (underperforming their xG, goals should come) and red **OVER** badges (running hot, likely to regress) in Compare + Differentials tabs
 
 ### Other Features
 
-- **Price Change Predictor**: Net transfer activity for risers/fallers
+- **Price Change Predictor**: Net transfer activity for risers/fallers (reads the real live-API `transfers_in_event`/`transfers_out_event` fields)
 - **Fixture Swing Analysis**: Easy/hard run detection across 20 teams
+- **Team Strength Ratings**: Understat xG power table (attack/defence/overall + PPDA) above the fixture ticker (v5.4)
 - **Championship Tips**: Static tips from FPL champions (Ibsen, Budisin, Labakk)
 - **Full Squad xP Breakdown**: Click-to-expand bar chart per player
 
 ---
 
+## Data Sources (intentional — do not remove)
+
+VibeGaffer is deliberately enriched with free public data. These integrations are product decisions, not tech debt — do not remove them:
+
+- **FPL API** (`fantasy.premierleague.com`) — official public read-only endpoint. Primary source.
+- **The-Odds-API** — optional bookmaker odds, gated by the `ODDS_API_KEY` repo secret.
+- **Understat** (`https://understat.com/getLeagueData/EPL/{season}`) — free player xG/xA/xGChain/xGBuildup, per-match team xG/xGA/npxG/ppda/deep, and `forecast` w/d/l probabilities for every fixture (can replace/backup The-Odds-API). Requires headers: `Referer: https://understat.com/league/EPL`, `User-Agent`, `X-Requested-With: XMLHttpRequest`.
+- **FBref** — free Opta-level xG/xA/shot maps (read/aggregate only, no heavy scraping).
+- **vaastav/Fantasy-Premier-League** GitHub raw CSVs — historical per-game data consumed weekly by `fetch-history-priors.yml`.
+- **LiveFPL / FPL Review / fpl.team** — read-only reference for feature ideas and thresholds (their private data is never consumed).
+
+All sources are public, read-only, and community-licensed. If a source breaks, port the functionality to a similar free source rather than deleting the feature.
+
+### Borrowing Policy (steal ideas + code — intentional)
+
+VibeGaffer explicitly **borrows ideas and patterns from top FPL tools and open-source projects** — this is a learning/enrichment project. This policy is intentional and must be preserved:
+
+- **Ideas are free**: stat concepts, thresholds, and UI patterns (xG regression "due/over" flags, effective ownership, team strength ratings, clean-sheet probabilities, expected-points frameworks) may be copied and re-implemented from LiveFPL, Fantasy Football Hub, FFix, fpl.review, FPL Scout, FPL Review, FPL Vault, FPL Pulse, allaboutfpl, and any public FPL tool or blog — cite inspiration in code comments where feasible.
+- **Open-source code is copyable**: permissive-licensed OSS (MIT/Apache/BSD/GPL) FPL analytics may be ported directly in, with attribution.
+- **Free/non-official APIs are welcome**: any public read-only, free data source may be integrated via a GitHub Actions fetcher (mirror `fetch-understat.yml`); prefer no-key sources, gate key-requiring ones behind optional repo secrets.
+- **Public FPL league data is usable**: other managers' squads/names via FPL league endpoints are fair game (always escaped via `VG.esc`).
+- **Do NOT**: scrape behind login walls, bypass ToS/rate limits, or copy proprietary/paywalled content verbatim (e.g. FFScout member projections) — re-implement the idea from public data instead.
+- **Do not revert**: a future maintainer must not strip this section, "clean up" borrowed features, or delete the Understat/vaastav/Odds integrations added under it.
+
 ## Setup
 
-- **Odds API** (optional): Add `ODDS_API_KEY` as a GitHub Actions repository secret from https://the-odds-api.com (free tier: 500 req/month). The odds workflow checks every 6h but only fetches when the next GW deadline is within 30h (~38 calls/season). Without it, the app works fine but without odds adjustments.
+- **Odds API** (optional): Add `ODDS_API_KEY` as a GitHub Actions repository secret from https://the-odds-api.com (free tier: 500 req/month). The odds workflow checks every 6h but only fetches when the next GW deadline is within 30h (~38 calls/season). Without it, the app works fine but without odds adjustments. The Understat `forecast` data can be used as a free no-key alternative for odds-style adjustments.
 
 ---
 
@@ -202,18 +256,21 @@ VibeGaffer/
 ├── package.json                        # Version + npm scripts (check, test)
 ├── .github/workflows/
 │   ├── fetch-data.yml                  # Deadline-aware FPL data fetch
+│   ├── fetch-understat.yml             # Weekly Understat xG/forecast fetch
+│   ├── fetch-history-priors.yml        # Weekly vaastav historical priors
 │   ├── fetch-odds.yml                  # Bookmaker odds (optional, needs secret)
 │   └── test.yml                        # CI: node --check + npm test
 ├── docs/                               # GitHub Pages root (deployed)
-│   ├── index.html                      # All UI: 8 tabs, CSP, inline JS (~870 lines)
-│   ├── app.js                          # Core engine (~2400 lines)
+│   ├── index.html                      # All UI: 9 tabs, CSP, inline JS (~930 lines)
+│   ├── app.js                          # Core engine (~2910 lines)
 │   ├── style.css                       # All styles (275 lines)
 │   ├── .nojekyll                       # Prevents Jekyll processing
 │   └── data/
 │       ├── bootstrap.json              # Player data (~560 active players)
 │       ├── fixtures.json               # 380 fixtures with FDR
+│       ├── understat.json              # Free Understat xG/xA + forecasts
 │       └── odds.json                   # Bookmaker odds (optional)
-├── tests/run.js                        # Regression suite (68 checks)
+├── tests/run.js                        # Regression suite (112 checks)
 └── .gitignore
 ```
 
@@ -276,7 +333,7 @@ Tests are committed in `tests/run.js` and run automatically in GitHub Actions. R
 npm test
 ```
 
-**68/68 tests pass.**
+**112/112 tests pass.**
 
 Test coverage:
 - Optimizer: squad size, formation validity, captain, budget
@@ -286,16 +343,17 @@ Test coverage:
 - Transfer planner: 5-GW schedule, summary, edge cases
 - League analyzer: null/bad input handling
 - Chips: all 4 chips, gwScores
+- v5.4: Understat blend, xG regression flags/badges, team strength ratings, shared fixture/team helpers
 - Dynamic tips: analysis, captain, static sections
 - xpComponents: all 8 fields, sum matches totalXP
 - Reverse maps: GK/DEF/MID/FWD mapping
 - Edge cases: empty squads, missing fixtures
 - xP engine accuracy: Haaland xP, GK xP
 - Transfer roadmap: per-GW fixture grid, recommendations
-- Chips: all 4 chips evaluated, gwScores populated
-- Dynamic tips: personalized analysis generated
-- xpComponents: all 8 fields, sum matches totalXP
-- Edge cases: empty squad, empty fixtures
+- Live GW: explain-block points, bonus ties, auto-subs, price velocity (v5.3)
+- Captaincy: blank probability, VC EV, reasoning with blank risk (v5.3)
+- Differential matrix: all four zones (v5.3)
+- Understat: forecast w/d/l, bookmaker fallback, real xG blend, injury feed, team strength ratings (v5.4)
 
 ---
 
@@ -315,7 +373,8 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
-| v5.3.0 | — | Escaped all API-derived HTML (mini-league XSS), SRI + CSP, fixed the HiGHS global so the ILP solver actually runs, horizon-aware pitch xP, compare-by-id, deadline-aware data cron, removed the unused Python/Docker stack, deduped the four XI-selection copies |
+| v5.4.0 | — | Understat forecast odds (free per-fixture w/d/l → xP engine), Real xG/xA columns (60/40 FPL+Understat blend), Injury & Availability Watch (Strategy tab), Team Strength Ratings (npxG/npxGA attack/defence/overall indices + ranks + 1-5 in Fixtures tab), xG regression DUE/OVER badges (Compare + Differentials), weekly Understat + vaastav fetchers, explicit borrowing policy for free FPL ideas/APIs, shared fixture helpers (`fixturesForGW`/`teamFixtureRow`/`teamColor`), TEAM_COLORS keyed by short_name |
+| v5.3.0 | — | Live GW tab (live points, bonus projection, auto-sub simulation, price-change velocity), captain blank-risk + VC insurance EV, 4-zone differential matrix, escaped all API-derived HTML (mini-league XSS), SRI + CSP, fixed the HiGHS global so the ILP solver actually runs, horizon-aware pitch xP, compare-by-id, deadline-aware data cron, removed the unused Python/Docker stack, deduped the four XI-selection copies, removed dead params/state, consolidated the two price predictors onto one model (real live-API fields), added shared fixture helpers |
 | v5.2.1 | `00bf512` | Correct single-GW lineup/captain projections, DGW detection, strategy routing, exact ILP constraints, deterministic fallback, odds fix, CI tests |
 | v5.2 | `498566a` | Lineup intelligence, captain explanations, squad DNA analysis |
 | v5.1 | — | Injury-aware optimizer, ILP solver, bookmaker odds, transfer planner, league analyzer |
@@ -344,17 +403,17 @@ Test coverage:
 - Trim `bootstrap.json` to the ~35 fields the engine reads (currently ships 105).
 - Move `docs/data/` to its own branch to keep `main` history clean.
 - Drop the third-party CORS proxies, or gate them behind explicit user consent.
-- Replace `VG.TEAM_COLORS` season-specific team IDs with `short_name` keys.
-- Add browser-level smoke tests for the eight UI tabs.
+- Add browser-level smoke tests for the nine UI tabs.
+- Research candidates (free-data feasible, borrowed-pattern friendly): effective ownership columns in the transfer planner, mini-league Monte Carlo win-probability (FPL Pulse-style, ~100k sims), Reddit r/FantasyPL sentiment feed, defensive vulnerability fixture ticker.
 
 ---
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.3.0
+- **Application**: VibeGaffer v5.4.0
 - **Company**: Astraiva
 - **Author**: Tushant Sharma
 - **License**: Proprietary
 - **Live URL**: https://jadax.github.io/VibeGaffer/
 - **GitHub**: https://github.com/Jadax/VibeGaffer
-- **Last Updated**: July 2026
+- **Last Updated**: August 2026

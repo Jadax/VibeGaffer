@@ -18,11 +18,11 @@
     form-action 'none'">
   <title>VibeGaffer — FPL Intelligence | Astraiva</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.3.0">
+  <link rel="stylesheet" href="style.css?v=5.4.0">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
           integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=5.3.0"></script>
+  <script src="app.js?v=5.4.0"></script>
 </head>
 <body>
 
@@ -31,7 +31,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Astraiva</strong> · Tushant Sharma · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.3.0</span></div>
+    <div><span class="badge pulse-glow">v5.4.0</span></div>
 </div>
 
 <div class="app">
@@ -75,6 +75,7 @@
   <div id="results" style="display:none;">
     <div class="tabs">
       <button class="tab active" onclick="VG.switchTab('squad')">Squad</button>
+      <button class="tab" onclick="VG.switchTab('live')">Live</button>
       <button class="tab" onclick="VG.switchTab('compare')">Compare</button>
       <button class="tab" onclick="VG.switchTab('prices')">Prices</button>
       <button class="tab" onclick="VG.switchTab('fixtures')">Fixtures</button>
@@ -86,6 +87,12 @@
 
     <div class="tab-content active" id="tab-squad">
       <div id="squadContent"></div>
+    </div>
+
+    <div class="tab-content" id="tab-live">
+      <div class="section-title">Live Gameweek Intelligence</div>
+      <p class="subtitle">In-progress GW tracking: live points, bonus projections, auto-subs and price-change velocity. Auto-refreshes every 5 min during a live GW.</p>
+      <div id="liveContent"></div>
     </div>
 
     <div class="tab-content" id="tab-compare">
@@ -139,7 +146,7 @@
 </div>
 </div>
 
-<div class="footer">VibeGaffer v5.3.0 · Astraiva · Built by Tushant Sharma</div>
+<div class="footer">VibeGaffer v5.4.0 · Astraiva · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -155,9 +162,11 @@ VG.init = async () => {
   el("status").innerHTML = '<span class="status-dot warning"></span> Loading data...';
   try {
     VG.bootstrapData = await VG.loadBootstrap();
+    VG.applyHistoryPriors(VG.bootstrapData, await VG.loadHistoryPriors());
     VG.buildMaps(VG.bootstrapData);
     VG.allFixtures = await VG.loadFixtures();
     VG.loadOdds(); // Optional — loads in background, non-blocking
+    VG.loadUnderstat(); // Optional — loads in background, non-blocking
     const gwSel = el("gameweek");
     gwSel.innerHTML = "";
     for (let i = 1; i <= 38; i++) {
@@ -187,6 +196,7 @@ VG.run = async () => {
       VG.buildMaps(VG.bootstrapData);
     }
     if (!VG.allFixtures) VG.allFixtures = await VG.loadFixtures();
+    if (!VG.understatLoaded) await VG.loadUnderstat();
 
     const gw = parseInt(el("gameweek").value);
     const horizon = parseInt(el("horizon").value);
@@ -206,21 +216,21 @@ VG.run = async () => {
         // Generate all 3 strategies and pick balanced as primary
         const strategies = VG.optimizeStrategies(allXP, 100, VG.allFixtures, gw, horizon);
         const draft = strategies.balanced;
-        const chips = VG.evaluateChips(draft.squad, draft.gwPicks, gw, VG.allFixtures);
-        result = { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, netAfterHit: draft.totalXP, mode: "draft", strategies };
+        const chips = VG.evaluateChips(draft.squad, draft.gwPicks, VG.allFixtures);
+        result = { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, gwTotalXP: draft.gwPicks?.[0]?.gwTotalXP || 0, mode: "draft", strategies };
       } else {
         const draft = strategy === "balanced"
           ? await VG.optimizeDraftILP(allXP, 100, VG.allFixtures, gw, horizon)
           : VG.optimizeStrategies(allXP, 100, VG.allFixtures, gw, horizon)[strategy];
-        const chips = VG.evaluateChips(draft.squad, draft.gwPicks, gw, VG.allFixtures);
-        result = { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, netAfterHit: draft.totalXP, mode: "draft", activeStrategy: strategy };
+        const chips = VG.evaluateChips(draft.squad, draft.gwPicks, VG.allFixtures);
+        result = { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, gwTotalXP: draft.gwPicks?.[0]?.gwTotalXP || 0, mode: "draft" };
       }
     } else {
       const squadData = await VG.loadSquad(teamId, gw);
       const currentSquad = squadData.picks.picks;
       const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
       const freeTransfers = parseInt(el("freeTransfers").value);
-      const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, VG.allFixtures, gw, 5);
+      const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, gw, 5);
       const transferOutIds = new Set(transferResult.transfersOut.map(p => p.id));
       const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
       const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
@@ -234,13 +244,14 @@ VG.run = async () => {
       horizonGWs.forEach(g => gwPicks.push(VG.computePerGWPicks(allSquad, g, VG.allFixtures)));
       const starting11 = gwPicks[0]?.starting || allSquad.slice(0, 11);
       const bench4 = gwPicks[0]?.bench || allSquad.slice(11, 15);
-      const gotCap = gwPicks[0]?.gotCap || starting11.filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2);
-      const chips = VG.evaluateChips(allSquad, gwPicks, gw, VG.allFixtures);
+      const gotCap = gwPicks[0]?.gotCap || VG.topCaptainCandidates(starting11, "totalXP");
+      const chips = VG.evaluateChips(allSquad, gwPicks, VG.allFixtures);
       result = {
         ...transferResult, chipAdvice: chips, starting: starting11, bench: bench4,
         totalCost: +allSquad.reduce((s, p) => s + (p.price || 0), 0).toFixed(1),
         budgetRemaining: bank, formation: gwPicks[0]?.formation || { DEF: 4, MID: 4, FWD: 2 },
         totalXP: +gwPicks.reduce((s, g) => s + g.gwTotalXP, 0).toFixed(1),
+        gwTotalXP: gwPicks[0]?.gwTotalXP || 0,
         mode: "transfer", gotCap, gwPicks, squad: allSquad
       };
     }
@@ -381,7 +392,7 @@ VG.run = async () => {
       html += `<div class="cap-card secondary"><div class="cap-role" style="color:#06b6d4;">Vice</div><div class="cap-name">${VG.esc(v.name)}</div><div class="cap-stats"><span style="color:#06b6d4;">${(v.gwXP || v.totalXP || 0).toFixed(1)} xP</span> · ${VG.esc(v.position)} · ${VG.esc(v.teamName)}${v.gwOpp ? ' · ' + VG.esc(v.gwVenue + ' vs ' + v.gwOpp) : ''}</div></div>`;
       html += '</div>';
       // Captain reasoning
-      const capReason = VG.getCaptainReasoning(Object.assign({}, c, { isHome: c.gwVenue, oppName: c.gwOpp, fdr: c.gwFDR, gwXP: c.gwXP || c.totalXP }), VG.allFixtures, gw);
+      const capReason = VG.getCaptainReasoning(Object.assign({}, c, { isHome: c.gwVenue, oppName: c.gwOpp, fdr: c.gwFDR, gwXP: c.gwXP || c.totalXP }), VG.allFixtures, gw, v);
       if (capReason && capReason.details.length > 0) {
         html += '<div style="margin-top:8px;padding:10px 14px;background:rgba(251,191,36,0.05);border-radius:8px;border-left:3px solid #fbbf24;">';
         html += '<div style="font-size:0.7rem;color:#fbbf24;font-weight:600;">Why This Captain?</div>';
@@ -601,7 +612,16 @@ VG.preloadTabs = async (gw, horizon) => {
   try {
     const tickerData = VG.buildFixtureTicker(gw, 8, VG.allFixtures);
     const swings = VG.analyzeFixtureSwings(gw, 8, VG.allFixtures);
-    let fixtureHTML = VG.render.ticker(tickerData, gw, 8);
+    let fixtureHTML = '';
+    // Team strength ratings from free Understat npxG priors (v5.4)
+    const teamRatings = VG.computeTeamRatings();
+    if (teamRatings) {
+      fixtureHTML += '<div class="section-title" style="font-size:0.8rem;">Team Strength Ratings (Understat xG)</div>';
+      fixtureHTML += '<p class="subtitle" style="margin-top:0;">100 = league average · higher attack/defence = stronger · 1-5 rating (5 = elite).</p>';
+      fixtureHTML += VG.render.teamRatings(teamRatings);
+      fixtureHTML += '<div class="section-title" style="margin-top:16px;font-size:0.8rem;">Fixture Difficulty Ticker</div>';
+    }
+    fixtureHTML += VG.render.ticker(tickerData, gw, 8);
     // Add fixture swing summary
     fixtureHTML += '<div class="section-title" style="margin-top:16px;font-size:0.8rem;">Fixture Swing Analysis</div>';
     fixtureHTML += '<div class="swing-grid">';
@@ -619,13 +639,39 @@ VG.preloadTabs = async (gw, horizon) => {
     if (worstRuns.length === 0) fixtureHTML += '<p style="color:#334155;font-size:0.7rem;">No clear hard runs</p>';
     worstRuns.forEach(s => {
       const runTag = s.maxHardRun >= 3 ? `<span class="swing-run hard">💀 ${s.maxHardRun} GW run (GW${s.hardRunGWs})</span>` : '';
-      fixtureHTML += `<div class="swing-card"><span class="swing-name">${s.name}</span><span class="swing-avg">FDR ${s.avgFDR}</span>${runTag}</div>`;
+      fixtureHTML += `<div class="swing-card"><span class="swing-name">${VG.esc(s.name)}</span><span class="swing-avg">FDR ${s.avgFDR}</span>${runTag}</div>`;
     });
     fixtureHTML += '</div></div>';
     document.getElementById("fixtureContent").innerHTML = fixtureHTML;
   } catch(e) {
     console.warn("[VG] Fixture ticker:", e);
     document.getElementById("fixtureContent").innerHTML = '<p style="color:#475569;">Fixture data unavailable</p>';
+  }
+
+  try {
+    const liveGW = parseInt(el("gameweek").value);
+    const liveTeam = parseInt(el("teamId").value) || 0;
+    const gwInProgress = VG.gwData && VG.gwData.some(g => g.is_current);
+    if (!gwInProgress) {
+      document.getElementById("liveContent").innerHTML = '<p style="color:#475569;">Live tracking activates when a gameweek is in progress. Check back after the deadline.</p>';
+    } else {
+      document.getElementById("liveContent").innerHTML = '<div class="vg-loader"><div class="vg-loader-spinner"></div><div class="vg-loader-text">Fetching live GW data...</div></div>';
+      // Non-blocking: let the other tabs render while live data streams in
+      VG.renderLive(liveGW, liveTeam)
+        .then(h => { document.getElementById("liveContent").innerHTML = h; })
+        .catch(err => {
+          console.warn("[VG] Live:", err);
+          document.getElementById("liveContent").innerHTML = '<p style="color:#475569;">Live data unavailable.</p>';
+        });
+      // Auto-refresh every 5 min during a live GW
+      clearTimeout(VG._liveTimer);
+      VG._liveTimer = setTimeout(() => {
+        VG.renderLive(liveGW, liveTeam).then(h => { document.getElementById("liveContent").innerHTML = h; }).catch(() => {});
+      }, 5 * 60 * 1000);
+    }
+  } catch(e) {
+    console.warn("[VG] Live:", e);
+    document.getElementById("liveContent").innerHTML = '<p style="color:#475569;">Live data unavailable.</p>';
   }
 
   try {
@@ -667,11 +713,19 @@ VG.preloadTabs = async (gw, horizon) => {
         })
         .sort((a, b) => b.diffScore - a.diffScore)
         .slice(0, 20);
-      let dh = '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>ep_next</th><th>BPS</th><th>DEF/90</th><th>Own%</th><th>Diff Score</th></tr>';
+      let dh = '<div class="section-title" style="font-size:0.8rem;margin-bottom:4px;">Differential Matrix</div>';
+      dh += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;font-size:0.65rem;">';
+      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(0,255,135,0.1);color:#00ff87;">● Gold — low owned, high xP/£m (buy)</span>';
+      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(59,130,246,0.1);color:#3b82f6;">● Anchor — template, high xP/£m (safe)</span>';
+      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(251,191,36,0.1);color:#fbbf24;">● Wait — low owned, weak value</span>';
+      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(239,68,68,0.1);color:#ef4444;">● Trap — popular but weak value</span>';
+      dh += '</div>';
+      dh += '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>Real xG/90</th><th>xG Reg</th><th>ep_next</th><th>BPS</th><th>DEF/90</th><th>Own%</th><th>Zone</th><th>Diff Score</th></tr>';
       diffs.forEach((p, i) => {
         const rank = i + 1;
         const ownColor = (p.ownership || 0) <= 2 ? '#00ff87' : (p.ownership || 0) <= 5 ? '#fbbf24' : '#94a3b8';
-        dh += `<tr><td style="color:#e2e8f0;">${rank}. ${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td>${(p.bps || 0)}</td><td>${(p.defconPer90 || 0).toFixed(2)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
+        const zone = VG.getDifferentialZone(p);
+        dh += `<tr><td style="color:#e2e8f0;">${rank}. ${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td><td>${VG.regressionBadge(p.regression)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td>${(p.bps || 0)}</td><td>${(p.defconPer90 || 0).toFixed(2)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td><span style="color:${zone.color};">${VG.esc(zone.label)}</span></td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
       });
       dh += '</table>';
       if (diffs.length === 0) dh = '<p style="color:#475569;">No differentials found matching criteria (low ownership + high xP)</p>';
@@ -687,7 +741,7 @@ VG.preloadTabs = async (gw, horizon) => {
       const bank = VG.currentResult.budgetRemaining || 0;
       const gw = parseInt(el('gameweek').value);
       const horizon = parseInt(el('horizon').value);
-      const plan = VG.computeTransferPlan(squad, VG.allXP, VG.allFixtures, gw, horizon, bank, 1);
+      const plan = VG.computeTransferPlan(squad, VG.allXP, VG.allFixtures, gw, horizon, bank);
       if (plan && plan.schedule.length > 0) {
         let ph = '';
         // Summary card
@@ -789,7 +843,7 @@ VG.preloadTabs = async (gw, horizon) => {
   }
 
   try {
-    document.getElementById("tipsContent").innerHTML = VG.render.tips(VG.currentResult, VG.allXP, VG.allFixtures, parseInt(el('gameweek').value), 5);
+    document.getElementById("tipsContent").innerHTML = VG.render.tips(VG.currentResult, VG.allXP, VG.allFixtures, parseInt(el('gameweek').value));
   } catch(e) {
     console.warn("[VG] Tips:", e);
   }
@@ -857,10 +911,12 @@ VG.renderComparison = () => {
   }
 
   // ── Table: raw stats + xP components ──
-  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>App</th><th>CS</th><th>Goals</th><th>Assists</th><th>Bonus</th><th>DEFCON</th><th>Saves</th></tr>';
+  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>Real xG</th><th>xG/90</th><th>xG Reg</th><th>App</th><th>CS</th><th>Goals</th><th>Assists</th><th>Bonus</th><th>DEFCON</th><th>Saves</th></tr>';
   selected.forEach((p) => {
     const xc = p.xpComponents || {};
     tableHtml += `<tr><td style="color:#e2e8f0;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
+    tableHtml += `<td>${(p.realXG || 0).toFixed(1)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td>`;
+    tableHtml += `<td>${VG.regressionBadge(p.regression)}</td>`;
     tableHtml += `<td>${(xc.xpAppearance || 0).toFixed(1)}</td>`;
     tableHtml += `<td>${(xc.xpCS || 0).toFixed(1)}</td>`;
     tableHtml += `<td>${(xc.xpGoals || 0).toFixed(1)}</td>`;

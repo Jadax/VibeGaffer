@@ -1,0 +1,48 @@
+name: Fetch Free FPL History Priors
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: fetch-history-priors
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Download and reduce public historical FPL data
+        run: |
+          curl -sfL --retry 3 -o /tmp/players_raw.csv \
+            https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/2025-26/players_raw.csv
+          python3 - <<'PY'
+          import csv, json
+          fields = ('minutes', 'starts', 'expected_goals', 'expected_assists',
+                    'expected_goals_per_90', 'expected_assists_per_90',
+                    'clean_sheets_per_90', 'defensive_contribution_per_90',
+                    'total_points', 'bonus', 'bps')
+          priors = {}
+          with open('/tmp/players_raw.csv', encoding='utf-8') as source:
+              for row in csv.DictReader(source):
+                  code = row.get('code')
+                  if code:
+                      priors[code] = {key: row.get(key, '0') for key in fields}
+          with open('docs/data/history-priors.json', 'w', encoding='utf-8') as target:
+              json.dump({'source': 'vaastav/Fantasy-Premier-League', 'season': '2025-26', 'players': priors}, target, separators=(',', ':'))
+          print(f'Wrote {len(priors)} historical player priors')
+          PY
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/history-priors.json
+          git diff --staged --quiet || (git commit -m "data: refresh free FPL history priors [skip ci]" && git push)

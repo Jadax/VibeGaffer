@@ -1,0 +1,231 @@
+name: Fetch Free Understat xG/Forecast Data
+
+on:
+  schedule:
+    # Weekly Monday morning. Understat data only moves once a week (match
+    # results + forecasts), so daily would be noise.
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fetch-understat.yml'
+
+concurrency:
+  group: fetch-understat
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+
+      # Understat requires a browser-like Referer + X-Requested-With, so curl
+      # with explicit headers. Fetch BOTH the current season (start year of GW1
+      # deadline) and the previous one: preseason the new season is empty and
+      # the previous season provides the player/team priors.
+      - name: Download Understat seasons
+        run: |
+          mkdir -p /tmp/understat
+          for Y in 2026 2025; do
+            curl -sfL --compressed --retry 3 -o /tmp/understat/$Y.json \
+              -H "Referer: https://understat.com/league/EPL" \
+              -H "User-Agent: Mozilla/5.0 (compatible; VibeGaffer/1.0)" \
+              -H "X-Requested-With: XMLHttpRequest" \
+              "https://understat.com/getLeagueData/EPL/$Y" || echo "FETCH_FAIL $Y"
+          done
+          ls -la /tmp/understat
+
+      - name: Build compact understat.json (players/teams priors + forecasts)
+        run: |
+          python3 - <<'PY'
+          import json, os, re, unicodedata, html, datetime
+
+          CUR_YEAR, PREV_YEAR = '2026', '2025'
+          raw_dir = '/tmp/understat'
+
+          def load(year):
+              path = os.path.join(raw_dir, year + '.json')
+              if not os.path.exists(path):
+                  return None
+              try:
+                  with open(path, encoding='utf-8') as f:
+                      j = json.load(f)
+                  return j if isinstance(j, dict) and j.get('players') else None
+              except Exception:
+                  return None
+
+          current = load(CUR_YEAR) or {'players': [], 'teams': {}, 'dates': []}
+          prev = load(PREV_YEAR) or {'players': [], 'teams': {}, 'dates': []}
+
+          # A season with no fixtures yet (preseason) is useless; prefer the
+          # one that actually has data. Priors = whichever has players.
+          priors_season = current if current.get('players') else prev
+          priors_year = CUR_YEAR if current.get('players') else PREV_YEAR
+
+          bootstrap = json.load(open('docs/data/bootstrap.json', encoding='utf-8'))
+          fixtures = json.load(open('docs/data/fixtures.json', encoding='utf-8'))
+
+          # ── Name normalization (accent/entity tolerant) ──
+          TR = {'ø':'o','Ø':'o','æ':'ae','Æ':'ae','œ':'oe','Œ':'oe','ß':'ss','đ':'d','ð':'d','ł':'l','Ł':'l'}
+          def norm(s):
+              if not s:
+                  return ''
+              s = html.unescape(str(s))
+              s = ''.join(TR.get(c, c) for c in s)
+              s = unicodedata.normalize('NFKD', s)
+              s = ''.join(c for c in s if not unicodedata.combining(c))
+              return re.sub(r'[^a-z0-9]+', '', s.lower())
+
+          def firsttok(s):
+              m = re.split(r'\s+', (s or '').strip())
+              return m[0] if m else ''
+
+          # ── Team mapping: understat full title -> FPL short_name ──
+          title_alias = {
+              'arsenal':'ARS','aston villa':'AVL','bournemouth':'BOU','brentford':'BRE','brighton':'BHA',
+              'chelsea':'CHE','coventry':'COV','crystal palace':'CRY','everton':'EVE','fulham':'FUL','hull':'HUL',
+              'hull city':'HUL','ipswich':'IPS','ipswich town':'IPS','leeds':'LEE','leeds united':'LEE','liverpool':'LIV',
+              'man city':'MCI','manchester city':'MCI','man utd':'MUN','manchester united':'MUN','newcastle':'NEW',
+              'newcastle united':'NEW',"nott'm forest":"NFO","nottingham forest":"NFO",'spurs':'TOT','tottenham':'TOT',
+              'tottenham hotspur':'TOT','sunderland':'SUN','west ham':'WHU','west ham united':'WHU','leicester':'LEI',
+              'leicester city':'LEI','southampton':'SOU','wolves':'WOL','wolverhampton':'WOL','wolverhampton wanderers':'WOL'
+          }
+          fpl_short_by_id = {t['id']: t['short_name'] for t in bootstrap['teams']}
+          fpl_id_by_short = {v: k for k, v in fpl_short_by_id.items()}
+          # Keys are raw titles ('Aston Villa'); look up with normalized (no-space) forms.
+          title_alias = {norm(k): v for k, v in title_alias.items()}
+
+          # ── Player priors: understat player -> FPL element id ──
+          fpl_elements = list(bootstrap['elements'])
+          by_full = {}
+          for el in fpl_elements:
+              s1 = firsttok(el['second_name'])
+              w1 = firsttok(el['web_name'])
+              keys = {norm(el['first_name'] + s1), norm(el['first_name'] + w1),
+                      norm(el['web_name']), norm(s1), norm(w1), norm(el['first_name'])}
+              for k in keys:
+                  if k:
+                      by_full.setdefault(k, []).append(el)
+
+          players = {}
+          for p in priors_season.get('players', []):
+              nm = norm(p['player_name'])
+              tokens = nm.split()
+              tts = {title_alias[norm(x)] for x in (p['team_title'] or '').split(',') if norm(x) in title_alias}
+              found = None
+              cands = by_full.get(nm, [])
+              if len(cands) == 1:
+                  found = cands[0]
+              elif len(cands) > 1:
+                  for el in cands:
+                      if fpl_short_by_id[el['team']] in tts:
+                          found = el; break
+              if not found and tokens:
+                  cands = by_full.get(tokens[-1], [])
+                  if len(cands) == 1:
+                      found = cands[0]
+                  elif len(cands) > 1:
+                      for el in cands:
+                          if fpl_short_by_id[el['team']] in tts:
+                              found = el; break
+              if found and found['id'] not in players:
+                  players[found['id']] = {
+                      'name': p['player_name'],
+                      'xG': round(float(p.get('xG') or 0), 2),
+                      'xA': round(float(p.get('xA') or 0), 2),
+                      'npxG': round(float(p.get('npxG') or 0), 2),
+                      'xGChain': round(float(p.get('xGChain') or 0), 2),
+                      'xGBuildup': round(float(p.get('xGBuildup') or 0), 2),
+                      'games': int(float(p.get('games') or 0)),
+                      'time': int(float(p.get('time') or 0))
+                  }
+
+          # ── Team priors: rolling npxG/xGA/pressing from match history ──
+          teams = {}
+          for understat_team in priors_season.get('teams', {}).values():
+              fpl_id = fpl_id_by_short.get(title_alias.get(norm(understat_team['title'])))
+              if not fpl_id:
+                  continue
+              hist = (understat_team.get('history') or [])[-10:]
+              if not hist:
+                  continue
+              def avg(fn):
+                  vals = [fn(m) for m in hist]
+                  return round(sum(vals) / len(vals), 2) if vals else 0
+              ppda_vals = [m['ppda']['att'] / m['ppda']['def'] for m in hist
+                           if m.get('ppda', {}).get('def', 0) > 0]
+              teams[fpl_id] = {
+                  'npxg90': avg(lambda m: float(m.get('npxG') or 0)),
+                  'npxga90': avg(lambda m: float(m.get('npxGA') or 0)),
+                  'ppda': round(sum(ppda_vals) / len(ppda_vals), 2) if ppda_vals else 0,
+                  'deep': avg(lambda m: float(m.get('deep') or 0))
+              }
+
+          # ── Forecasts: join understat dates to FPL fixtures ──
+          # The current season's fixtures carry the free w/d/l win probabilities.
+          fpl_fx_by_key = {}
+          for fxf in fixtures:
+              date = (fxf.get('kickoff_time') or '')[:10]
+              fpl_fx_by_key[(fxf['team_h'], fxf['team_a'], date)] = fxf['id']
+          understat_short_by_title = {}
+          for d in current.get('dates', []):
+              understat_short_by_title[norm(d['h']['title'])] = d['h']['short_title']
+              understat_short_by_title[norm(d['a']['title'])] = d['a']['short_title']
+          fx_by_short = {}
+          for fxf in fixtures:
+              fx_by_short.setdefault((fpl_short_by_id[fxf['team_h']], fpl_short_by_id[fxf['team_a']]), []).append(fxf)
+
+          fixtures_out = []
+          for d in current.get('dates', []):
+              if not d.get('forecast'):
+                  continue
+              hs = d['h']['short_title']
+              ashort = d['a']['short_title']
+              date = (d.get('datetime') or '')[:10]
+              # understat short codes can differ from FPL (BRI/BHA, FLH/FUL):
+              hs = title_alias.get(norm(d['h']['title']), hs)
+              ashort = title_alias.get(norm(d['a']['title']), ashort)
+              cand = None
+              for fxf in fx_by_short.get((hs, ashort), []):
+                  if (fxf.get('kickoff_time') or '')[:10] == date:
+                      cand = fxf; break
+              if not cand:
+                  # swapped home/away leg
+                  for fxf in fx_by_short.get((ashort, hs), []):
+                      if (fxf.get('kickoff_time') or '')[:10] == date:
+                          cand = fxf; break
+              if cand:
+                  fixtures_out.append({
+                      'fplId': cand['id'],
+                      'home': hs,
+                      'away': ashort,
+                      'datetime': d.get('datetime'),
+                      'isResult': bool(d.get('isResult')),
+                      'forecast': {'w': d['forecast'].get('w'), 'd': d['forecast'].get('d'), 'l': d['forecast'].get('l')}
+                  })
+
+          out = {
+              'source': 'understat.com/getLeagueData/EPL',
+              'priorsSeason': priors_year + '-' + str(int(priors_year) + 1),
+              'forecastSeason': CUR_YEAR + '-' + str(int(CUR_YEAR) + 1),
+              'fetchedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'players': players,
+              'teams': teams,
+              'fixtures': fixtures_out
+          }
+          with open('docs/data/understat.json', 'w', encoding='utf-8') as target:
+              json.dump(out, target, separators=(',', ':'))
+          print(f"players: {len(players)} | teams: {len(teams)} | forecast fixtures: {len(fixtures_out)} (season {out['forecastSeason']}, priors {out['priorsSeason']})")
+          PY
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/understat.json
+          git diff --staged --quiet || (git commit -m "data: refresh free Understat xG + forecasts [skip ci]" && git push)

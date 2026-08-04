@@ -48,6 +48,14 @@ function positionCounts(squad) {
 }
 
 VG.buildMaps(bootstrap);
+const promotedTeamFixture = {
+  elements: [],
+  teams: [{ id: 99, name: "Promoted FC", strength: 2, strength_defence_home: 0, strength_overall_home: 0 }],
+  events: []
+};
+VG.buildMaps(promotedTeamFixture);
+check("Promoted-team fallback uses the API team rating", VG.teams[99].strength_overall_home === 930 && VG.teams[99].strength_attack_away === 890);
+VG.buildMaps(bootstrap);
 const allXP = VG.computeAllXP(1, 5, fixtures);
 
 section("Data and xP engine");
@@ -56,8 +64,27 @@ check("Loaded 20 teams", Object.keys(VG.teams).length === 20);
 check("Doubtful players remain available for evaluation", allXP.some(p => p.status === "d"));
 check("Haaland has a positive projection", allXP.find(p => p.name === "Haaland")?.totalXP > 0);
 check("Every player projection is non-negative", allXP.every(p => p.totalXP >= 0));
+check("DEFCON uses a bounded threshold probability", VG.poissonAtLeast(0, 10) === 0 && VG.poissonAtLeast(20, 10) > 0.99 && VG.poissonAtLeast(5, 10) < 0.1);
 check("At least one first-choice GK projects above 20 xP", allXP.some(p => p.position === "GK" && p.totalXP > 20));
 check("Low-minute backup GKs may remain below 20 xP", allXP.some(p => p.position === "GK" && p.totalXP < 20));
+
+// ── Shared fixture/team helpers (v5.4 hardening) ──────────────────────
+section("Shared fixture + team helpers (v5.4)");
+const gw1All = VG.fixturesForGW(fixtures, 1);
+const gw1Fixture = gw1All[0];
+const homePid = gw1Fixture.team_h;
+const awayPid = gw1Fixture.team_a;
+check("fixturesForGW returns exactly that gameweek's matches", gw1All.length > 0 && gw1All.every(f => f.event === 1));
+check("fixturesForGW returns [] for a blank gameweek", Array.isArray(VG.fixturesForGW(fixtures, 99)) && VG.fixturesForGW(fixtures, 99).length === 0);
+const homeInfo = VG.teamFixtures(fixtures, 1, homePid);
+check("teamFixtures finds home-side fixture", homeInfo.length === 1 && homeInfo[0].team_h === homePid);
+check("teamFixtures returns [] when team plays no fixture", VG.teamFixtures(fixtures, 99, homePid).length === 0);
+const rows = VG.teamFixtureRow(homePid, 1, 3, fixtures);
+check("teamFixtureRow builds a 3-row fixture grid", rows.length === 3);
+check("teamFixtureRow returns fixture info or null per week", rows.every(r => r === null || (r.oppName && typeof r.fdr === "number" && typeof r.isHome === "boolean")));
+check("teamColor resolves short_name to a kit color", typeof VG.teamColor("ARS") === "string" && VG.teamColor("ARS").startsWith("#"));
+check("teamColor resolves numeric team id via VG.teams", typeof VG.teamColor(homePid) === "string" && VG.teamColor(homePid).startsWith("#"));
+check("teamColor falls back to a neutral color", VG.teamColor("ZZZ") === "#38bdf8" && VG.teamColor(null) === "#38bdf8");
 
 section("Deterministic draft optimizer");
 const draft = VG.optimizeDraft(allXP, 100, fixtures, 1, 5);
@@ -136,11 +163,11 @@ const mockSquad = draft.squad.map(p => ({
   now_cost: Math.round(p.price * 10),
   selling_price: Math.round(p.price * 10)
 }));
-const transfers = VG.optimizeTransfers(mockSquad, allXP, 0.5, 1, fixtures, 1, 5);
+const transfers = VG.optimizeTransfers(mockSquad, allXP, 0.5, 1, 1, 5);
 check("Transfer optimizer returns hit details", Array.isArray(transfers.hitDetails));
 check("Transfer roadmap covers five GWs", VG.computeTransferRoadmap(draft.squad, allXP, fixtures, 1, 5)?.length === 5);
 check("Transfer planner covers five GWs", VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 1)?.schedule.length === 5);
-check("Chip engine evaluates every chip", Object.keys(VG.evaluateChips(draft.squad, draft.gwPicks, 1, fixtures)).includes("triple_captain"));
+check("Chip engine evaluates every chip", Object.keys(VG.evaluateChips(draft.squad, draft.gwPicks, fixtures)).includes("triple_captain"));
 
 section("Regressions");
 const captainReason = VG.getCaptainReasoning({
@@ -205,6 +232,177 @@ check("Data fetch fails fast on HTTP errors so fallbacks fire", dataWorkflow.inc
 check("Data fetch is deadline-aware, not a flat 15-minute cron", !dataWorkflow.includes("'*/15 * * * *'"));
 
 check("Python implementation is gone", !fs.existsSync(path.join(root, "app.py")) && !fs.existsSync(path.join(root, "optimizer.py")));
+check("Free history-prior automation is configured", fs.existsSync(path.join(root, ".github", "workflows", "fetch-history-priors.yml")) && appSource.includes("VG.applyHistoryPriors"));
+
+section("v5.3.0 live + smart captaincy");
+
+check("Live tab is present in the tab bar", indexSource.includes("VG.switchTab('live')") && indexSource.includes('id="tab-live"'));
+check("Live tab is preloaded on run", indexSource.includes("VG.renderLive(liveGW, liveTeam)"));
+
+// computeLivePoints sums the authoritative explain blocks
+const fakeLive = { elements: [
+  { id: 1, explain: [{ fixture: 1, stats: [{ identifier: "goals_scored", points: 6 }, { identifier: "minutes", points: 2 }] }] },
+  { id: 2, explain: [] },
+  { id: 3, explain: [{ fixture: 2, stats: [{ identifier: "clean_sheets", points: 4 }] }] }
+]};
+const livePts = VG.computeLivePoints(fakeLive);
+check("computeLivePoints sums explain blocks", livePts[1] === 8 && livePts[2] === 0 && livePts[3] === 4);
+
+// predictBonus: distinct BPS gets 3/2/1
+const f1 = fixtures.find(f => f.event >= 1);
+const bonusLive = { elements: [
+  { id: 10, stats: { minutes: 90, bps: 30 }, explain: [{ fixture: f1.id, stats: [] }] },
+  { id: 11, stats: { minutes: 90, bps: 25 }, explain: [{ fixture: f1.id, stats: [] }] },
+  { id: 12, stats: { minutes: 90, bps: 20 }, explain: [{ fixture: f1.id, stats: [] }] },
+  { id: 13, stats: { minutes: 90, bps: 35 }, explain: [{ fixture: f1.id, stats: [] }] }
+]};
+const bonus = VG.predictBonus(bonusLive, fixtures, f1.event);
+check("predictBonus awards 3/2/1 per fixture", bonus[13] === 3 && bonus[10] === 2 && bonus[11] === 1 && bonus[12] === undefined);
+
+// tie for 1st → both 3, next 1
+const tieLive = { elements: [
+  { id: 20, stats: { minutes: 90, bps: 40 }, explain: [{ fixture: f1.id, stats: [] }] },
+  { id: 21, stats: { minutes: 90, bps: 40 }, explain: [{ fixture: f1.id, stats: [] }] },
+  { id: 22, stats: { minutes: 90, bps: 30 }, explain: [{ fixture: f1.id, stats: [] }] }
+]};
+const bonusTie = VG.predictBonus(tieLive, fixtures, f1.event);
+check("predictBonus handles 1st-place ties (3-3-1)", bonusTie[20] === 3 && bonusTie[21] === 3 && bonusTie[22] === 1);
+
+// simulateAutoSubs: a 0-min MID starter is replaced by the playing bench MID
+const start = [
+  { element: 1, id: 1, positionId: 1 },
+  { element: 2, id: 2, positionId: 2 }, { element: 3, id: 3, positionId: 2 },
+  { element: 4, id: 4, positionId: 2 }, { element: 5, id: 5, positionId: 2 },
+  { element: 6, id: 6, positionId: 3 }, { element: 7, id: 7, positionId: 3 },
+  { element: 8, id: 8, positionId: 3 }, { element: 9, id: 9, positionId: 3 },
+  { element: 10, id: 10, positionId: 4 }, { element: 11, id: 11, positionId: 4 }
+];
+const bench = [
+  { element: 20, id: 20, positionId: 1 },
+  { element: 21, id: 21, positionId: 2 },
+  { element: 22, id: 22, positionId: 3 },
+  { element: 23, id: 23, positionId: 4 }
+];
+const mins = { 1: 90, 2: 90, 3: 90, 4: 90, 5: 90, 6: 90, 7: 90, 8: 0, 9: 90, 10: 90, 11: 90, 22: 90 };
+const subs = VG.simulateAutoSubs(start, bench, mins);
+check("auto-subs replace the 0-min starter", subs.subs.length === 1 && subs.subs[0].out === 8 && subs.subs[0].in === 22);
+check("auto-sub keeps the formation legal", subs.starting.filter(p => p.positionId === 1).length >= 1 && subs.starting.filter(p => p.positionId === 2).length >= 3 && subs.starting.filter(p => p.positionId === 3).length >= 2 && subs.starting.filter(p => p.positionId === 4).length >= 1);
+
+// captain blank probability
+const capDummy = { id: 1, teamId: 1, positionId: 3 };
+const blank = VG.computeBlankProbability(capDummy, fixtures, 1);
+check("blank probability stays in a sane range", blank.pBlank >= 0.03 && blank.pBlank <= 0.5 && Array.isArray(blank.reasons));
+const cr = VG.getCaptainReasoning(Object.assign({}, capDummy, { fdr: 2, gwXP: 7, isHome: "H", oppName: "ARS" }), fixtures, 1);
+check("captain reasoning now includes blank risk", cr.blank !== undefined && cr.details.some(d => d.includes("blank risk")));
+VG.players[9998] = { starts: 0, minutes: 0, status: "a", yellow_cards: 0 };
+VG.players[9999] = { starts: 30, minutes: 2700, status: "u", yellow_cards: 0 };
+const insuranceCaptain = { id: 9998, teamId: 1, gwXP: 8 };
+const insuranceVice = { id: 9999, teamId: 1, gwXP: 10 };
+const expectedInsurance = +(1.4 * (VG.computeBlankProbability(insuranceCaptain, fixtures, 1).pBlank / 0.10) * 1.5).toFixed(2);
+check("VC insurance uses the captain blank risk and vice xP", VG.computeViceCaptainEV(insuranceCaptain, insuranceVice, fixtures, 1) === expectedInsurance);
+
+// differential matrix zones
+const zones = [
+  VG.getDifferentialZone({ ownership: 5, xpPerPrice: 2.5 }),
+  VG.getDifferentialZone({ ownership: 30, xpPerPrice: 2.5 }),
+  VG.getDifferentialZone({ ownership: 5, xpPerPrice: 1.2 }),
+  VG.getDifferentialZone({ ownership: 30, xpPerPrice: 1.2 })
+];
+check("differential matrix classifies all four zones", zones.map(z => z.zone).join(",") === "gold,anchor,wait,trap");
+
+// price-change predictor needs a minimal player table
+VG.players = VG.players || {};
+VG.players[100] = { web_name: "P1", element_type: 3, now_cost: 80 };
+VG.players[101] = { web_name: "P2", element_type: 4, now_cost: 90 };
+VG.players[102] = { web_name: "P3", element_type: 2, now_cost: 60 };
+const priceLive = { elements: [
+  { id: 100, stats: { transfers_in: 200000, transfers_out: 0 } },
+  { id: 101, stats: { transfers_in: 0, transfers_out: 80000 } },
+  { id: 102, stats: { transfers_in: 10000, transfers_out: 10000 } }
+]};
+const priceMoves = VG.predictPriceChanges(priceLive);
+check("price predictor flags risers and fallers", priceMoves.some(p => p.risk === "rising") && priceMoves.some(p => p.risk === "falling") && priceMoves.length === 2);
+
+// Understat enrichment: forecasts, real xG, injury feed
+section("Understat enrichment (v5.4)");
+const mci = bootstrap.teams.find(t => t.short_name === "MCI").id;
+const ars = bootstrap.teams.find(t => t.short_name === "ARS").id;
+VG.understat = { fixtures: [
+  { home: "MCI", away: "ARS", datetime: "2026-08-21 19:30:00", forecast: { w: "0.60", d: "0.22", l: "0.18" } }
+] };
+const probs = VG._matchWinProbs(mci, ars);
+check("understat forecast supplies win/lose probabilities", probs !== null && probs.source === "understat" && Math.abs(probs.win + probs.lose + 0.22 - 1) < 0.001);
+VG.understat = null;
+VG.oddsData = [{ home: "MCI", away: "ARS", h2h: { home: 1.5, draw: 4.5, away: 7.0 } }];
+const probsBk = VG._matchWinProbs(mci, ars);
+check("match probs fall back to bookmaker h2h when available", probsBk !== null && probsBk.source === "bookmaker" && probsBk.win > probsBk.lose);
+VG.oddsData = null;
+check("match probs return null with no data", VG._matchWinProbs(mci, ars) === null);
+VG.understat = { fixtures: [
+  { home: "MCI", away: "ARS", datetime: "2026-08-21 19:30:00", forecast: { w: "0.60", d: "0.22", l: "0.18" } }
+] };
+
+const arsPlayer = bootstrap.elements.find(p => p.team === ars && p.status === "a");
+const arsXP = VG.computeAllXP(1, 1, fixtures);
+check("real xG exposed on projections", arsXP.some(p => p.id === arsPlayer.id && typeof p.realXG === "number"));
+VG.players[arsPlayer.id].understat = { xG: 20, xA: 5, time: 2700, games: 30 };
+const arsXPWithUs = VG.computeAllXP(1, 1, fixtures);
+const arsWith = arsXPWithUs.find(p => p.id === arsPlayer.id);
+check("understat blend changes the projection", Math.abs((arsWith.realXG90 || 0) - 20 * 90 / 2700) < 0.01 && arsWith.realXG === 20);
+
+// ── xG regression flags (v5.4): Understat xG vs actual FPL goals ──────
+section("xG regression flags (v5.4)");
+VG.players[arsPlayer.id].understat = null;
+check("regression flag is null without understat data", VG.getRegressionFlag(arsPlayer.id) === null);
+VG.players[arsPlayer.id].understat = { xG: 20, xA: 5, time: 2700, games: 30 };
+VG.players[arsPlayer.id].goals_scored = "20";
+VG.players[arsPlayer.id].minutes = "2700";
+const regStable = VG.getRegressionFlag(arsPlayer.id);
+check("regression flag stable when goals match xG", regStable !== null && regStable.flag === "stable");
+VG.players[arsPlayer.id].goals_scored = "2";
+const regDue = VG.getRegressionFlag(arsPlayer.id);
+check("regression flag marks underperforming strikers DUE", regDue !== null && regDue.flag === "due" && regDue.diff90 < 0);
+VG.players[arsPlayer.id].goals_scored = "38";
+const regOver = VG.getRegressionFlag(arsPlayer.id);
+check("regression flag marks overperforming strikers OVER", regOver !== null && regOver.flag === "over" && regOver.diff90 > 0);
+check("regression badge renders DUE/OVER and empty for stable", VG.regressionBadge(regDue).includes("DUE") && VG.regressionBadge(regOver).includes("OVER") && VG.regressionBadge({ flag: "stable" }) === "" && VG.regressionBadge(null) === "");
+check("regression badge handles diff sign without double-symbol", VG.regressionBadge(regDue).includes("DUE -0.60") && VG.regressionBadge(regOver).includes("OVER +0.60"));
+VG.players[arsPlayer.id].understat = null;
+VG.players[arsPlayer.id].goals_scored = undefined;
+VG.players[arsPlayer.id].minutes = undefined;
+
+const flagged = VG.players[arsPlayer.id];
+flagged.chance_of_playing_next_round = 50;
+const capFlag = { id: arsPlayer.id, teamId: ars, positionId: 3 };
+const blankFlag = VG.computeBlankProbability(capFlag, fixtures, 1);
+check("blank risk incorporates chance_of_playing flag", blankFlag.reasons.some(r => r.includes("chance to play")));
+const feed = VG.injuryNews();
+check("injury feed surfaces fitness-flagged players", feed.some(p => p.id === arsPlayer.id && p.chance === 50));
+
+// ── Team Strength Ratings (v5.4) ──────────────────────────────────────
+section("Team strength ratings (v5.4)");
+const teamRatesNull = VG.computeTeamRatings();
+check("team ratings return null without understat data", teamRatesNull === null);
+const teamPrior = {};
+const allFplTeams = bootstrap.teams.map(t => t.id);
+allFplTeams.forEach((id, i) => {
+  teamPrior[id] = {
+    npxg90: 0.8 + (i % 5) * 0.4,
+    npxga90: 0.9 + ((i * 7) % 4) * 0.3,
+    ppda: 9 + i,
+    deep: 5 + i
+  };
+});
+teamPrior[Object.keys(teamPrior)[0]].npxg90 = 2.6;
+VG.understat = { teams: teamPrior };
+const teamRates = VG.computeTeamRatings();
+check("team ratings compute for every FPL team", teamRates && teamRates.length === 20);
+check("team ratings are ranked and sorted by overall", teamRates[0].overallRank === 1 && teamRates[19].overallRank === 20);
+check("strongest attack gets the top attack rank", teamRates.find(r => r.attRank === 1).npxg90 === 2.6);
+check("team rating stays within 1-5", teamRates.every(r => r.rating >= 1 && r.rating <= 5));
+check("team ratings render HTML table", typeof VG.render.teamRatings(teamRates) === "string" && VG.render.teamRatings(teamRates).includes("ticker-table"));
+check("team ratings render gracefully without data", VG.render.teamRatings(null).includes("unavailable"));
+VG.understat = null;
 
 section("Summary");
 console.log(`${passed} passed, ${failed} failed`);
