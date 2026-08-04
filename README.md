@@ -212,6 +212,10 @@ Free Understat data powers a second, independent xG signal and the no-key odds l
 - **DGW/BGW Season Planner (v5.5)** — Ben Crellin-style calendar that flags double/blank gameweeks and chip windows automatically when postponements create them (Fixtures tab)
 - **Set-Piece Takers (v5.5)** — bundled `setpieces.json` boosts xP for penalty/FK/corner takers (FFHUB/FFS idea); "P/F/C" badges in Compare + Differentials
 - **Transfer Rank-Impact (v5.5)** — maps a transfer's xP gain to an approximate overall-rank move (FFHub AI idea)
+- **Player Profile (v5.6)** — click any Squad player to expand a rich profile: form trend, Understat xG/90, xG regression, Effective Ownership, set-piece role, value, next-5-fixture run with easy/hard quality
+- **Live Rank tracker (v5.6)** — enter your FPL Team ID and see your actual Overall Rank + GW points, auto-refreshing (LiveFPL/FFHub idea)
+- **Team News feed (v5.6)** — injury/fitness flags and news strings grouped by club in the Strategy tab, complementing the availability watch
+- **Chip EV Calendar (v5.6)** — DGW/BGW-aware per-GW chip window scores (TC/BB/FH/WC) for your squad, populated automatically once postponements create doubles/blanks (Ben Crellin idea)
 
 ### Other Features
 
@@ -276,7 +280,7 @@ VibeGaffer/
 │       ├── understat.json              # Free Understat xG/xA + forecasts
 │       ├── setpieces.json              # Set-piece takers (pen/FK/corner; seasonal)
 │       └── odds.json                   # Bookmaker odds (optional)
-├── tests/run.js                        # Regression suite (129 checks)
+├── tests/run.js                        # Regression suite (136 checks)
 └── .gitignore
 ```
 
@@ -339,7 +343,7 @@ Tests are committed in `tests/run.js` and run automatically in GitHub Actions. R
 npm test
 ```
 
-**129/129 tests pass.**
+**136/136 tests pass.**
 
 Test coverage:
 - Optimizer: squad size, formation validity, captain, budget
@@ -351,6 +355,7 @@ Test coverage:
 - Chips: all 4 chips, gwScores
 - v5.4: Understat blend, xG regression flags/badges, team strength ratings, shared fixture/team helpers
 - v5.5: effective ownership, Monte Carlo GW distribution, DGW/BGW planner, set-piece boost, rank-impact estimate
+- v5.6: player profiles, live rank tracker, team news feed, chip EV calendar
 - Dynamic tips: analysis, captain, static sections
 - xpComponents: all 8 fields, sum matches totalXP
 - Reverse maps: GK/DEF/MID/FWD mapping
@@ -380,6 +385,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.6.0 | — | Player Profile (form/xG/EO/set-piece/fixture-run per player), Live Rank tracker (real FPL OR via Team ID), Team News feed grouped by club (Strategy tab), DGW/BGW-aware Chip EV Calendar |
 | v5.5.0 | — | Effective Ownership (captain-share-weighted; Compare + Differentials EO column), Monte Carlo GW projection (mean +- SD + 90% band in Squad tab), DGW/BGW Season Planner (Ben Crellin-style, Fixtures tab), Set-Piece Takers xP boost (pen/FK/corner + P/F/C badges; seasonal setpieces.json), transfer rank-impact estimate |
 | v5.4.1 | — | Post-review fixes on v5.4.0: escaped the Squad DNA "weaknesses" bullets (inconsistent with the escaped "strengths" bullets next to them), made the Live tab's 5-minute refresh actually recur instead of firing once |
 | v5.4.0 | — | Understat forecast odds (free per-fixture w/d/l → xP engine), Real xG/xA columns (60/40 FPL+Understat blend), Injury & Availability Watch (Strategy tab), Team Strength Ratings (npxG/npxGA attack/defence/overall indices + ranks + 1-5 in Fixtures tab), xG regression DUE/OVER badges (Compare + Differentials), weekly Understat + vaastav fetchers, explicit borrowing policy for free FPL ideas/APIs, shared fixture helpers (`fixturesForGW`/`teamFixtureRow`/`teamColor`), TEAM_COLORS keyed by short_name |

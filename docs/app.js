@@ -1,4 +1,4 @@
-// VibeGaffer v5.5.0 — pure static FPL analytics (GitHub Pages, no backend)
+// VibeGaffer v5.6.0 — pure static FPL analytics (GitHub Pages, no backend)
 // Docs: README.md / AGENTS.md · Data: docs/data/*.json via GitHub Actions
 const VG = {};
 
@@ -2483,6 +2483,122 @@ VG.render.gwProjection = (starting, fixtures, gw, captainId) => {
   };
 };
 
+// ── Player Profile (v5.6, FPL Review/FFHub player-profile idea) ───────
+// Rich one-screen profile per player: form trend, Understat xG, regression,
+// EO, set-piece role, fixture run, value, and captain blank-risk.
+VG.playerProfileHTML = (p, fixtures, gw) => {
+  if (!p) return "";
+  const sp = p.setPiece || {};
+  const spBadge = (sp.pen ? 'P' : '') + (sp.fk ? ' F' : '') + (sp.cor ? ' C' : '');
+  const reg = p.regression;
+  const roleTxt = spBadge.trim() ? `<span style="color:#fbbf24;font-weight:600;">${VG.esc(spBadge)}</span>` : '—';
+  // Fixture run over next 5 GWs
+  const row = VG.teamFixtureRow(p.teamId, gw, 5, fixtures);
+  const easy = row.filter(r => r && r.fdr <= 2).length;
+  const hard = row.filter(r => r && r.fdr >= 4).length;
+  const run = row.map(r => r ? `<span style="color:${r.fdr <= 2 ? '#4ade80' : r.fdr >= 4 ? '#f87171' : '#94a3b8'};font-weight:600;">${r.oppName}${r.isHome ? '' : '(A)'}</span>` : `<span style="color:#334155;">BYE</span>`).join(' ');
+  const trend = p.form != null && p.ppg ? (p.form / p.ppg).toFixed(2) : "—";
+  return `<div class="profile-panel" style="margin-top:8px;font-size:0.7rem;line-height:1.7;color:#94a3b8;">`
+    + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;">`
+    + `<div>Form/PPG trend: <b style="color:${p.trend >= 1.05 ? '#00ff87' : p.trend <= 0.95 ? '#ef4444' : '#e2e8f0'};">${p.trend >= 1.05 ? '🔥' : p.trend <= 0.95 ? '❄️' : ''} ${p.trend != null ? p.trend : '—'}</b></div>`
+    + `<div>Real xG/90: <b style="color:#a78bfa;">${(p.realXG90 || 0).toFixed(2)}</b></div>`
+    + `<div>xG Reg: ${VG.regressionBadge(reg) || '<span style="color:#475569;">stable</span>'}</div>`
+    + `<div>EO: <b style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}</b> (own ${(p.ownership || 0).toFixed(1)}%)</div>`
+    + `<div>Set-pieces: ${roleTxt}</div>`
+    + `<div>xP/£m: <b style="color:#00ff87;">${(p.xpPerPrice || 0).toFixed(2)}</b></div>`
+    + `</div>`
+    + `<div style="margin-top:6px;">Next 5 fixtures: <span style="color:#64748b;">${run}</span></div>`
+    + `<div style="margin-top:4px;">Run quality: ${easy} easy · ${hard} hard ${hard >= 3 ? '<span style="color:#ef4444;">— sell/hold risk</span>' : easy >= 3 ? '<span style="color:#00ff87;">— strong window</span>' : ''}</div>`
+    + `<div style="margin-top:4px;"><b style="color:#e2e8f0;">${VG.esc(p.name)}</b> · £${p.price.toFixed(1)}m · ${p.position} · ${VG.esc(p.teamName)} · ${p.totalPoints || 0} pts</div>`
+    + `</div>`;
+};
+
+// ── Live Rank tracker (v5.6, LiveFPL/FFHub idea) ─────────────────────
+// Fetches the user's actual FPL overall rank + GW points + team name from the
+// public entry endpoint and renders a slim "where you stand" card. Cached.
+VG.fetchTeamRank = async (teamId, gw) => {
+  if (!teamId || teamId <= 0) return null;
+  const cache = VG._rankCache || {};
+  const key = teamId + ":" + gw;
+  if (cache[key] && Date.now() - cache[key].t < 5 * 60 * 1000) return cache[key].d;
+  try {
+    const info = await VG.fetch(VG.FPL + "/entry/" + teamId + "/", "teamrank");
+    const ev = info && info.current_event ? info.current_event : gw;
+    let gwPts = 0, name = null, overallRank = null;
+    if (info) {
+      name = (info.player_first_name || "") + " " + (info.player_last_name || "");
+      const hist = info.history || [];
+      const cur = hist.find(h => h.event === ev) || hist[hist.length - 1];
+      if (cur) { gwPts = cur.points || 0; overallRank = cur.overall_rank == null ? null : cur.overall_rank; }
+      else { overallRank = info.summary_overall_rank; }
+    }
+    const d = { name, gwPts, overallRank, ev };
+    if (info) VG._rankCache = Object.assign(cache, { [key]: { d, t: Date.now() } });
+    return d;
+  } catch (e) {
+    console.warn("[VG] rank:", e);
+    return null;
+  }
+};
+
+// ── Team News feed (v5.6) — grouped injury/fitness news by team ──────
+VG.teamNewsFeed = () => {
+  const byTeam = {};
+  Object.values(VG.players).forEach(p => {
+    const chance = p.chance_of_playing_next_round;
+    const news = p.news;
+    const flagged = (chance !== null && chance !== undefined && chance < 100) || (news && news.length > 0);
+    if (!flagged) return;
+    const t = (VG.teams[p.team] || {}).short_name || p.team;
+    if (!byTeam[t]) byTeam[t] = [];
+    byTeam[t].push({
+      name: p.web_name || p.second_name,
+      chance: chance === null || chance === undefined ? 100 : Number(chance),
+      news: news || ""
+    });
+  });
+  Object.keys(byTeam).forEach(t => byTeam[t].sort((a, b) => a.chance - b.chance));
+  return byTeam;
+};
+
+// ── DGW/BGW-aware Chip EV calendar (v5.6, Ben Crellin idea) ──────────
+// For a given squad across the season, scores each chip per GW so the best
+// timing is visible as a calendar grid (complements evaluateChips).
+VG.chipCalendar = (squad, fixtures, planner) => {
+  const ids = new Set(squad.map(p => p.id != null ? p.id : p.element));
+  const plannerByGw = {};
+  (planner || []).forEach(p => { plannerByGw[p.gw] = p; });
+  return (planner || []).map(p => {
+    // Squad DGW coverage: how many owned teams double this GW.
+    let dgwHits = 0, bgwHits = 0;
+    squad.forEach(sp => {
+      const tid = sp.teamId;
+      if (p.dgwTeams.includes(tid)) dgwHits++;
+      if (p.bgwTeams.includes(tid)) bgwHits++;
+    });
+    // Triple captain EV: best when many captaining options double.
+    const tc = dgwHits >= 2 ? 80 + dgwHits * 5 : 30;
+    // Bench boost EV: doubles on the bench too.
+    const bb = dgwHits >= 3 ? 75 + dgwHits * 4 : 20;
+    // Free hit EV: biggest on blank-heavy weeks.
+    const fh = p.bgwTeams.length >= 8 ? 90 : p.bgwTeams.length >= 5 ? 60 : 20;
+    // Wildcard EV: strong when your squad has many blanks + run-in window.
+    const wc = bgwHits >= 2 && (p.gw >= 28 && p.gw <= 34) ? 70 : bgwHits >= 2 ? 50 : 15;
+    return { gw: p.gw, dgw: p.dgwTeams.length, bgw: p.bgwTeams.length, tc, bb, fh, wc };
+  }).filter(c => c.dgw > 0 || c.bgw > 0 || c.tc >= 60);
+};
+
+VG.render.chipCalendar = (cal) => {
+  if (!cal || !cal.length) return '<div style="font-size:0.6rem;color:#475569;">Chip windows appear once DGW/BGW are known (after postponements).</div>';
+  const best = (c, k) => c[k] >= 70 ? `<b style="color:#00ff87;">${c[k]}</b>` : c[k] >= 50 ? `<b style="color:#fbbf24;">${c[k]}</b>` : `${c[k]}`;
+  let h = '<table class="data-table" style="font-size:0.68rem;"><tr><th>GW</th><th>DGW</th><th>BGW</th><th>Triple C</th><th>Bench Boost</th><th>Free Hit</th><th>Wildcard</th></tr>';
+  cal.forEach(c => {
+    h += `<tr><td style="color:#e2e8f0;font-weight:600;">GW${c.gw}</td><td>${c.dgw ? '<span style="color:#00ff87;">+' + c.dgw + '</span>' : '–'}</td><td>${c.bgw ? '<span style="color:#ef4444;">' + c.bgw + '</span>' : '–'}</td><td>${best(c, 'tc')}</td><td>${best(c, 'bb')}</td><td>${best(c, 'fh')}</td><td>${best(c, 'wc')}</td></tr>`;
+  });
+  h += '</table>';
+  return h;
+};
+
 VG.render.chipCard = (label, color, advice) => {
   const active = advice.recommend ? " active" : "";
   const textColor = advice.recommend ? "#00ff87" : "#555";
@@ -2886,6 +3002,37 @@ VG.render.tips = (result, allXP, fixtures, gw) => {
       });
       html += `</div>`;
     }
+  }
+
+  // ── Team News feed (v5.6) — grouped injury/fitness by team ─────────
+  {
+    const byTeam = VG.teamNewsFeed();
+    const teamKeys = Object.keys(byTeam);
+    if (teamKeys.length > 0) {
+      html += `<div class="tips-section"><div class="tips-section-header">🩹 Team News & Injuries (by team)</div>`;
+      html += `<div style="display:flex;flex-wrap:wrap;gap:10px;">`;
+      teamKeys.forEach(team => {
+        const players = byTeam[team].slice(0, 5);
+        html += `<div style="flex:0 0 auto;width:230px;background:rgba(30,41,59,0.5);border-left:3px solid #64748b;border-radius:8px;padding:8px 10px;font-size:0.68rem;">`;
+        html += `<div style="color:#a78bfa;font-weight:700;margin-bottom:4px;">${VG.esc(team)}</div>`;
+        players.forEach(p => {
+          const c = p.chance < 50 ? '#ef4444' : p.chance < 100 ? '#fbbf24' : '#475569';
+          html += `<div style="color:#e2e8f0;font-weight:500;">${VG.esc(p.name)} <span style="color:${c};">${p.chance < 100 ? p.chance + '%' : ''}</span></div>`;
+          if (p.news) html += `<div style="color:#94a3b8;font-size:0.62rem;margin-left:6px;">${VG.esc(p.news)}</div>`;
+        });
+        html += `</div>`;
+      });
+      html += `</div></div>`;
+    }
+  }
+
+  // ── DGW/BGW-aware Chip EV Calendar (v5.6, Ben Crellin idea) ────────
+  const planner = result && VG.buildSeasonPlanner ? VG.buildSeasonPlanner(fixtures || VG.allFixtures) : [];
+  if (planner && planner.length && result && result.squad) {
+    const chipCal = VG.chipCalendar(result.squad, fixtures || VG.allFixtures, planner);
+    html += `<div class="tips-section"><div class="tips-section-header">💎 Chip EV Calendar <span style="font-weight:400;color:#475569;font-size:0.65rem;">(DGW/BGW-aware)</span></div>`;
+    html += VG.render.chipCalendar(chipCal);
+    html += `<div style="font-size:0.6rem;color:#475569;margin-top:4px;">Scores 0-100 per GW; 70+ = strong window, 50-70 = decent. Windows populate automatically once DGW/BGW are confirmed after postponements.</div></div>`;
   }
 
   // ── Static championship tips ──

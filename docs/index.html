@@ -18,11 +18,11 @@
     form-action 'none'">
   <title>VibeGaffer — FPL Intelligence | Astraiva</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.5.0">
+  <link rel="stylesheet" href="style.css?v=5.6.0">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
           integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=5.5.0"></script>
+  <script src="app.js?v=5.6.0"></script>
 </head>
 <body>
 
@@ -31,7 +31,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Astraiva</strong> · Tushant Sharma · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.5.0</span></div>
+    <div><span class="badge pulse-glow">v5.6.0</span></div>
 </div>
 
 <div class="app">
@@ -146,7 +146,7 @@
 </div>
 </div>
 
-<div class="footer">VibeGaffer v5.5.0 · Astraiva · Built by Tushant Sharma</div>
+<div class="footer">VibeGaffer v5.6.0 · Astraiva · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -264,7 +264,24 @@ VG.run = async () => {
     VG.allXP = allXP;
 
     // Build HTML
-    let html = '';
+    let html = '<div id="rankCard"></div>';
+
+    // Live Rank tracker card (v5.6, LiveFPL/FFHub idea) — real OR when team ID set
+    if (teamId > 0) {
+      VG.fetchTeamRank(teamId, gw).then(rank => {
+        if (!rank || !rank.name) return;
+        const rk = rank.overallRank;
+        const rkColor = rk != null ? (rk < 100000 ? '#00ff87' : rk < 500000 ? '#fbbf24' : '#94a3b8') : '#94a3b8';
+        let box = `<div style="margin:16px 0;padding:12px;border:1px solid rgba(167,139,250,0.25);border-radius:12px;background:rgba(167,139,250,0.06);">`;
+        box += `<div style="font-size:0.72rem;color:#a78bfa;font-weight:600;margin-bottom:4px;">📊 Live Rank · ${VG.esc(rank.name)}</div>`;
+        if (rk != null) box += `<div style="font-size:1rem;color:${rkColor};font-weight:700;">OR ${rk.toLocaleString()}</div>`;
+        else box += `<div style="color:#475569;font-size:0.75rem;">Overall rank not yet available</div>`;
+        box += `<div style="font-size:0.68rem;color:#94a3b8;margin-top:4px;">GW${rank.ev} points: ${rank.gwPts != null ? rank.gwPts : '—'} · auto-refreshes every 5 min</div>`;
+        box += `</div>`;
+        const rkEl = document.getElementById("rankCard");
+        if (rkEl) rkEl.innerHTML = box;
+      });
+    }
 
     // Metrics
     const gwProjStarting = (result.starting?.length >= 11 ? result.starting : (result.gwPicks?.[0]?.starting || result.squad.slice(0, 11)));
@@ -590,7 +607,9 @@ VG.run = async () => {
         if (xc.xpBonus > 0.1) html += `<span><i class="dot" style="background:#fbbf24"></i>Bonus ${(xc.xpBonus||0).toFixed(1)}</span>`;
         if (xc.xpDEFCON > 0.1) html += `<span><i class="dot" style="background:#f97316"></i>DEFCON ${(xc.xpDEFCON||0).toFixed(1)}</span>`;
         if (xc.xpSaves > 0.1) html += `<span><i class="dot" style="background:#06b6d4"></i>Saves ${(xc.xpSaves||0).toFixed(1)}</span>`;
-        html += `</div></div></div>`;
+        html += `</div>`;
+        html += VG.playerProfileHTML(p, VG.allFixtures, gw);
+        html += `</div></div>`;
       });
       html += '</div>';
     }

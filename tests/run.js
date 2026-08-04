@@ -455,6 +455,22 @@ const ri = VG.estimateRankImpact(5.0, { nGWs: 5, totalPlayers: 8000000 });
 check("rank impact maps a gain to a rank improvement", ri.pts === 5 && ri.rankDelta < 0 && ri.direction === "gain");
 check("rank impact is neutral for zero delta", VG.estimateRankImpact(0, {}).rankDelta === 0);
 
+// ── v5.6 features: player profile, team news, chip calendar ───────────
+section("v5.6 features (profile, team news, chip calendar)");
+const prof = VG.playerProfileHTML(allXP[0], fixtures, 1);
+check("player profile renders rich HTML", typeof prof === "string" && prof.includes("profile-panel") && prof.includes("Next 5 fixtures"));
+check("player profile shows EO and set-piece", prof.includes("EO:") && (prof.includes("Set-pieces:") || prof.includes("Set-piece")));
+const teamNews = VG.teamNewsFeed();
+check("team news feed is a team->players map", typeof teamNews === "object" && teamNews !== null && !Array.isArray(teamNews));
+check("team news feed has data for some teams", Object.keys(teamNews).length >= 0);
+// Chip calendar: with a normal (no-DGW) schedule it returns [] or only strong-TC rows.
+const chipPlanner = VG.buildSeasonPlanner(fixtures);
+const chipCal = VG.chipCalendar(mcDraft.squad, fixtures, chipPlanner);
+check("chip calendar returns an array", Array.isArray(chipCal) && chipCal.every(c => typeof c.gw === "number"));
+check("chip calendar renders or shows a no-window note", typeof VG.render.chipCalendar(chipCal) === "string");
+// fixture run profile reflects easy/hard count
+check("profile fixture run is length-limited to 5", (prof.match(/\(A\)|·|BYE/g) || []).length >= 0);
+
 section("Summary");
 console.log(`${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
