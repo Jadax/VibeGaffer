@@ -2540,7 +2540,7 @@ VG.render.tips = (result, allXP, fixtures, gw) => {
         html += `<div style="background:rgba(239,68,68,0.04);border-radius:8px;padding:10px;">`;
         html += `<div style="color:#ef4444;font-size:0.65rem;font-weight:700;text-transform:uppercase;margin-bottom:4px;">⚠ Risks</div>`;
         analysis.weaknesses.forEach(s => {
-          html += `<div style="font-size:0.7rem;color:#94a3b8;margin-top:3px;">▸ ${s}</div>`;
+          html += `<div style="font-size:0.7rem;color:#94a3b8;margin-top:3px;">▸ ${VG.esc(s)}</div>`;
         });
         html += `</div>`;
       }

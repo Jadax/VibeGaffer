@@ -1,4 +1,4 @@
-# VibeGaffer v5.4.0
+# VibeGaffer v5.4.1
 
 **FPL Optimization Engine** | Powered by [Astraiva](https://astraiva.com) | Author: Tushant Sharma
 
@@ -64,7 +64,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.4.0)
+## Features (v5.4.1)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -373,6 +373,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.4.1 | — | Post-review fixes on v5.4.0: escaped the Squad DNA "weaknesses" bullets (inconsistent with the escaped "strengths" bullets next to them), made the Live tab's 5-minute refresh actually recur instead of firing once |
 | v5.4.0 | — | Understat forecast odds (free per-fixture w/d/l → xP engine), Real xG/xA columns (60/40 FPL+Understat blend), Injury & Availability Watch (Strategy tab), Team Strength Ratings (npxG/npxGA attack/defence/overall indices + ranks + 1-5 in Fixtures tab), xG regression DUE/OVER badges (Compare + Differentials), weekly Understat + vaastav fetchers, explicit borrowing policy for free FPL ideas/APIs, shared fixture helpers (`fixturesForGW`/`teamFixtureRow`/`teamColor`), TEAM_COLORS keyed by short_name |
 | v5.3.0 | — | Live GW tab (live points, bonus projection, auto-sub simulation, price-change velocity), captain blank-risk + VC insurance EV, 4-zone differential matrix, escaped all API-derived HTML (mini-league XSS), SRI + CSP, fixed the HiGHS global so the ILP solver actually runs, horizon-aware pitch xP, compare-by-id, deadline-aware data cron, removed the unused Python/Docker stack, deduped the four XI-selection copies, removed dead params/state, consolidated the two price predictors onto one model (real live-API fields), added shared fixture helpers |
 | v5.2.1 | `00bf512` | Correct single-GW lineup/captain projections, DGW detection, strategy routing, exact ILP constraints, deterministic fallback, odds fix, CI tests |
@@ -410,7 +411,7 @@ Test coverage:
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.4.0
+- **Application**: VibeGaffer v5.4.1
 - **Company**: Astraiva
 - **Author**: Tushant Sharma
 - **License**: Proprietary
