@@ -207,6 +207,11 @@ Free Understat data powers a second, independent xG signal and the no-key odds l
 - **Real xG / xA** — Understat priors blended 60% FPL + 40% Understat into xP, exposed as new columns in Compare and Differentials tabs
 - **Team Strength Ratings** — Understat npxG/npxGA → attack/defence/overall indices (100 = league average), 1-20 ranks, 1-5 rating in the Fixtures tab
 - **xG Regression Flags** — Understat xG vs actual FPL goals → green **DUE** badges (underperforming their xG, goals should come) and red **OVER** badges (running hot, likely to regress) in Compare + Differentials tabs
+- **Effective Ownership (v5.5)** — ownership weighted by modelled captain-share (FFix/FPL Review idea); a sharper TEMPLATE vs DIFFERENTIAL signal than raw ownership, shown in Compare + Differentials
+- **Monte Carlo GW Projection (v5.5)** — samples the starting XI's points (captain doubled) for a real points distribution; Squad tab shows mean ± SD and a 90% band (FPL Review/FFix idea)
+- **DGW/BGW Season Planner (v5.5)** — Ben Crellin-style calendar that flags double/blank gameweeks and chip windows automatically when postponements create them (Fixtures tab)
+- **Set-Piece Takers (v5.5)** — bundled `setpieces.json` boosts xP for penalty/FK/corner takers (FFHUB/FFS idea); "P/F/C" badges in Compare + Differentials
+- **Transfer Rank-Impact (v5.5)** — maps a transfer's xP gain to an approximate overall-rank move (FFHub AI idea)
 
 ### Other Features
 
@@ -269,8 +274,9 @@ VibeGaffer/
 │       ├── bootstrap.json              # Player data (~560 active players)
 │       ├── fixtures.json               # 380 fixtures with FDR
 │       ├── understat.json              # Free Understat xG/xA + forecasts
+│       ├── setpieces.json              # Set-piece takers (pen/FK/corner; seasonal)
 │       └── odds.json                   # Bookmaker odds (optional)
-├── tests/run.js                        # Regression suite (112 checks)
+├── tests/run.js                        # Regression suite (129 checks)
 └── .gitignore
 ```
 
@@ -333,7 +339,7 @@ Tests are committed in `tests/run.js` and run automatically in GitHub Actions. R
 npm test
 ```
 
-**112/112 tests pass.**
+**129/129 tests pass.**
 
 Test coverage:
 - Optimizer: squad size, formation validity, captain, budget
@@ -344,6 +350,7 @@ Test coverage:
 - League analyzer: null/bad input handling
 - Chips: all 4 chips, gwScores
 - v5.4: Understat blend, xG regression flags/badges, team strength ratings, shared fixture/team helpers
+- v5.5: effective ownership, Monte Carlo GW distribution, DGW/BGW planner, set-piece boost, rank-impact estimate
 - Dynamic tips: analysis, captain, static sections
 - xpComponents: all 8 fields, sum matches totalXP
 - Reverse maps: GK/DEF/MID/FWD mapping
@@ -373,6 +380,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.5.0 | — | Effective Ownership (captain-share-weighted; Compare + Differentials EO column), Monte Carlo GW projection (mean +- SD + 90% band in Squad tab), DGW/BGW Season Planner (Ben Crellin-style, Fixtures tab), Set-Piece Takers xP boost (pen/FK/corner + P/F/C badges; seasonal setpieces.json), transfer rank-impact estimate |
 | v5.4.1 | — | Post-review fixes on v5.4.0: escaped the Squad DNA "weaknesses" bullets (inconsistent with the escaped "strengths" bullets next to them), made the Live tab's 5-minute refresh actually recur instead of firing once |
 | v5.4.0 | — | Understat forecast odds (free per-fixture w/d/l → xP engine), Real xG/xA columns (60/40 FPL+Understat blend), Injury & Availability Watch (Strategy tab), Team Strength Ratings (npxG/npxGA attack/defence/overall indices + ranks + 1-5 in Fixtures tab), xG regression DUE/OVER badges (Compare + Differentials), weekly Understat + vaastav fetchers, explicit borrowing policy for free FPL ideas/APIs, shared fixture helpers (`fixturesForGW`/`teamFixtureRow`/`teamColor`), TEAM_COLORS keyed by short_name |
 | v5.3.0 | — | Live GW tab (live points, bonus projection, auto-sub simulation, price-change velocity), captain blank-risk + VC insurance EV, 4-zone differential matrix, escaped all API-derived HTML (mini-league XSS), SRI + CSP, fixed the HiGHS global so the ILP solver actually runs, horizon-aware pitch xP, compare-by-id, deadline-aware data cron, removed the unused Python/Docker stack, deduped the four XI-selection copies, removed dead params/state, consolidated the two price predictors onto one model (real live-API fields), added shared fixture helpers |

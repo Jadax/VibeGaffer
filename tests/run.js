@@ -192,9 +192,13 @@ check(
 );
 
 const appSource = fs.readFileSync(appPath, "utf8");
+// Scope the "no randomness" determinism check to the greedy optimizer body only —
+// the Monte Carlo simulator legitimately uses Math.random() elsewhere.
+const optStart = appSource.indexOf("VG.optimizeDraft =");
+const optBody = optStart >= 0 ? appSource.slice(optStart, appSource.indexOf("VG.optimizeStrategies =", optStart)) : appSource;
 check("ILP uses exact GK constraint", appSource.includes("' pos' + pos + '_exact: '"));
 check("ILP no longer allows flexible forward counts", !appSource.includes("fwd_min:"));
-check("Optimizer no longer uses random swaps", !appSource.includes("Math.random()"));
+check("Optimizer no longer uses random swaps", !optBody.includes("Math.random()"));
 
 const oddsWorkflow = fs.readFileSync(oddsWorkflowPath, "utf8");
 check("Odds workflow handles bookmaker arrays", oddsWorkflow.includes("for bookmaker in event.get('bookmakers', []):"));
@@ -403,6 +407,53 @@ check("team rating stays within 1-5", teamRates.every(r => r.rating >= 1 && r.ra
 check("team ratings render HTML table", typeof VG.render.teamRatings(teamRates) === "string" && VG.render.teamRatings(teamRates).includes("ticker-table"));
 check("team ratings render gracefully without data", VG.render.teamRatings(null).includes("unavailable"));
 VG.understat = null;
+
+// ── v5.5 features: EO, Monte Carlo, DGW/BGW planner, set-pieces, rank impact ──
+section("v5.5 features (EO, MC, planner, set-pieces, rank)");
+// Effective ownership
+const eoModel = VG.computeEffectiveOwnership(allXP);
+check("EO model exposes a captain pool", eoModel.pool.length > 0 && eoModel.pool.length <= 12);
+const eoTop = eoModel.forPlayer(allXP[0]);
+check("EO is ownership weighted by captain share", eoTop.eo >= eoTop.own && eoTop.capShare >= 0 && typeof eoTop.eo === "number");
+check("allXP carries eo/capShare fields", allXP.every(p => typeof p.eo === "number" && typeof p.capShare === "number"));
+check("EO ranks template picks highest", allXP.slice(0, 5).every(p => p.eo >= (p.ownership || 0)));
+
+// Monte Carlo distribution
+const mcDraft = VG.optimizeDraft(allXP, 100, fixtures, 1, 5);
+const mcStart = mcDraft.starting || mcDraft.squad.slice(0, 11);
+const mcCap = { ...(mcDraft.gotCap && mcDraft.gotCap[0] ? mcDraft.gotCap[0] : mcStart[0]), isCaptain: true, multiplier: 2 };
+const startingWithCap = mcStart.map(p => p.id === mcCap.id ? { ...p, isCaptain: true, multiplier: 2, element_type: p.positionId } : { ...p, element_type: p.positionId });
+const dist = VG.mcGWDistribution(startingWithCap, fixtures, 1, 2000);
+check("MC distribution returns stats", dist.mean > 0 && dist.n === 2000 && dist.p10 <= dist.median && dist.median <= dist.p90);
+check("MC green-arrow probability is bounded 0-100", VG.greenArrowProb(dist, dist.mean) > 0 && VG.greenArrowProb(dist, dist.mean) < 100);
+check("MC range helper reports floor/ceiling/band", (() => { const r = VG.mcRange(dist); return r.floor === dist.p10 && r.ceiling === dist.p90 && r.band > 0; })());
+check("MC distribution is empty-safe", VG.mcGWDistribution([], fixtures, 1, 100).n === 0);
+
+// DGW/BGW season planner
+const planner = VG.buildSeasonPlanner(fixtures);
+check("season planner covers 38 gameweeks", planner.length >= 30 && planner.length <= 38);
+check("season planner flags DGW/BGW teams per week", planner.every(p => Array.isArray(p.dgwTeams) && Array.isArray(p.bgwTeams)));
+check("base fixtures have no DGW/BGW (all teams play once)", planner.every(p => p.dgwTeams.length === 0 && p.bgwTeams.length === 0));
+// Inject a synthetic double gameweek: duplicate one fixture to give a team 2 matches in GW1.
+const dupFixtures = fixtures.map(f => f.event === 1 ? { ...f, id: f.id + 99999 } : f);
+const plannerDup = VG.buildSeasonPlanner(dupFixtures.concat(fixtures.filter(f => f.event === 1)));
+const gw1dup = plannerDup.find(p => p.gw === 1);
+check("season planner detects a synthetic DGW team", gw1dup && gw1dup.dgwTeams.length > 0);
+const row = VG.teamSeasonRow(planner, mcDraft.squad[0].teamId, 1, 38);
+check("team season row covers the horizon", row.cells.length === 38 && row.cells.every(c => c.n === 0 || c.n === 1 || c.n === 2));
+
+// Set-piece boost
+VG.loadSetPieces({ teams: { ARS: { pen: ["Saka"], fk: ["Ødegaard"], cor: ["Saka"] } } });
+check("set-piece role lookup returns a boolean set", (() => { const r = VG.setPieceRole(arsPlayer.id); return typeof r.pen === "boolean" && typeof r.fk === "boolean" && typeof r.cor === "boolean"; })());
+const spHaaland = Object.values(VG.players).find(p => p.web_name === "Haaland");
+VG.loadSetPieces({ teams: { MCI: { pen: ["Haaland"], fk: [], cor: [] } } });
+check("set-piece role flags penalty taker", spHaaland ? VG.setPieceRole(spHaaland.id).pen === true : true);
+VG.loadSetPieces({ teams: {} });
+
+// Rank impact estimate
+const ri = VG.estimateRankImpact(5.0, { nGWs: 5, totalPlayers: 8000000 });
+check("rank impact maps a gain to a rank improvement", ri.pts === 5 && ri.rankDelta < 0 && ri.direction === "gain");
+check("rank impact is neutral for zero delta", VG.estimateRankImpact(0, {}).rankDelta === 0);
 
 section("Summary");
 console.log(`${passed} passed, ${failed} failed`);

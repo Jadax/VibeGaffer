@@ -18,11 +18,11 @@
     form-action 'none'">
   <title>VibeGaffer — FPL Intelligence | Astraiva</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.4.1">
+  <link rel="stylesheet" href="style.css?v=5.5.0">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
           integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=5.4.1"></script>
+  <script src="app.js?v=5.5.0"></script>
 </head>
 <body>
 
@@ -31,7 +31,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Astraiva</strong> · Tushant Sharma · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.4.1</span></div>
+    <div><span class="badge pulse-glow">v5.5.0</span></div>
 </div>
 
 <div class="app">
@@ -146,7 +146,7 @@
 </div>
 </div>
 
-<div class="footer">VibeGaffer v5.4.1 · Astraiva · Built by Tushant Sharma</div>
+<div class="footer">VibeGaffer v5.5.0 · Astraiva · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -167,6 +167,7 @@ VG.init = async () => {
     VG.allFixtures = await VG.loadFixtures();
     VG.loadOdds(); // Optional — loads in background, non-blocking
     VG.loadUnderstat(); // Optional — loads in background, non-blocking
+    VG.loadSetPieceData(); // Optional — bundled set-piece takers (non-blocking)
     const gwSel = el("gameweek");
     gwSel.innerHTML = "";
     for (let i = 1; i <= 38; i++) {
@@ -197,6 +198,7 @@ VG.run = async () => {
     }
     if (!VG.allFixtures) VG.allFixtures = await VG.loadFixtures();
     if (!VG.understatLoaded) await VG.loadUnderstat();
+    if (!VG.setPieces.teams || !Object.keys(VG.setPieces.teams).length) await VG.loadSetPieceData();
 
     const gw = parseInt(el("gameweek").value);
     const horizon = parseInt(el("horizon").value);
@@ -265,7 +267,9 @@ VG.run = async () => {
     let html = '';
 
     // Metrics
-    html += VG.render.metrics(result);
+    const gwProjStarting = (result.starting?.length >= 11 ? result.starting : (result.gwPicks?.[0]?.starting || result.squad.slice(0, 11)));
+    const mcMetric = (gwProjStarting && gwProjStarting.length >= 11) ? VG.render.gwProjection(gwProjStarting, VG.allFixtures, gw, result.gotCap?.[0]?.id) : null;
+    html += VG.render.metrics(result, mcMetric);
 
     // Transfers
     if (result.transfersIn?.length || result.transfersOut?.length) {
@@ -279,6 +283,16 @@ VG.run = async () => {
       html += '</div><div class="transfer-col"><h4 style="color:#ef4444;">OUT</h4>';
       result.transfersOut.forEach(p => html += `<div class="transfer-item out"><div class="name" style="color:#ef4444;">${VG.esc(p.name)}</div><div class="meta">${VG.esc(p.position)} · £${p.price.toFixed(1)}m</div></div>`);
       html += '</div></div>';
+      // Approximate rank impact of these transfers (v5.5, FFHub AI idea)
+      if (result.transfersIn?.length && result.transfersOut?.length) {
+        const outXP = result.transfersOut.reduce((s, p) => s + (p.totalXP || 0), 0);
+        const inXP = result.transfersIn.reduce((s, p) => s + (p.totalXP || 0), 0);
+        const ri = VG.estimateRankImpact(inXP - outXP, { nGWs: 5 });
+        if (ri.rankDelta !== 0) {
+          const col = ri.rankDelta < 0 ? "#00ff87" : "#ef4444";
+          html += `<div style="text-align:center;font-size:0.72rem;margin-top:6px;color:${col};">≈ projected rank ${ri.direction === 'gain' ? 'improvement' : 'loss'} of ${Math.abs(ri.rankDelta).toLocaleString()} (${ri.pts > 0 ? '+' : ''}${ri.pts} xP over 5 GW) — estimate</div>`;
+        }
+      }
       if (result.hitCost > 0) {
         html += `<div style="text-align:center;color:#ef4444;font-size:0.75rem;font-weight:600;margin-top:8px;">Hit Cost: -${result.hitCost} pts</div>`;
         if (result.hitDetails?.length > 0) {
@@ -613,6 +627,32 @@ VG.preloadTabs = async (gw, horizon) => {
     const tickerData = VG.buildFixtureTicker(gw, 8, VG.allFixtures);
     const swings = VG.analyzeFixtureSwings(gw, 8, VG.allFixtures);
     let fixtureHTML = '';
+    // DGW/BGW Season Planner (v5.5, Ben Crellin planner idea) — highlights
+    // the first-half double/blank weeks. Base fixtures have none; becomes
+    // live when postponements create them.
+    const planner = VG.buildSeasonPlanner(VG.allFixtures);
+    const dgwWeeks = planner.filter(p => p.dgwTeams.length > 0);
+    const bgwWeeks = planner.filter(p => p.bgwTeams.length > 0);
+    fixtureHTML += '<div class="section-title" style="font-size:0.8rem;">DGW/BGW Season Planner <span style="font-weight:400;color:#475569;font-size:0.68rem;">(Ben Crellin-style)</span></div>';
+    if (dgwWeeks.length) {
+      fixtureHTML += '<div style="margin:4px 0 8px;">';
+      dgwWeeks.slice(0, 20).forEach(p => {
+        const names = p.dgwTeams.map(t => VG.esc((VG.teams[t] || {}).short_name || t)).join(', ');
+        fixtureHTML += `<span style="display:inline-block;margin:2px 4px;padding:3px 8px;border-radius:6px;background:rgba(0,255,135,0.12);color:#00ff87;font-size:0.68rem;">GW${p.gw} DGW: ${names}</span>`;
+      });
+      fixtureHTML += '</div>';
+    }
+    if (bgwWeeks.length) {
+      fixtureHTML += '<div style="margin:4px 0 8px;">';
+      bgwWeeks.slice(0, 20).forEach(p => {
+        const names = p.bgwTeams.map(t => VG.esc((VG.teams[t] || {}).short_name || t)).join(', ');
+        fixtureHTML += `<span style="display:inline-block;margin:2px 4px;padding:3px 8px;border-radius:6px;background:rgba(239,68,68,0.12);color:#ef4444;font-size:0.68rem;">GW${p.gw} BGW: ${names}</span>`;
+      });
+      fixtureHTML += '</div>';
+    }
+    if (!dgwWeeks.length && !bgwWeeks.length) {
+      fixtureHTML += '<p style="color:#334155;font-size:0.7rem;">No doubles/blanks yet — base fixtures have all 20 teams playing once weekly. Doubles appear after postponements; this planner will flag DGW/BGW chip windows automatically once they do.</p>';
+    }
     // Team strength ratings from free Understat npxG priors (v5.4)
     const teamRatings = VG.computeTeamRatings();
     if (teamRatings) {
@@ -728,12 +768,14 @@ VG.preloadTabs = async (gw, horizon) => {
       dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(251,191,36,0.1);color:#fbbf24;">● Wait — low owned, weak value</span>';
       dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(239,68,68,0.1);color:#ef4444;">● Trap — popular but weak value</span>';
       dh += '</div>';
-      dh += '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>Real xG/90</th><th>xG Reg</th><th>ep_next</th><th>BPS</th><th>DEF/90</th><th>Own%</th><th>Zone</th><th>Diff Score</th></tr>';
+      dh += '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>Real xG/90</th><th>xG Reg</th><th>EP</th><th>Own%</th><th>EO</th><th>Zone</th><th>Diff Score</th></tr>';
       diffs.forEach((p, i) => {
         const rank = i + 1;
         const ownColor = (p.ownership || 0) <= 2 ? '#00ff87' : (p.ownership || 0) <= 5 ? '#fbbf24' : '#94a3b8';
         const zone = VG.getDifferentialZone(p);
-        dh += `<tr><td style="color:#e2e8f0;">${rank}. ${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td><td>${VG.regressionBadge(p.regression)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td>${(p.bps || 0)}</td><td>${(p.defconPer90 || 0).toFixed(2)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td><span style="color:${zone.color};">${VG.esc(zone.label)}</span></td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
+        const sp = p.setPiece || {};
+        const spBadge = (sp.pen ? '<span style="color:#fbbf24;" title="Penalty taker">P</span>' : '') + (sp.fk ? '<span style="color:#60a5fa;" title="Free-kick taker">F</span>' : '') + (sp.cor ? '<span style="color:#a78bfa;" title="Corner/Set-piece">C</span>' : '');
+        dh += `<tr><td style="color:#e2e8f0;">${rank}. ${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td><td>${VG.regressionBadge(p.regression)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}${spBadge ? ' ' + spBadge : ''}</td><td><span style="color:${zone.color};">${VG.esc(zone.label)}</span></td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
       });
       dh += '</table>';
       if (diffs.length === 0) dh = '<p style="color:#475569;">No differentials found matching criteria (low ownership + high xP)</p>';
@@ -919,12 +961,16 @@ VG.renderComparison = () => {
   }
 
   // ── Table: raw stats + xP components ──
-  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>Real xG</th><th>xG/90</th><th>xG Reg</th><th>App</th><th>CS</th><th>Goals</th><th>Assists</th><th>Bonus</th><th>DEFCON</th><th>Saves</th></tr>';
+  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>Real xG</th><th>xG/90</th><th>xG Reg</th><th>EO</th><th>SP</th><th>App</th><th>CS</th><th>Goals</th><th>Assists</th><th>Bonus</th><th>DEFCON</th><th>Saves</th></tr>';
   selected.forEach((p) => {
     const xc = p.xpComponents || {};
+    const sp = p.setPiece || {};
+    const spBadge = (sp.pen ? 'P' : '') + (sp.fk ? ' F' : '') + (sp.cor ? ' C' : '');
     tableHtml += `<tr><td style="color:#e2e8f0;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${(p.realXG || 0).toFixed(1)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${VG.regressionBadge(p.regression)}</td>`;
+    tableHtml += `<td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}</td>`;
+    tableHtml += `<td style="color:#fbbf24;">${spBadge || '—'}</td>`;
     tableHtml += `<td>${(xc.xpAppearance || 0).toFixed(1)}</td>`;
     tableHtml += `<td>${(xc.xpCS || 0).toFixed(1)}</td>`;
     tableHtml += `<td>${(xc.xpGoals || 0).toFixed(1)}</td>`;

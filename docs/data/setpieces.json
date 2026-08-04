@@ -1,0 +1,25 @@
+{
+  "_comment": "Seasonal set-piece takers (2026/27 starter). Keyed by FPL web_name. role: pen (penalty), fk (free-kick), cor (corner/cross-set-piece). Boost is modest and only applied to players explicitly listed. UPDATE THIS EACH SEASON. Source idea: FFHUB Set Piece Takers / FFS.",
+  "teams": {
+    "ARS": { "pen": ["Saka", "Nwaneri"], "fk": ["Ødegaard", "Nwaneri"], "cor": ["Saka", "Rice"] },
+    "AVL": { "pen": ["Watkins", "Tielemans"], "fk": ["Tielemans", "Digne"], "cor": ["Tielemans", "McGinn"] },
+    "BOU": { "pen": ["Enes Ünal", "Evanilson"], "fk": ["Tavernier", "Christie"], "cor": ["Tavernier", "Christie"] },
+    "BRE": { "pen": ["Mbeumo", "Dasilva"], "fk": ["Jensen", "Dasilva"], "cor": ["Jensen", "Lewis-Potter"] },
+    "BHA": { "pen": ["João Pedro", "Groß"], "fk": ["Groß", "Mitoma"], "cor": ["Mitoma", "Groß"] },
+    "CHE": { "pen": ["Palmer", "N.Jackson"], "fk": ["Palmer", "Enzo"], "cor": ["Palmer", "Neto"] },
+    "COV": { "pen": ["Simms", "Wright"], "fk": ["Rudoni", "Eccles"], "cor": ["Rudoni", "Torp"] },
+    "CRY": { "pen": ["Mateta", "Eze"], "fk": ["Eze", "Kamada"], "cor": ["Eze", "Kamada"] },
+    "EVE": { "pen": ["Calvert-Lewin", "Dewsbury-Hall"], "fk": ["Dewsbury-Hall", "McNeil"], "cor": ["McNeil", "Gana"] },
+    "FUL": { "pen": ["Muniz", "Smith Rowe"], "fk": ["Pereira", "Smith Rowe"], "cor": ["Pereira", "Iwobi"] },
+    "HUL": { "pen": ["McBurnie", "Coyle"], "fk": ["Slater", "Ömür"], "cor": ["Ömür", "Slater"] },
+    "IPS": { "pen": ["Delap", "Hirst"], "fk": ["Morsy", "Burns"], "cor": ["Burns", "Davis"] },
+    "LEE": { "pen": ["Piroe", "Gnonto"], "fk": ["Gnonto", "Aaronson"], "cor": ["Aaronson", "Gnonto"] },
+    "LIV": { "pen": ["Salah", "Gakpo"], "fk": ["Trent", "Mac Allister"], "cor": ["Trent", "Szoboszlai"] },
+    "MCI": { "pen": ["Haaland", "Foden"], "fk": ["Foden", "Grealish"], "cor": ["Foden", "Kovačić"] },
+    "MUN": { "pen": ["Bruno", "Rashford"], "fk": ["Bruno", "Rashford"], "cor": ["Bruno", "Fernandes"] },
+    "NEW": { "pen": ["Isak", "Wilson"], "fk": ["Trippier", "Gordon"], "cor": ["Trippier", "Gordon"] },
+    "NFO": { "pen": ["Wood", "Gibbs-White"], "fk": ["Gibbs-White", "Anderson"], "cor": ["Gibbs-White", "Anderson"] },
+    "TOT": { "pen": ["Son", "Maddison"], "fk": ["Maddison", "Son"], "cor": ["Maddison", "Son"] },
+    "SUN": { "pen": ["Isidor", "B.C."], "fk": ["Mundle", "Talbi"], "cor": ["Mundle", "Patterson"] }
+  }
+}

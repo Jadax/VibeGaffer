@@ -1,4 +1,4 @@
-// VibeGaffer v5.4.0 — pure static FPL analytics (GitHub Pages, no backend)
+// VibeGaffer v5.5.0 — pure static FPL analytics (GitHub Pages, no backend)
 // Docs: README.md / AGENTS.md · Data: docs/data/*.json via GitHub Actions
 const VG = {};
 
@@ -250,6 +250,15 @@ VG.loadUnderstat = async () => {
     }
   } catch (e) { console.warn("[VG] Understat data unavailable (optional):", e.message); }
   VG.understat = null;
+  return null;
+};
+
+// Load the bundled seasonal set-piece takers (optional — boosts xP when present).
+VG.loadSetPieceData = async () => {
+  try {
+    const r = await fetch("data/setpieces.json", { cache: "no-cache" });
+    if (r.ok) { const j = await r.json(); VG.loadSetPieces(j); return j; }
+  } catch (e) { console.warn("[VG] set-piece data unavailable (optional):", e.message); }
   return null;
 };
 
@@ -561,8 +570,13 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
 
   // ── Goal / assist probability ──
   const homeBoost = 1.15;
-  const projGoals = Math.min(projGoalsPer90 * (isHome ? homeBoost : 1.0) * oddsAttMult, 0.85);
-  const projAssists = Math.min(projAssistsPer90 * (isHome ? homeBoost : 1.0) * oddsAttMult, 0.85);
+  const sp = VG.setPieceRole(pid);
+  // Set-piece premium (v5.5, FFHUB/FFS idea): penalty takers get a real goal
+  // bump (clean shot on goal), FK/corner takers a smaller assist bump.
+  const penBoost = sp && sp.pen ? 1.28 : 1.0;
+  const spAssistBoost = sp && (sp.fk || sp.cor) ? 1.15 : 1.0;
+  const projGoals = Math.min(projGoalsPer90 * (isHome ? homeBoost : 1.0) * oddsAttMult * penBoost, 0.85);
+  const projAssists = Math.min(projAssistsPer90 * (isHome ? homeBoost : 1.0) * oddsAttMult * spAssistBoost, 0.85);
 
   // ── Bonus: use BPS (strongest predictor) + position-specific ICT + xGI ──
   const bpsPerGameNorm = bpsPerGame / 40;
@@ -667,6 +681,170 @@ VG.regressionBadge = (reg) => {
   return `<span style="background:rgba(239,68,68,0.12);color:#ef4444;padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;">OVER ${prefix}${d}</span>`;
 };
 
+// ── Set-piece xP boost (v5.5) ─────────────────────────────────────────
+// Idea borrowed from FFHUB "Set Piece Takers" / FFS. Penalty/FK/corner
+// takers carry extra goal/assist upside. Dataset ships as data/setpieces.json
+// (seasonal — update each year; a player not listed gets no boost).
+VG.setPieces = { teams: {} };
+VG.loadSetPieces = (sp) => {
+  if (!sp || !sp.teams) return;
+  VG.setPieces = { teams: sp.teams || {} };
+};
+// Returns {pen, fk, cor} booleans for a player id. Defensive: unknown → none.
+VG.setPieceRole = (pid) => {
+  const p = VG.players[pid];
+  if (!p) return { pen: false, fk: false, cor: false };
+  const team = VG.setPieces.teams[(VG.teams[p.team] || {}).short_name || ""];
+  if (!team) return { pen: false, fk: false, cor: false };
+  const nm = String(p.web_name || p.second_name || "").trim().toLowerCase();
+  const hit = arr => (arr || []).some(n => String(n).trim().toLowerCase() === nm);
+  return { pen: hit(team.pen), fk: hit(team.fk), cor: hit(team.cor) };
+};
+
+// Effective Ownership (v5.5) — ownership weighted by how "captain-popular" a
+// player is. Real EO (FFix/FPL Review) = ownership + captain-share because a
+// captained player's points count double. The free FPL API gives no global
+// captain-share feed, so we estimate captain-share from xP prominence: the
+// top-xP captain candidates in a position attract a modelled share. This
+// surfaces TEMPLATE (high EO) vs DIFFERENTIAL (low EO) far better than raw
+// ownership alone.
+VG.computeEffectiveOwnership = (allXP) => {
+  // Rank every player by totalXP within their position to model captain appeal.
+  const capPool = allXP.filter(p => p.positionId !== 1).slice().sort((a, b) => b.totalXP - a.totalXP);
+  const capScores = {};
+  capPool.forEach((p, i) => {
+    if (i >= 20) return; // beyond top-20 captains the modelled share -> ~0
+    // Rough captain-share curve: ~6% for the very top pick, decaying fast.
+    capScores[p.id] = Math.max(0, 0.06 - i * 0.0028);
+  });
+  return {
+    pool: capPool.slice(0, 12),
+    forPlayer(p) {
+      const own = p.ownership || 0;
+      const cap = capScores[p.id] || 0;
+      const eo = own * (1 + cap);
+      return { eo: +eo.toFixed(1), own, capShare: +(cap * 100).toFixed(1) };
+    }
+  };
+};
+
+// ── Monte Carlo Gameweek distribution (v5.5) ──────────────────────────
+// Idea borrowed from FPL Review / FFix solver. Instead of a single xP number,
+// sample each starter's actual points from a Poisson distribution centred on
+// their per-GW projection (captain doubled), sum, and repeat to build a real
+// GW-points distribution with ceiling/floor and a green-arrow probability.
+// Small iterations by default — cheap on the main thread.
+VG.mcPoisson = (lambda) => {
+  if (lambda <= 0) return 0;
+  const L = Math.exp(-lambda);
+  let k = 0, p = 1;
+  do { k++; p *= Math.random(); } while (p > L);
+  return k - 1;
+};
+VG.perGWProjection = (p, fixtures, gw) => {
+  if (!p || !fixtures) return p && p.gwXP ? p.gwXP : (p ? p.totalXP : 0);
+  const proj = VG.computePlayerGWProjection(p, gw, fixtures);
+  return proj ? (proj.gwXP || 0) : 0;
+};
+// Returns distribution over a starting XI for a GW.
+// `starting` entries carry {id, positionId, isCaptain, multiplier, teamId}.
+VG.mcGWDistribution = (starting, fixtures, gw, iterations) => {
+  iterations = iterations || 3000;
+  const starters = (starting || []).filter(s => s && (s.positionId || s.element_type));
+  if (starters.length === 0) return { mean: 0, sd: 0, p10: 0, p90: 0, median: 0, samples: [], n: 0 };
+  const lambdas = starters.map(s => {
+    const lam = VG.perGWProjection(s, fixtures, gw) || 0;
+    const mult = s.isCaptain ? Math.max(s.multiplier || 1, 2) : (s.multiplier || 1);
+    return lam * mult;
+  });
+  const samples = [];
+  for (let it = 0; it < iterations; it++) {
+    let t = 0;
+    for (const lam of lambdas) t += VG.mcPoisson(lam);
+    samples.push(t);
+  }
+  samples.sort((a, b) => a - b);
+  const mean = samples.reduce((s, x) => s + x, 0) / samples.length;
+  const sd = Math.sqrt(samples.reduce((s, x) => s + (x - mean) * (x - mean), 0) / samples.length);
+  const at = f => samples[Math.max(0, Math.min(samples.length - 1, Math.floor(f * samples.length)))];
+  return { mean: +mean.toFixed(1), sd: +sd.toFixed(1), p10: at(0.10), p90: at(0.90), median: at(0.5), samples, n: iterations };
+};
+VG.greenArrowProb = (dist, target) => {
+  if (!dist || !dist.samples || !dist.samples.length) return 0;
+  let over = 0;
+  for (const x of dist.samples) if (x >= target) over++;
+  return +((over / dist.samples.length) * 100).toFixed(1);
+};
+// Worst/best/first-choice check used by MC badge.
+VG.mcRange = (dist) => ({
+  floor: dist.p10,
+  ceiling: dist.p90,
+  band: +(dist.p90 - dist.p10).toFixed(1)
+});
+
+// ── DGW/BGW Season Planner (v5.5) ─────────────────────────────────────
+// Idea borrowed from Ben Crellin's FPL planner / FFHub calendars. A full-season
+// grid of double (2 fixtures) and blank (0 fixtures) gameweeks per team, plus
+// per-GW chip-window scoring for a squad.
+VG.buildSeasonPlanner = (fixtures) => {
+  const gwMap = {};
+  (fixtures || []).forEach(f => {
+    const ev = f.event;
+    if (!gwMap[ev]) gwMap[ev] = {
+      count: 0,
+      teams: {},
+      dgwTeams: [], bgwTeams: []
+    };
+    gwMap[ev].count++;
+    gwMap[ev].teams[f.team_h] = (gwMap[ev].teams[f.team_h] || 0) + 1;
+    gwMap[ev].teams[f.team_a] = (gwMap[ev].teams[f.team_a] || 0) + 1;
+  });
+  const out = Object.keys(gwMap).map(ev => {
+    const g = gwMap[ev];
+    const gws = parseInt(ev);
+    g.dgwTeams = Object.keys(g.teams).filter(t => g.teams[t] >= 2).map(Number);
+    g.bgwTeams = Object.keys(g.teams).filter(t => g.teams[t] === 0).map(Number);
+    return { gw: gws, fixtureCount: g.count, dgwTeams: g.dgwTeams, bgwTeams: g.bgwTeams };
+  }).sort((a, b) => a.gw - b.gw);
+  return out;
+};
+// Build a per-team row: {teamId, short, fixtures: [{gw, n}]} — n=2 DGW, 0 blank.
+VG.teamSeasonRow = (planner, teamId, fromGW, nGWs) => {
+  const short = (VG.teams[teamId] || {}).short_name || teamId;
+  const cells = [];
+  const end = fromGW + nGWs;
+  planner.forEach(p => {
+    if (p.gw < fromGW || p.gw >= end) return;
+    let n = 1;
+    if (p.dgwTeams.includes(teamId)) n = 2;
+    else if (p.bgwTeams.includes(teamId)) n = 0;
+    cells.push({ gw: p.gw, n });
+  });
+  return { teamId, short, cells };
+};
+
+// ── Approximate rank impact of a transfer (v5.5) ──────────────────────
+// Idea borrowed from "AI transfer / rank" tools (FFHub AI Transfers). Maps a
+// projected points gain over the horizon to an approximate overall-rank move.
+// The mapping is a rough global model — presented as an estimate, not gospel.
+VG.estimateRankImpact = (ptDelta, context) => {
+  const totalPlayers = context && context.totalPlayers ? context.totalPlayers : 8000000;
+  if (!ptDelta || Math.abs(ptDelta) < 0.1) return { pts: 0, rankDelta: 0, caution: true };
+  // Near-mean managers score ~±2.5 pts around the league average per GW; a
+  // 1-pt gain over ~5 GWs ≈ ~0.9% of the FINISHED field, scaled non-linearly
+  // so big swings matter less at the very top.
+  const gwAdj = (context && context.nGWs) ? context.nGWs : 5;
+  const share = Math.abs(ptDelta) * 0.018 / Math.max(1, gwAdj / 5);
+  const raw = Math.min(share, 1.0);
+  const rankDelta = Math.round(totalPlayers * raw * 0.45);
+  return {
+    pts: +ptDelta.toFixed(1),
+    rankDelta: ptDelta >= 0 ? -rankDelta : rankDelta,
+    direction: ptDelta >= 0 ? "gain" : "loss",
+    caution: true
+  };
+};
+
 VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   const p = VG.players[pid];
   if (!p) return { totalXP: 0, gwDetails: [], info: {} };
@@ -761,9 +939,18 @@ VG.computeAllXP = (startGW, nGWs, fixtures) => {
     const xp = VG.computeMultiGWXP(p.id, startGW, nGWs, fixtures);
     xp.info.xpPerPrice = +(xp.totalXP / Math.max(xp.info.price, 4.0)).toFixed(2);
     xp.info.xpComponents = xp.xpComponents;
+    xp.info.setPiece = VG.setPieceRole(p.id);
     results.push(xp.info);
   });
-  return results.sort((a, b) => b.totalXP - a.totalXP);
+  results.sort((a, b) => b.totalXP - a.totalXP);
+  // Effective ownership pass — needs the sorted full pool for captain-share model.
+  const eo = VG.computeEffectiveOwnership(results);
+  results.forEach(p => {
+    const r = eo.forPlayer(p);
+    p.eo = r.eo;
+    p.capShare = r.capShare;
+  });
+  return results;
 };
 
 // ── Per-GW Picks: best XI + formation for a single gameweek ──────────────
@@ -2256,16 +2443,44 @@ VG.render.bench = (bench) => {
   return html;
 };
 
-VG.render.metrics = (result) => {
+VG.render.metrics = (result, extraMetric) => {
   const metrics = [
     { label: "FORMATION", value: `${result.formation.DEF}-${result.formation.MID}-${result.formation.FWD}`, color: "#00ff87" },
     { label: "SQUAD VALUE", value: `£${result.totalCost.toFixed(1)}m`, color: "#06b6d4" },
     { label: "BANK", value: `£${result.budgetRemaining.toFixed(1)}m`, color: result.budgetRemaining > 0.5 ? "#fbbf24" : "#666" },
     { label: "TOTAL xP", value: result.totalXP.toFixed(1), color: "#00ff87" },
+    ...(extraMetric ? [extraMetric] : []),
   ];
   return '<div class="metrics-row">' + metrics.map(m =>
-    `<div class="metric"><div class="metric-label">${m.label}</div><div class="metric-value" style="color:${m.color}">${m.value}</div></div>`
+    `<div class="metric"><div class="metric-label">${m.label}</div>` +
+    `<div class="metric-value" style="color:${m.color}">${m.value}</div>` +
+    (m.sub ? `<div class="metric-sub" style="color:#94a3b8;font-size:0.62rem;line-height:1.4;">${m.sub}</div>` : "") +
+    `</div>`
   ).join('') + '</div>';
+};
+
+// Monte Carlo GW projection metric (v5.5, FPL Review/FFix idea). Samples the
+// starting XI's GW points (captain doubled) for a real points distribution.
+VG.render.gwProjection = (starting, fixtures, gw, captainId) => {
+  if (!starting || !starting.length) return null;
+  const withCap = starting.map(p => {
+    const isCap = captainId != null && (p.id === captainId || p.element === captainId);
+    return {
+      ...p, element_type: p.element_type || p.positionId,
+      isCaptain: isCap || !!p.isCaptain,
+      multiplier: (isCap || p.isCaptain) ? Math.max(p.multiplier || 1, 2) : 1
+    };
+  });
+  const dist = VG.mcGWDistribution(withCap, fixtures, gw, 4000);
+  if (!dist.n) return null;
+  const range = VG.mcRange(dist);
+  const explain = (withCap.find(p => p.isCaptain) ? "captain doubled" : "multiplicators applied");
+  return {
+    label: "GW" + gw + " xP PROJECTION",
+    value: `${dist.mean} ± ${dist.sd}`,
+    color: "#a78bfa",
+    sub: `90% band ${range.floor}-${range.ceiling} pts (${explain})`
+  };
 };
 
 VG.render.chipCard = (label, color, advice) => {

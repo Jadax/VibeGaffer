@@ -12,9 +12,15 @@ Primary context document for AI models working on this codebase. Read fully befo
 - **Post-commit review fixes** (v5.4.1, applied after `93fa865`):
   - `render.tips`'s weaknesses bullets skipped `VG.esc()` while the strengths bullets right above them didn't — inconsistent with the codebase's escape-everything-API-derived convention. Team names aren't attacker-controlled today (unlike league/manager names), so this wasn't exploitable, but it's the same class of bug v5.3.0 hardened against. Fixed in `docs/app.js`.
   - The Live tab's "auto-refresh every 5 min" comment described recurring behaviour, but was a single `setTimeout` that fired once and stopped. Made it self-reschedule in `docs/index.html`.
-- **Tests**: 112/112 pass (`npm test`), verified after all hardening + v5.4 edits + the two fixes above
-- **State**: `docs/app.js` ~2960 lines, `docs/index.html` ~935 lines; both syntax-check clean
-- **Next model TODO**: v5.4.1 is committed. Optionally implement **Remaining Improvements** below.
+- **Tests**: 129/129 pass (`npm test`), verified after all hardening + v5.4 edits + the two fixes + v5.5 features
+- **State**: `docs/app.js` ~3150 lines, `docs/index.html` ~975 lines; both syntax-check clean
+- **Uncommitted (v5.5 — competitor-borrowed features, per Borrowing Policy)**:
+  - **Effective Ownership** (`VG.computeEffectiveOwnership`) — ownership weighted by modelled captain-share (FFix/FPL Review idea); EO column in Compare + Differentials; sharper TEMPLATE vs DIFFERENTIAL signal than raw ownership
+  - **Monte Carlo GW Projection** (`VG.mcGWDistribution`, `VG.greenArrowProb`, `VG.render.gwProjection`) — samples starting XI points (captain doubled) → real points distribution; Squad tab shows `mean ± SD` + 90% band (FPL Review/FFix idea). The old whole-source `Math.random()` determinism test was re-scoped to the greedy-optimizer body only (the optimizer stays deterministic; MC legitimately uses Math.random)
+  - **DGW/BGW Season Planner** (`VG.buildSeasonPlanner`, `VG.teamSeasonRow`) — Ben Crellin-style calendar flagging double/blank weeks + chip windows (Fixtures tab); "no doubles yet" note pre-postponement, becomes live after postponements
+  - **Set-Piece Takers** (new `docs/data/setpieces.json` + `VG.loadSetPieceData`/`VG.setPieceRole`) — pen/FK/corner xP boost in `computeFixtureXP` + "P/F/C" badges (FFHUB/FFS idea). **Seasonal — update each year**
+  - **Transfer Rank-Impact** (`VG.estimateRankImpact`) — transfer xP gain → approximate overall-rank move (FFHub AI idea), in Squad tab transfer panel
+- **Next model TODO**: commit v5.5 (see **Commit Convention**), then optionally implement **Remaining Improvements** below.
 
 ## Quick Status
 
@@ -39,7 +45,7 @@ Primary context document for AI models working on this codebase. Read fully befo
 | `.github/workflows/fetch-history-priors.yml` | ~55 | Weekly vaastav historical priors |
 | `.github/workflows/fetch-odds.yml` | ~55 | Optional bookmaker odds (needs `ODDS_API_KEY`) |
 | `.github/workflows/test.yml` | ~30 | CI: `node --check` + `npm test` |
-| `tests/run.js` | ~430 | Regression suite (112 checks) |
+| `tests/run.js` | ~460 | Regression suite (129 checks) |
 
 ## Golden Rules (violations cause bugs)
 
@@ -196,6 +202,13 @@ Start-rate model using last season data: GK binary (nailed #1 = 95%, backup 15-7
 ### Price (consolidated)
 - `VG.predictPriceChanges(liveData)` → risers/fallers (single source of truth; see Price Model)
 - `VG.getPriceRisk()` → async wrapper for Prices tab
+
+### v5.5 borrowed features
+- `VG.computeEffectiveOwnership(allXP)` → {pool, forPlayer(p): {eo, own, capShare}} (FFix/FPL Review)
+- `VG.mcGWDistribution(starting, fixtures, gw, iters)` → {mean, sd, p10, p90, median, samples, n} (FPL Review/FFix); `VG.greenArrowProb(dist, target)`; `VG.mcPoisson(lambda)`; `VG.render.gwProjection(starting, fixtures, gw, captainId)` → metric card
+- `VG.buildSeasonPlanner(fixtures)` → per-GW {gw, fixtureCount, dgwTeams, bgwTeams}; `VG.teamSeasonRow(planner, teamId, fromGW, nGWs)` → {short, cells:[{gw,n}]} (Ben Crellin idea)
+- `VG.loadSetPieceData()` / `VG.loadSetPieces(sp)` / `VG.setPieceRole(pid)` → {pen, fk, cor}; boost applied inside `VG.computeFixtureXP` (FFHUB/FFS idea; data in `docs/data/setpieces.json` — **seasonal**)
+- `VG.estimateRankImpact(ptDelta, {nGWs, totalPlayers})` → {pts, rankDelta, direction, caution} (FFHub AI idea)
 
 ### League Analyzer (v5.1)
 - `VG.analyzeLeague(leagueId, currentGW)` → fetches classic league, compares squads, ownership, differentials, outliers, template detection
