@@ -1,6 +1,6 @@
-# VibeGaffer v5.4.1
+# VibeGaffer v5.6.1
 
-**FPL Optimization Engine** | Powered by [Astraiva](https://astraiva.com) | Author: Tushant Sharma
+**FPL Optimization Engine** | Author: Tushant Sharma
 
 Live: https://jadax.github.io/VibeGaffer/
 
@@ -385,6 +385,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.6.1 | — | Hardening + refactor: fixed a player-profile XSS (unescaped opponent name), removed dead code/params/vars, consolidated shared helpers (`playerName`/`fdrColor`/`hasFitnessFlag`/`setPieceBadge`), removed redundant render init + stray comments, author attribution = Tushant Sharma only |
 | v5.6.0 | — | Player Profile (form/xG/EO/set-piece/fixture-run per player), Live Rank tracker (real FPL OR via Team ID), Team News feed grouped by club (Strategy tab), DGW/BGW-aware Chip EV Calendar |
 | v5.5.0 | — | Effective Ownership (captain-share-weighted; Compare + Differentials EO column), Monte Carlo GW projection (mean +- SD + 90% band in Squad tab), DGW/BGW Season Planner (Ben Crellin-style, Fixtures tab), Set-Piece Takers xP boost (pen/FK/corner + P/F/C badges; seasonal setpieces.json), transfer rank-impact estimate |
 | v5.4.1 | — | Post-review fixes on v5.4.0: escaped the Squad DNA "weaknesses" bullets (inconsistent with the escaped "strengths" bullets next to them), made the Live tab's 5-minute refresh actually recur instead of firing once |
@@ -425,8 +426,7 @@ Test coverage:
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.4.1
-- **Company**: Astraiva
+- **Application**: VibeGaffer v5.6.1
 - **Author**: Tushant Sharma
 - **License**: Proprietary
 - **Live URL**: https://jadax.github.io/VibeGaffer/

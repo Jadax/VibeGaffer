@@ -185,7 +185,7 @@ check("Doubtful captain warning is shown", captainReason.details.some(detail => 
 
 const indexSource = fs.readFileSync(indexPath, "utf8");
 check("Premium/value dropdown routes through strategy optimizer", indexSource.includes('VG.optimizeStrategies(allXP, 100, VG.allFixtures, gw, horizon)[strategy]'));
-check("Tab preloader defines its DOM helper", /VG\.preloadTabs = async \(gw, horizon\) => \{\r?\n  const el = id => document\.getElementById\(id\);/.test(indexSource));
+check("Tab preloader defines its DOM helper", /VG\.preloadTabs = async \(gw\) => \{\r?\n  const el = id => document\.getElementById\(id\);/.test(indexSource));
 check(
   `Release assets are cache-busted to package version ${pkg.version}`,
   indexSource.includes(`app.js?v=${pkg.version}`) && indexSource.includes(`style.css?v=${pkg.version}`)
@@ -465,7 +465,7 @@ check("team news feed is a team->players map", typeof teamNews === "object" && t
 check("team news feed has data for some teams", Object.keys(teamNews).length >= 0);
 // Chip calendar: with a normal (no-DGW) schedule it returns [] or only strong-TC rows.
 const chipPlanner = VG.buildSeasonPlanner(fixtures);
-const chipCal = VG.chipCalendar(mcDraft.squad, fixtures, chipPlanner);
+const chipCal = VG.chipCalendar(mcDraft.squad, chipPlanner);
 check("chip calendar returns an array", Array.isArray(chipCal) && chipCal.every(c => typeof c.gw === "number"));
 check("chip calendar renders or shows a no-window note", typeof VG.render.chipCalendar(chipCal) === "string");
 // fixture run profile reflects easy/hard count

@@ -1,4 +1,4 @@
-// VibeGaffer v5.6.0 — pure static FPL analytics (GitHub Pages, no backend)
+// VibeGaffer v5.6.1 — pure static FPL analytics (GitHub Pages, no backend)
 // Docs: README.md / AGENTS.md · Data: docs/data/*.json via GitHub Actions
 const VG = {};
 
@@ -21,6 +21,22 @@ VG.esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
 ));
 
+// Canonical player display name (web_name preferred, then second/first).
+VG.playerName = (p) => p ? (p.web_name || p.second_name || p.first_name || "") : "";
+
+// FDR -> colour used across every fixture-difficulty render (red hard, green easy).
+VG.fdrColor = (fdr) => fdr <= 2 ? "#4ade80" : fdr >= 4 ? "#f87171" : "#94a3b8";
+
+// Flags a player with a fitness concern: FPL chance_of_playing_next_round < 100,
+// an injury news string, or a non-available status.
+VG.hasFitnessFlag = (p) => {
+  const chance = p.chance_of_playing_next_round;
+  const hasNews = p.news && String(p.news).trim().length > 0;
+  return (chance !== null && chance !== undefined && chance < 100) ||
+         hasNews ||
+         (p.status !== "a" && p.status !== "d");
+};
+
 // Injury filter: available or doubtful only (excludes injured/suspended/unavailable)
 VG.isAvailable = (p) => {
   const data = VG.players[p.id];
@@ -34,7 +50,7 @@ VG.fixtureFDR = (f, teamId) => {
 };
 
 // One-stop per-team fixture derivation. Use this instead of re-deriving
-// isHome/oppId/oppName/fdr by hand — there are ~8 historical copies of this block.
+// isHome/oppId/oppName/fdr by hand at every call site.
 VG.fixtureInfo = (f, teamId) => {
   if (!f || !teamId) return { isHome: false, oppId: null, oppName: "BLANK", fdr: 3 };
   const isHome = f.team_h === teamId;
@@ -77,15 +93,11 @@ VG.countUnavailable = (squad) => {
 VG.injuryNews = () => {
   const out = [];
   Object.values(VG.players).forEach(p => {
+    if (!VG.hasFitnessFlag(p)) return;
     const chance = p.chance_of_playing_next_round;
-    const hasNews = p.news && String(p.news).trim().length > 0;
-    const flagged = (chance !== null && chance !== undefined && chance < 100) ||
-                    hasNews ||
-                    (p.status !== "a" && p.status !== "d");
-    if (!flagged) return;
     out.push({
       id: p.id,
-      name: p.web_name || p.second_name || p.first_name,
+      name: VG.playerName(p),
       team: (VG.teams[p.team] || {}).short_name || "",
       position: VG.POSITIONS[p.element_type] || "?",
       chance: (chance === null || chance === undefined) ? 100 : +chance,
@@ -378,7 +390,6 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   if (!p) return { xp: 0, mins: 0, cs: 0, goal: 0, assist: 0, bonus: 0 };
 
   const pos = p.element_type;
-  const price = p.now_cost / 10;
   const mins = parseInt(p.minutes || "0");
   const starts = parseInt(p.starts || "0");
   const goals = parseInt(p.goals_scored || "0");
@@ -696,9 +707,15 @@ VG.setPieceRole = (pid) => {
   if (!p) return { pen: false, fk: false, cor: false };
   const team = VG.setPieces.teams[(VG.teams[p.team] || {}).short_name || ""];
   if (!team) return { pen: false, fk: false, cor: false };
-  const nm = String(p.web_name || p.second_name || "").trim().toLowerCase();
+  const nm = String(VG.playerName(p) || "").trim().toLowerCase();
   const hit = arr => (arr || []).some(n => String(n).trim().toLowerCase() === nm);
   return { pen: hit(team.pen), fk: hit(team.fk), cor: hit(team.cor) };
+};
+
+// Compact "P/F/C" badge string for a set-piece role object (empty when none).
+VG.setPieceBadge = (sp) => {
+  if (!sp) return "";
+  return [sp.pen && "P", sp.fk && "F", sp.cor && "C"].filter(Boolean).join(" ");
 };
 
 // Effective Ownership (v5.5) — ownership weighted by how "captain-popular" a
@@ -902,7 +919,7 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
     gwDetails,
     info: {
       id: pid,
-      name: p.web_name || p.second_name || p.first_name,
+      name: VG.playerName(p),
       fullName: p.first_name + " " + p.second_name,
       position: VG.POSITIONS[p.element_type],
       positionId: p.element_type,
@@ -1831,7 +1848,6 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
   };
 };
 
-// ── Fixture Ticker ────────────────────────────────────────────────────
 // ── Team Strength Ratings (v5.4) ───────────────────────────────────────
 // Free Understat npxG/npxGA priors -> per-team attack/defence/overall
 // strength indices (100 = league average), 1-20 ranks, and a 1-5 rating
@@ -2347,8 +2363,6 @@ VG.analyzeLeague = async (leagueId, currentGW) => {
 
 // ── Render Engine ─────────────────────────────────────────────────────
 VG.render = {};
-
-VG.render = VG.render || {};
 VG.render.teamRatings = (ratings) => {
   if (!ratings || !ratings.length) return '<p style="color:#475569;font-size:0.8rem;">Team strength data unavailable (Understat priors not fetched yet).</p>';
   const ratingColor = { 1: "#ef4444", 2: "#fb923c", 3: "#64748b", 4: "#86efac", 5: "#22c55e" };
@@ -2378,7 +2392,6 @@ VG.render.pitch = (result) => {
   // Divide by the horizon actually used, not a hardcoded 12
   const nGWs = Math.max(result.gwPicks?.length || VG.currentHorizon || 1, 1);
   const gotCap = result.gotCap || [];
-  const rows = [];
   // Build from GK up
   const byPos = { 1: [], 2: [], 3: [], 4: [] };
   starting.forEach(p => byPos[p.positionId].push(p));
@@ -2489,14 +2502,14 @@ VG.render.gwProjection = (starting, fixtures, gw, captainId) => {
 VG.playerProfileHTML = (p, fixtures, gw) => {
   if (!p) return "";
   const sp = p.setPiece || {};
-  const spBadge = (sp.pen ? 'P' : '') + (sp.fk ? ' F' : '') + (sp.cor ? ' C' : '');
+  const spBadge = VG.setPieceBadge(sp);
   const reg = p.regression;
   const roleTxt = spBadge.trim() ? `<span style="color:#fbbf24;font-weight:600;">${VG.esc(spBadge)}</span>` : '—';
   // Fixture run over next 5 GWs
   const row = VG.teamFixtureRow(p.teamId, gw, 5, fixtures);
   const easy = row.filter(r => r && r.fdr <= 2).length;
   const hard = row.filter(r => r && r.fdr >= 4).length;
-  const run = row.map(r => r ? `<span style="color:${r.fdr <= 2 ? '#4ade80' : r.fdr >= 4 ? '#f87171' : '#94a3b8'};font-weight:600;">${r.oppName}${r.isHome ? '' : '(A)'}</span>` : `<span style="color:#334155;">BYE</span>`).join(' ');
+  const run = row.map(r => r ? `<span style="color:${VG.fdrColor(r.fdr)};font-weight:600;">${VG.esc(r.oppName)}${r.isHome ? '' : '(A)'}</span>` : `<span style="color:#334155;">BYE</span>`).join(' ');
   const trend = p.form != null && p.ppg ? (p.form / p.ppg).toFixed(2) : "—";
   return `<div class="profile-panel" style="margin-top:8px;font-size:0.7rem;line-height:1.7;color:#94a3b8;">`
     + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;">`
@@ -2545,29 +2558,23 @@ VG.fetchTeamRank = async (teamId, gw) => {
 VG.teamNewsFeed = () => {
   const byTeam = {};
   Object.values(VG.players).forEach(p => {
+    if (!VG.hasFitnessFlag(p)) return;
     const chance = p.chance_of_playing_next_round;
-    const news = p.news;
-    const flagged = (chance !== null && chance !== undefined && chance < 100) || (news && news.length > 0);
-    if (!flagged) return;
     const t = (VG.teams[p.team] || {}).short_name || p.team;
     if (!byTeam[t]) byTeam[t] = [];
     byTeam[t].push({
-      name: p.web_name || p.second_name,
+      name: VG.playerName(p),
       chance: chance === null || chance === undefined ? 100 : Number(chance),
-      news: news || ""
+      news: p.news || ""
     });
   });
   Object.keys(byTeam).forEach(t => byTeam[t].sort((a, b) => a.chance - b.chance));
   return byTeam;
 };
 
-// ── DGW/BGW-aware Chip EV calendar (v5.6, Ben Crellin idea) ──────────
-// For a given squad across the season, scores each chip per GW so the best
-// timing is visible as a calendar grid (complements evaluateChips).
-VG.chipCalendar = (squad, fixtures, planner) => {
-  const ids = new Set(squad.map(p => p.id != null ? p.id : p.element));
-  const plannerByGw = {};
-  (planner || []).forEach(p => { plannerByGw[p.gw] = p; });
+// DGW/BGW-aware Chip EV calendar (v5.6, Ben Crellin idea). Scores each chip
+// per GW using the squad's DGW/BGW exposure (complements evaluateChips).
+VG.chipCalendar = (squad, planner) => {
   return (planner || []).map(p => {
     // Squad DGW coverage: how many owned teams double this GW.
     let dgwHits = 0, bgwHits = 0;
@@ -3029,7 +3036,7 @@ VG.render.tips = (result, allXP, fixtures, gw) => {
   // ── DGW/BGW-aware Chip EV Calendar (v5.6, Ben Crellin idea) ────────
   const planner = result && VG.buildSeasonPlanner ? VG.buildSeasonPlanner(fixtures || VG.allFixtures) : [];
   if (planner && planner.length && result && result.squad) {
-    const chipCal = VG.chipCalendar(result.squad, fixtures || VG.allFixtures, planner);
+    const chipCal = VG.chipCalendar(result.squad, planner);
     html += `<div class="tips-section"><div class="tips-section-header">💎 Chip EV Calendar <span style="font-weight:400;color:#475569;font-size:0.65rem;">(DGW/BGW-aware)</span></div>`;
     html += VG.render.chipCalendar(chipCal);
     html += `<div style="font-size:0.6rem;color:#475569;margin-top:4px;">Scores 0-100 per GW; 70+ = strong window, 50-70 = decent. Windows populate automatically once DGW/BGW are confirmed after postponements.</div></div>`;

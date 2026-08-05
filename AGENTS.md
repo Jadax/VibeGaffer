@@ -4,7 +4,13 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 ## Handover Status
 
-- **Current version**: v5.4.1 (committed as `93fa865` + a post-review fix commit, live on `main`)
+- **Current version**: v5.6.1 (pushed as `90dcd56` = v5.6.0 + an uncommitted v5.6.1 hardening pass in progress — see below)
+- **v5.6.1 hardening/refactor (uncommitted)**:
+  - Fixed a real XSS class-bug: `VG.playerProfileHTML` interpolated the opponent `short_name` raw into HTML (`app.js:2512`) — now `VG.esc()`-wrapped (Golden Rule 2)
+  - Removed dead code: `price` var in `computeFixtureXP`, `rows`/`gotCap`-misread in `render.pitch` (only `rows` was dead), `maxScore` in `index.html` chip timeline, unused `fixtures`/`ids`/`plannerByGw` in `chipCalendar`, unused `horizon` param on `VG.preloadTabs` (+ test/call-site updated), redundant `VG.render = VG.render || {};`, orphaned "Fixture Ticker" header, stale "~8 historical copies" comment
+  - Added shared helpers to kill duplication: `VG.playerName(p)`, `VG.fdrColor(fdr)` (replaced 5 inline ternaries), `VG.hasFitnessFlag(p)` (shared by `injuryNews` + `teamNewsFeed`), `VG.setPieceBadge(sp)` (Compare + profile)
+  - Attribution: **author is Tushant Sharma only** — removed all `Astraiva` references (title, header, footer, README, Metadata) and added `author` to `package.json`
+  - Version bumped to v5.6.1; tests now 136/136
 - **v5.4.0 shipped**:
   - v5.3 feature set: **Live tab**, **Smart Captaincy** (blank risk + VC insurance EV), **Differential Matrix**
   - v5.4 feature set: **Understat forecast odds** (free w/d/l per fixture → xP engine), **Real xG/xA** (Understat priors blended into xP + new columns), **Injury & Availability Watch** (fitness/news feed in Strategy tab), **Team Strength Ratings** (npxG/npxGA → attack/defence/overall indices, ranks, 1-5 rating in Fixtures tab), **xG regression due/over flags** (Understat xG vs actual goals → green DUE / red OVER badges in Compare + Differentials tabs)
@@ -12,8 +18,8 @@ Primary context document for AI models working on this codebase. Read fully befo
 - **Post-commit review fixes** (v5.4.1, applied after `93fa865`):
   - `render.tips`'s weaknesses bullets skipped `VG.esc()` while the strengths bullets right above them didn't — inconsistent with the codebase's escape-everything-API-derived convention. Team names aren't attacker-controlled today (unlike league/manager names), so this wasn't exploitable, but it's the same class of bug v5.3.0 hardened against. Fixed in `docs/app.js`.
   - The Live tab's "auto-refresh every 5 min" comment described recurring behaviour, but was a single `setTimeout` that fired once and stopped. Made it self-reschedule in `docs/index.html`.
-- **Tests**: 136/136 pass (`npm test`), verified after all hardening + v5.4 edits + the two fixes + v5.5 features
-- **State**: `docs/app.js` ~3330 lines, `docs/index.html` ~1010 lines; both syntax-check clean
+- **Tests**: 136/136 pass (`npm test`), verified after all hardening + v5.6.1 refactor
+- **State**: `docs/app.js` ~3325 lines, `docs/index.html` ~1005 lines; both syntax-check clean
 - **Uncommitted (v5.5 — competitor-borrowed features, per Borrowing Policy)**:
   - **Effective Ownership** (`VG.computeEffectiveOwnership`) — ownership weighted by modelled captain-share (FFix/FPL Review idea); EO column in Compare + Differentials; sharper TEMPLATE vs DIFFERENTIAL signal than raw ownership
   - **Monte Carlo GW Projection** (`VG.mcGWDistribution`, `VG.greenArrowProb`, `VG.render.gwProjection`) — samples starting XI points (captain doubled) → real points distribution; Squad tab shows `mean ± SD` + 90% band (FPL Review/FFix idea). The old whole-source `Math.random()` determinism test was re-scoped to the greedy-optimizer body only (the optimizer stays deterministic; MC legitimately uses Math.random)
@@ -24,7 +30,7 @@ Primary context document for AI models working on this codebase. Read fully befo
   - **Live Rank tracker** (`VG.fetchTeamRank`) — real FPL Overall Rank + GW points via Team ID, cached 5 min, renders a "📊 Live Rank" card (LiveFPL/FFHub idea)
   - **Team News feed** (`VG.teamNewsFeed`) — injury/fitness flags + news grouped by club in the Strategy tab
   - **Chip EV Calendar** (`VG.chipCalendar`, `VG.render.chipCalendar`) — DGW/BGW-aware per-GW TC/BB/FH/WC window scores for the squad; populated once postponements create doubles (Ben Crellin idea)
-- **Next model TODO**: commit v5.6 (see **Commit Convention**), then optionally implement **Remaining Improvements** below.
+- **Next model TODO**: commit v5.6.1 (see **Commit Convention**), then optionally implement **Remaining Improvements** below.
 
 ## Quick Status
 

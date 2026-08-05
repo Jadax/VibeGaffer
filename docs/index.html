@@ -16,22 +16,22 @@
                 https://api.allorigins.win https://corsproxy.io;
     base-uri 'none';
     form-action 'none'">
-  <title>VibeGaffer — FPL Intelligence | Astraiva</title>
+    <title>VibeGaffer — FPL Intelligence</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.6.0">
+  <link rel="stylesheet" href="style.css?v=5.6.1">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
           integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=5.6.0"></script>
+  <script src="app.js?v=5.6.1"></script>
 </head>
 <body>
 
 <div class="header">
   <div>
     <h1><span>⚽</span> VibeGaffer</h1>
-    <div class="header-sub"><strong>Astraiva</strong> · Tushant Sharma · FPL Intelligence Engine</div>
+    <div class="header-sub"><strong>Tushant Sharma</strong> · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.6.0</span></div>
+    <div><span class="badge pulse-glow">v5.6.1</span></div>
 </div>
 
 <div class="app">
@@ -146,7 +146,7 @@
 </div>
 </div>
 
-<div class="footer">VibeGaffer v5.6.0 · Astraiva · Built by Tushant Sharma</div>
+    <div class="footer">VibeGaffer v5.6.1 · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -341,7 +341,7 @@ VG.run = async () => {
             const p = r.players.find(pl => pl.id === pid);
             if (!p) { html += '<td style="text-align:center;color:#334155;">-</td>'; return; }
             const bg = p.fdr === 0 ? '#1e1b4b' : p.fdr <= 2 ? 'rgba(34,197,94,0.15)' : p.fdr === 3 ? 'rgba(255,255,255,0.03)' : p.fdr >= 4 ? 'rgba(239,68,68,0.15)' : 'transparent';
-            const color = p.fdr === 0 ? '#475569' : p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#94a3b8';
+            const color = p.fdr === 0 ? '#475569' : VG.fdrColor(p.fdr);
             html += `<td style="text-align:center;background:${bg};color:${color};font-weight:600;">${VG.esc(p.oppName)}${p.isHome ? '' : ' (A)'}</td>`;
           });
           html += '</tr>';
@@ -376,7 +376,7 @@ VG.run = async () => {
         // Starting XI with reasoning
         html += '<div style="font-size:0.72rem;color:#94a3b8;font-weight:600;margin-bottom:6px;">STARTING XI</div>';
         lineupAdvice.starting.forEach(p => {
-          const fdrColor = p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#94a3b8';
+          const fdrColor = VG.fdrColor(p.fdr);
           html += '<div class="lineup-player" style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(30,41,59,0.4);border-radius:6px;margin-bottom:4px;border-left:3px solid ' + fdrColor + ';">';
           html += '<span class="pos-badge ' + VG.POS_SHIRT[p.positionId] + '" style="font-size:0.6rem;">' + p.position + '</span>';
           html += '<span style="color:#e2e8f0;font-weight:500;font-size:0.75rem;">' + VG.esc(p.name) + '</span>';
@@ -394,7 +394,7 @@ VG.run = async () => {
         if (lineupAdvice.bench.length > 0) {
           html += '<div style="font-size:0.72rem;color:#94a3b8;font-weight:600;margin:10px 0 6px;">BENCH</div>';
           lineupAdvice.bench.forEach(p => {
-            const fdrColor = p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#64748b';
+            const fdrColor = VG.fdrColor(p.fdr) === '#94a3b8' ? '#64748b' : VG.fdrColor(p.fdr);
             html += '<div style="display:flex;align-items:center;gap:8px;padding:4px 10px;background:rgba(30,41,59,0.2);border-radius:4px;margin-bottom:2px;border-left:2px solid ' + fdrColor + ';">';
             html += '<span class="pos-badge ' + VG.POS_SHIRT[p.positionId] + '" style="font-size:0.55rem;padding:1px 3px;">' + p.position + '</span>';
             html += '<span style="color:#94a3b8;font-size:0.7rem;">' + VG.esc(p.name) + '</span>';
@@ -443,7 +443,7 @@ VG.run = async () => {
           const dgwTag = r.dgw ? ' <span style="color:#fbbf24;font-size:0.6rem;">DGW</span>' : '';
           html += `<tr><td style="font-weight:700;">GW${r.gw}${dgwTag}</td>`;
           r.top3.forEach((p, i) => {
-            const fdrColor = p.fdr <= 2 ? '#4ade80' : p.fdr >= 4 ? '#f87171' : '#94a3b8';
+            const fdrColor = VG.fdrColor(p.fdr);
             const fdrBg = p.fdr <= 2 ? 'rgba(34,197,94,0.12)' : p.fdr >= 4 ? 'rgba(239,68,68,0.12)' : 'transparent';
             html += `<td style="color:#e2e8f0;${i === 0 ? 'font-weight:700;' : ''}">${VG.esc(p.name)}</td>`;
             html += `<td style="color:#00ff87;font-weight:600;">${p.gwXP.toFixed(1)}</td>`;
@@ -472,7 +472,6 @@ VG.run = async () => {
         html += '<div style="margin-top:16px;font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Chip Opportunity Timeline</div>';
         html += '<div style="display:grid;grid-template-columns:repeat(' + gwScores.length + ',1fr);gap:6px;margin-top:8px;">';
         gwScores.forEach(gs => {
-          const maxScore = Math.max(gs.tcScore, gs.bbScore, gs.wcScore, gs.fhScore, 1);
           const isDGW = gs.isDGW;
           const isBGW = gs.isBGW;
           const gwLabel = 'GW' + gs.gw;
@@ -624,7 +623,7 @@ VG.run = async () => {
     });
     sel.onchange = () => VG.renderComparison();
 
-    VG.preloadTabs(gw, horizon);
+    VG.preloadTabs(gw);
 
   } catch(e) {
     console.error("[VG] run failed:", e);
@@ -639,7 +638,7 @@ VG.run = async () => {
   }
 };
 
-VG.preloadTabs = async (gw, horizon) => {
+VG.preloadTabs = async (gw) => {
   const el = id => document.getElementById(id);
 
   try {
@@ -983,8 +982,7 @@ VG.renderComparison = () => {
   let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>Real xG</th><th>xG/90</th><th>xG Reg</th><th>EO</th><th>SP</th><th>App</th><th>CS</th><th>Goals</th><th>Assists</th><th>Bonus</th><th>DEFCON</th><th>Saves</th></tr>';
   selected.forEach((p) => {
     const xc = p.xpComponents || {};
-    const sp = p.setPiece || {};
-    const spBadge = (sp.pen ? 'P' : '') + (sp.fk ? ' F' : '') + (sp.cor ? ' C' : '');
+    const spBadge = VG.setPieceBadge(p.setPiece || {});
     tableHtml += `<tr><td style="color:#e2e8f0;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${(p.realXG || 0).toFixed(1)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${VG.regressionBadge(p.regression)}</td>`;
