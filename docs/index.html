@@ -18,11 +18,11 @@
     form-action 'none'">
     <title>VibeGaffer — FPL Intelligence</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.6.1">
+  <link rel="stylesheet" href="style.css?v=5.7.0">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
           integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=5.6.1"></script>
+  <script src="app.js?v=5.7.0"></script>
 </head>
 <body>
 
@@ -31,7 +31,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Tushant Sharma</strong> · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.6.1</span></div>
+    <div><span class="badge pulse-glow">v5.7.0</span></div>
 </div>
 
 <div class="app">
@@ -146,7 +146,7 @@
 </div>
 </div>
 
-    <div class="footer">VibeGaffer v5.6.1 · Built by Tushant Sharma</div>
+    <div class="footer">VibeGaffer v5.7.0 · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -168,6 +168,7 @@ VG.init = async () => {
     VG.loadOdds(); // Optional — loads in background, non-blocking
     VG.loadUnderstat(); // Optional — loads in background, non-blocking
     VG.loadSetPieceData(); // Optional — bundled set-piece takers (non-blocking)
+    VG.loadRecentForm(); // Optional — last-5-GW rotation-risk signal (non-blocking)
     const gwSel = el("gameweek");
     gwSel.innerHTML = "";
     for (let i = 1; i <= 38; i++) {
@@ -199,11 +200,13 @@ VG.run = async () => {
     if (!VG.allFixtures) VG.allFixtures = await VG.loadFixtures();
     if (!VG.understatLoaded) await VG.loadUnderstat();
     if (!VG.setPieces.teams || !Object.keys(VG.setPieces.teams).length) await VG.loadSetPieceData();
+    if (!VG.recentFormLoaded) await VG.loadRecentForm();
 
     const gw = parseInt(el("gameweek").value);
     const horizon = parseInt(el("horizon").value);
     const teamIdVal = el("teamId").value.trim();
     const teamId = teamIdVal ? parseInt(teamIdVal) : 0;
+    VG.currentTeamId = teamId; // used by VG.analyzeLeague to spot "you" in the league race
     const bankOverride = el("bankOverride").value ? parseFloat(el("bankOverride").value) : null;
 
     el("squadContent").innerHTML = loader("Computing xP projections across " + horizon + " gameweeks...");
@@ -859,7 +862,7 @@ VG.preloadTabs = async (gw) => {
     const leagueId = parseInt(el("leagueId").value) || 0;
     if (leagueId > 0) {
       const gw = parseInt(el("gameweek").value);
-      const league = await VG.analyzeLeague(leagueId, gw);
+      const league = await VG.analyzeLeague(leagueId, gw, VG.allFixtures);
       if (league) {
         let lh = `<div class="chip-sequence">`;
         lh += `<div class="chip-card"><div class="chip-label">League</div><div class="chip-score" style="color:#e2e8f0;font-size:0.8rem;">${VG.esc(league.leagueName)}</div><div class="chip-advice">${league.fetchedSquads} of ${league.totalSquads} teams analyzed</div></div>`;
@@ -867,6 +870,32 @@ VG.preloadTabs = async (gw) => {
         lh += `<div class="chip-card"><div class="chip-label">Template</div><div class="chip-score" style="color:#fbbf24;">${league.templateIds.length}</div><div class="chip-advice">Players ≥30% owned in league</div></div>`;
         lh += `<div class="chip-card"><div class="chip-label">Outliers</div><div class="chip-score" style="color:#ef4444;">${league.outliers.length}</div><div class="chip-advice">Popular picks you're missing</div></div>`;
         lh += `</div>`;
+
+        // Race to the Top: Monte Carlo win probability among fetched squads
+        if (league.raceSimulation && league.raceSimulation.entrants.length > 0) {
+          const race = league.raceSimulation;
+          lh += '<div style="margin-top:16px;"><div class="section-title" style="font-size:0.8rem;color:#fbbf24;">🏁 Race to the Top — GW' + gw + ' Win Probability</div>';
+          lh += '<p class="subtitle" style="margin-top:-6px;">Monte Carlo simulation (1,500 draws) of this GW added to each manager\'s season total. Squads are simulated independently of each other.</p>';
+          if (race.you) {
+            const you = race.you;
+            const leader = race.entrants[0];
+            const isLeading = you.entry === leader.entry;
+            lh += `<div class="chip-sequence">`;
+            lh += `<div class="chip-card"><div class="chip-label">Your Win Prob.</div><div class="chip-score" style="color:${you.winProb >= 20 ? '#00ff87' : '#fbbf24'};">${you.winProb}%</div><div class="chip-advice">P(rank 1 this GW)</div></div>`;
+            lh += `<div class="chip-card"><div class="chip-label">Your Top-3 Prob.</div><div class="chip-score" style="color:#60a5fa;">${you.top3Prob}%</div><div class="chip-advice">P(top 3 this GW)</div></div>`;
+            lh += `<div class="chip-card"><div class="chip-label">${isLeading ? "You're Favored" : "Front-Runner"}</div><div class="chip-score" style="color:${isLeading ? '#00ff87' : '#ef4444'};font-size:0.8rem;">${VG.esc(isLeading ? you.name : leader.name)}</div><div class="chip-advice">${isLeading ? "highest win prob." : leader.winProb + "% win prob."}</div></div>`;
+            lh += `</div>`;
+          } else {
+            lh += '<p style="color:#475569;font-size:0.72rem;margin-top:-4px;">Enter your FPL Team ID in the sidebar to see your own win probability — showing the field below.</p>';
+          }
+          lh += '<table class="data-table" style="font-size:0.72rem;margin-top:8px;"><tr><th>#</th><th>Manager</th><th>Season Pts</th><th>GW Proj. (floor–ceiling)</th><th>Win %</th><th>Top-3 %</th></tr>';
+          race.entrants.forEach((r, i) => {
+            const isYou = race.you && r.entry === race.you.entry;
+            const rowStyle = isYou ? 'background:rgba(0,255,135,0.06);' : '';
+            lh += `<tr style="${rowStyle}"><td style="color:#94a3b8;">${i + 1}</td><td style="color:#e2e8f0;${isYou ? 'font-weight:700;' : ''}">${VG.esc(r.name)}${isYou ? ' <span style="color:#00ff87;font-size:0.62rem;">(you)</span>' : ''}</td><td style="color:#94a3b8;">${r.priorTotal}</td><td style="color:#64748b;">${r.gwMean} (${r.gwFloor}–${r.gwCeiling})</td><td style="color:${r.winProb >= 20 ? '#00ff87' : '#94a3b8'};font-weight:600;">${r.winProb}%</td><td style="color:#60a5fa;">${r.top3Prob}%</td></tr>`;
+          });
+          lh += '</table></div>';
+        }
 
         // Differentials
         if (league.differentials.length > 0) {

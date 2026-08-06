@@ -274,6 +274,30 @@ VG.loadSetPieceData = async () => {
   return null;
 };
 
+// Free per-player recent-form data (GitHub Actions, daily): last-5-GW starts
+// and minutes, reduced from FPL's own element-summary endpoint. Season-total
+// starts/minutes can't tell "nailed on for the last 5 GWs" apart from
+// "started well in September, benched since" — this closes that gap.
+// Empty (or entirely absent, e.g. pre-season before GW1) is a normal state:
+// VG.computeFixtureXP falls back to the season-aggregate model untouched.
+VG.loadRecentForm = async () => {
+  VG.recentFormLoaded = true;
+  try {
+    const r = await fetch("data/recent-form.json", { cache: "no-cache" });
+    const j = r.ok ? await r.json() : null;
+    if (j && j.players) {
+      VG.recentForm = j;
+      Object.keys(j.players).forEach(pid => {
+        const el = VG.players[pid];
+        if (el) el.recentForm = j.players[pid];
+      });
+      return j;
+    }
+  } catch (e) { console.warn("[VG] Recent-form data unavailable (optional):", e.message); }
+  VG.recentForm = null;
+  return null;
+};
+
 VG.applyHistoryPriors = (bootstrap, priors) => {
   if (!bootstrap?.elements || !priors) return bootstrap;
   bootstrap.elements.forEach(p => {
@@ -440,6 +464,19 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
     // Outfield: use actual start rate with floor for small samples
     const effectiveGames = Math.max(gamesPlayed, 5);
     startRate = Math.min(1.0, starts / Math.max(effectiveGames, 1));
+  }
+
+  // Recency blend: a season-total start rate can't tell "nailed on for the
+  // last 5 GWs" apart from "started well in September, benched since" — both
+  // can carry the same season aggregate. VG.loadRecentForm() (optional,
+  // github-actions-fetched, absent pre-season) supplies a last-5-GW starts
+  // rate; blend it in with a weight that scales with how many recent GWs
+  // are actually on record (2 of 5 is weaker evidence than 5 of 5).
+  const recent = p.recentForm;
+  if (recent && recent.gws5 >= 2) {
+    const recentRate = recent.starts5 / recent.gws5;
+    const recentWeight = 0.35 + 0.25 * (recent.gws5 / 5);
+    startRate = recentRate * recentWeight + startRate * (1 - recentWeight);
   }
 
   // Blend start rate with avg minutes per start (substitution pattern)
@@ -763,17 +800,31 @@ VG.perGWProjection = (p, fixtures, gw) => {
   const proj = VG.computePlayerGWProjection(p, gw, fixtures);
   return proj ? (proj.gwXP || 0) : 0;
 };
+// Per-player expected-goals-equivalent (lambda) for a starting XI, captain
+// multiplier applied. Shared by VG.mcGWDistribution (single-squad variance)
+// and VG.simulateLeagueRace (cross-squad race simulation) so both draw from
+// the exact same model.
+VG._mcLambdas = (starting, fixtures, gw) => {
+  const starters = (starting || []).filter(s => s && (s.positionId || s.element_type));
+  return starters.map(s => {
+    const lam = VG.perGWProjection(s, fixtures, gw) || 0;
+    const mult = s.isCaptain ? Math.max(s.multiplier || 1, 2) : (s.multiplier || 1);
+    return lam * mult;
+  });
+};
+// One random total-points draw for a starting XI, given precomputed lambdas.
+VG._mcDrawTotal = (lambdas) => {
+  let t = 0;
+  for (const lam of lambdas) t += VG.mcPoisson(lam);
+  return t;
+};
 // Returns distribution over a starting XI for a GW.
 // `starting` entries carry {id, positionId, isCaptain, multiplier, teamId}.
 VG.mcGWDistribution = (starting, fixtures, gw, iterations) => {
   iterations = iterations || 3000;
   const starters = (starting || []).filter(s => s && (s.positionId || s.element_type));
   if (starters.length === 0) return { mean: 0, sd: 0, p10: 0, p90: 0, median: 0, samples: [], n: 0 };
-  const lambdas = starters.map(s => {
-    const lam = VG.perGWProjection(s, fixtures, gw) || 0;
-    const mult = s.isCaptain ? Math.max(s.multiplier || 1, 2) : (s.multiplier || 1);
-    return lam * mult;
-  });
+  const lambdas = VG._mcLambdas(starting, fixtures, gw);
   const samples = [];
   for (let it = 0; it < iterations; it++) {
     let t = 0;
@@ -798,6 +849,52 @@ VG.mcRange = (dist) => ({
   ceiling: dist.p90,
   band: +(dist.p90 - dist.p10).toFixed(1)
 });
+
+// ── Mini-League Race Simulator (v5.7) ──────────────────────────────────
+// Idea borrowed from FPL Pulse's league race probability feature, built
+// entirely on data VG.analyzeLeague already fetches (no extra API calls).
+// For every squad (the fetched top-N of a classic league), draws this GW's
+// score via the same Poisson model as VG.mcGWDistribution, adds it to their
+// season total-to-date, and ranks across iterations to estimate P(finish
+// top of the league this GW) and P(top 3). Squads are simulated
+// independently — correlation between rivals sharing the same player is not
+// modelled, a standard first-order approximation for this kind of tool.
+VG.simulateLeagueRace = (squads, fixtures, gw, iterations) => {
+  iterations = iterations || 1500;
+  const valid = (squads || []).filter(sq => sq.picks && sq.picks.length > 0);
+  if (valid.length < 2) return null;
+
+  const entrants = valid.map(sq => {
+    const starting = sq.picks.filter(p => p.multiplier >= 1);
+    return { entry: sq.entry, name: sq.teamName, priorTotal: sq.totalPoints, lambdas: VG._mcLambdas(starting, fixtures, gw) };
+  });
+
+  const wins = {}, top3 = {}, gwScores = {};
+  entrants.forEach(e => { wins[e.entry] = 0; top3[e.entry] = 0; gwScores[e.entry] = []; });
+
+  for (let it = 0; it < iterations; it++) {
+    const draw = entrants.map(e => {
+      const gwScore = VG._mcDrawTotal(e.lambdas);
+      gwScores[e.entry].push(gwScore);
+      return { entry: e.entry, total: e.priorTotal + gwScore };
+    });
+    draw.sort((a, b) => b.total - a.total);
+    wins[draw[0].entry]++;
+    draw.slice(0, Math.min(3, draw.length)).forEach(d => top3[d.entry]++);
+  }
+
+  return entrants.map(e => {
+    const scores = gwScores[e.entry].slice().sort((a, b) => a - b);
+    const mean = scores.reduce((s, x) => s + x, 0) / scores.length;
+    const at = f => scores[Math.max(0, Math.min(scores.length - 1, Math.floor(f * scores.length)))];
+    return {
+      entry: e.entry, name: e.name, priorTotal: e.priorTotal,
+      gwMean: +mean.toFixed(1), gwFloor: at(0.1), gwCeiling: at(0.9),
+      winProb: +((wins[e.entry] / iterations) * 100).toFixed(1),
+      top3Prob: +((top3[e.entry] / iterations) * 100).toFixed(1)
+    };
+  }).sort((a, b) => b.winProb - a.winProb);
+};
 
 // ── DGW/BGW Season Planner (v5.5) ─────────────────────────────────────
 // Idea borrowed from Ben Crellin's FPL planner / FFHub calendars. A full-season
@@ -2251,7 +2348,7 @@ VG.getPriceRisk = async () => {
 };
 
 // ── Mini-League Analyzer ────────────────────────────────────────────────
-VG.analyzeLeague = async (leagueId, currentGW) => {
+VG.analyzeLeague = async (leagueId, currentGW, fixtures) => {
   if (!leagueId) return null;
   try {
     const data = await VG.fetch(VG.FPL + "/leagues-classic/" + leagueId + "/standings/", "league_" + leagueId);
@@ -2264,10 +2361,10 @@ VG.analyzeLeague = async (leagueId, currentGW) => {
     // Fetch squads for top 10 managers (API limit)
     const topEntries = entries.slice(0, 10);
     const squads = [];
+    const gw = currentGW || VG.currentGW || 1;
 
     for (const entry of topEntries) {
       try {
-        const gw = currentGW || VG.currentGW || 1;
         const picksData = await VG.fetch(VG.FPL + "/entry/" + entry.entry + "/event/" + gw + "/picks/", "picks_" + entry.entry);
         if (picksData && picksData.picks) {
           squads.push({
@@ -2281,6 +2378,8 @@ VG.analyzeLeague = async (leagueId, currentGW) => {
               const playerInfo = VG.players[p.element];
               return {
                 element: p.element,
+                id: p.element,
+                positionId: playerInfo ? playerInfo.element_type : 0,
                 name: playerInfo ? (playerInfo.web_name || playerInfo.second_name) : "Unknown",
                 position: playerInfo ? VG.POSITIONS[playerInfo.element_type] : "?",
                 teamId: playerInfo ? playerInfo.team : 0,
@@ -2337,6 +2436,16 @@ VG.analyzeLeague = async (leagueId, currentGW) => {
     // Missing from league (in my squad but 0% in league)
     const uniquePicks = ownership.filter(p => myIds.has(p.id) && p.count === 1);
 
+    // Race to the top: Monte Carlo win probability among the fetched squads
+    // for this GW, using data already on hand — no extra API calls.
+    const myEntry = VG.currentTeamId || 0;
+    const race = VG.simulateLeagueRace(squads, fixtures || VG.allFixtures || [], gw, 1500);
+    const raceSimulation = race ? {
+      entrants: race,
+      you: myEntry ? race.find(r => r.entry === myEntry) || null : null,
+      sampleSize: squads.length
+    } : null;
+
     return {
       leagueName,
       totalSquads,
@@ -2346,6 +2455,7 @@ VG.analyzeLeague = async (leagueId, currentGW) => {
       differentials,
       outliers,
       uniquePicks,
+      raceSimulation,
       squads: squads.map(s => ({
         name: s.teamName,
         rank: s.rank,

@@ -1,4 +1,4 @@
-# VibeGaffer v5.6.1
+# VibeGaffer v5.7.0
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
@@ -64,7 +64,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.4.1)
+## Features (v5.7.0)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -149,6 +149,19 @@ Compare your squad vs rivals in a classic league:
 - Your differentials: low-owned picks unique to your squad
 - Missing popular picks: players you don't have but league leaders do
 - Standings table with GW points, total points, captain choices
+
+### Race to the Top (v5.7.0)
+
+Monte Carlo win-probability simulator for your mini-league, built on data the League Analyzer already fetches:
+- Samples this GW's score (Poisson per player, captain doubled) for every fetched squad, 1,500 draws
+- Adds each draw to that manager's season total-to-date and ranks across iterations
+- Reports P(finish 1st this GW) and P(top 3), plus a floor–ceiling projection per squad
+- Flags your row and names your closest rival by win probability
+- Enter your FPL Team ID to see your own numbers; without it, shows the race among the fetched top 10 anyway
+
+### Recency-Weighted Rotation Risk (v5.7.0)
+
+Season-total starts can't tell "nailed for the last 5 GWs" apart from "started well in September, benched since" — both carry the same season aggregate. A weekly-refreshed last-5-gameweek starts/minutes signal (from FPL's own per-player history endpoint) now blends into the minutes-probability model, weighted more heavily than the season total. Fully optional and additive — absent (e.g. pre-season, before GW1), the engine behaves exactly as before.
 
 ### Chip Strategy
 
@@ -267,6 +280,7 @@ VibeGaffer/
 │   ├── fetch-data.yml                  # Deadline-aware FPL data fetch
 │   ├── fetch-understat.yml             # Weekly Understat xG/forecast fetch
 │   ├── fetch-history-priors.yml        # Weekly vaastav historical priors
+│   ├── fetch-recent-form.yml           # Daily last-5-GW rotation-risk fetch
 │   ├── fetch-odds.yml                  # Bookmaker odds (optional, needs secret)
 │   └── test.yml                        # CI: node --check + npm test
 ├── docs/                               # GitHub Pages root (deployed)
@@ -385,6 +399,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.7.0 | — | Mini-League Race Simulator: Monte Carlo win probability (P(1st)/P(top 3)) among fetched league squads for the current GW, built entirely on data VG.analyzeLeague already had (no new API calls); Recency-Weighted Rotation Risk: new fetch-recent-form.yml pulls last-5-GW starts/minutes per player from FPL's own per-player history endpoint, blended into the minutes-probability model (season aggregates alone can't distinguish a player nailed for the last 5 GWs from one benched since September) |
 | v5.6.1 | — | Hardening + refactor: fixed a player-profile XSS (unescaped opponent name), removed dead code/params/vars, consolidated shared helpers (`playerName`/`fdrColor`/`hasFitnessFlag`/`setPieceBadge`), removed redundant render init + stray comments, author attribution = Tushant Sharma only |
 | v5.6.0 | — | Player Profile (form/xG/EO/set-piece/fixture-run per player), Live Rank tracker (real FPL OR via Team ID), Team News feed grouped by club (Strategy tab), DGW/BGW-aware Chip EV Calendar |
 | v5.5.0 | — | Effective Ownership (captain-share-weighted; Compare + Differentials EO column), Monte Carlo GW projection (mean +- SD + 90% band in Squad tab), DGW/BGW Season Planner (Ben Crellin-style, Fixtures tab), Set-Piece Takers xP boost (pen/FK/corner + P/F/C badges; seasonal setpieces.json), transfer rank-impact estimate |
@@ -407,6 +422,8 @@ Test coverage:
 1. **ILP solver WASM**: HiGHS WASM is loaded from CDN on first optimization. Falls back to greedy if the CDN is unavailable or the browser blocks WebAssembly.
 2. **Pre-season data**: All team strengths are 0, form is 0.0 — fallback estimates used.
 3. **Bookmaker odds**: Requires `ODDS_API_KEY` secret in GitHub Actions (The-Odds-API free tier, 500 req/month). Without key, app works fine without odds.
+6. **League race simulator treats squads as independent**: no correlation modelling for rivals who share the same player (a standard first-order approximation for this kind of tool).
+7. **Recent-form data lags real minutes by up to a day** and stays empty until each player has at least 2 recorded gameweeks this season (so it's inert through pre-season and GW1).
 4. **CSP is weakened by inline handlers**: `script-src` still needs `'unsafe-inline'` because the UI uses inline `onclick=` and a large inline `<script>`. Escaping (`VG.esc`) is the primary XSS defence; the CSP is defence-in-depth.
 5. **CORS proxies see user identifiers**: when the FPL API is unreachable directly, requests carrying your team/league ID fall back through `allorigins.win` / `corsproxy.io`.
 
@@ -426,7 +443,7 @@ Test coverage:
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.6.1
+- **Application**: VibeGaffer v5.7.0
 - **Author**: Tushant Sharma
 - **License**: Proprietary
 - **Live URL**: https://jadax.github.io/VibeGaffer/

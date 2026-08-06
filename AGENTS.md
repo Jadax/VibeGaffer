@@ -4,7 +4,13 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 ## Handover Status
 
-- **Current version**: v5.6.1 (pushed as `90dcd56` = v5.6.0 + an uncommitted v5.6.1 hardening pass in progress — see below)
+- **Current version**: v5.7.0 (v5.6.1 committed as `9e7fd8a`; v5.7.0 built on top — see below)
+- **v5.7.0 shipped**: two gap-fills chosen from an explicit codebase review against the goal "reach #1 in a mini-league":
+  1. **Mini-League Race Simulator** (`VG.simulateLeagueRace`) — Monte Carlo win probability among the fetched top-10 league squads for the current GW. Reuses `VG._mcLambdas`/`VG._mcDrawTotal` (factored out of `VG.mcGWDistribution`, behavior-preserving refactor) rather than duplicating the Poisson model. Wired into `VG.analyzeLeague` (now takes a 3rd `fixtures` param, attaches `raceSimulation` to its return) and rendered as a "🏁 Race to the Top" panel in the League tab. `VG.currentTeamId` (set in `VG.run()`) is how it spots "you" among the entrants. Squads are simulated independently (no cross-squad player-sharing correlation) — a documented first-order approximation.
+  2. **Recency-Weighted Rotation Risk** — season-total starts/minutes can't distinguish "nailed for the last 5 GWs" from "started well in September, benched since." New `fetch-recent-form.yml` (daily) pulls last-5-GW starts/minutes per player from FPL's own `element-summary/{id}/` endpoint (same trust tier as bootstrap-static, ~400 candidate players with `minutes>0` last season, 8-way parallel curl), writes `docs/data/recent-form.json`. `VG.loadRecentForm()` attaches `el.recentForm = {starts5, gws5, mins5}`; `VG.computeFixtureXP` blends it into `startRate` with confidence-scaled weight (0.45 at 2/5 GWs of data, 0.6 at 5/5), only when `gws5 >= 2`. Fully optional/additive — absent (pre-season, or before a player has 2 recorded GWs) it's byte-identical to the old season-aggregate-only behavior.
+  - Tests: 136 → 153 (17 new: 7 rotation-risk blend tests incl. both-direction correction + fallback-exactness, 10 race-simulator tests incl. a stochastic 50/50 sanity check)
+  - Verified live in-browser: ILP solver + full run unaffected by the new loaders (both gracefully absent pre-season); League tab race panel end-to-end with mocked league data, including an XSS probe through the new render path (payload neutralized, matches existing `VG.esc()` convention)
+  - **Data source note**: `element-summary` history is empty for everyone right now (genuine pre-season, GW1 hasn't happened) — the feature is correctly inert today and self-activates once GW1+ results exist. Could not verify against real current-season data for this reason; verified against synthetic `recentForm` objects instead.
 - **v5.6.1 hardening/refactor (uncommitted)**:
   - Fixed a real XSS class-bug: `VG.playerProfileHTML` interpolated the opponent `short_name` raw into HTML (`app.js:2512`) — now `VG.esc()`-wrapped (Golden Rule 2)
   - Removed dead code: `price` var in `computeFixtureXP`, `rows`/`gotCap`-misread in `render.pitch` (only `rows` was dead), `maxScore` in `index.html` chip timeline, unused `fixtures`/`ids`/`plannerByGw` in `chipCalendar`, unused `horizon` param on `VG.preloadTabs` (+ test/call-site updated), redundant `VG.render = VG.render || {};`, orphaned "Fixture Ticker" header, stale "~8 historical copies" comment
@@ -18,25 +24,16 @@ Primary context document for AI models working on this codebase. Read fully befo
 - **Post-commit review fixes** (v5.4.1, applied after `93fa865`):
   - `render.tips`'s weaknesses bullets skipped `VG.esc()` while the strengths bullets right above them didn't — inconsistent with the codebase's escape-everything-API-derived convention. Team names aren't attacker-controlled today (unlike league/manager names), so this wasn't exploitable, but it's the same class of bug v5.3.0 hardened against. Fixed in `docs/app.js`.
   - The Live tab's "auto-refresh every 5 min" comment described recurring behaviour, but was a single `setTimeout` that fired once and stopped. Made it self-reschedule in `docs/index.html`.
-- **Tests**: 136/136 pass (`npm test`), verified after all hardening + v5.6.1 refactor
-- **State**: `docs/app.js` ~3325 lines, `docs/index.html` ~1005 lines; both syntax-check clean
-- **Uncommitted (v5.5 — competitor-borrowed features, per Borrowing Policy)**:
-  - **Effective Ownership** (`VG.computeEffectiveOwnership`) — ownership weighted by modelled captain-share (FFix/FPL Review idea); EO column in Compare + Differentials; sharper TEMPLATE vs DIFFERENTIAL signal than raw ownership
-  - **Monte Carlo GW Projection** (`VG.mcGWDistribution`, `VG.greenArrowProb`, `VG.render.gwProjection`) — samples starting XI points (captain doubled) → real points distribution; Squad tab shows `mean ± SD` + 90% band (FPL Review/FFix idea). The old whole-source `Math.random()` determinism test was re-scoped to the greedy-optimizer body only (the optimizer stays deterministic; MC legitimately uses Math.random)
-  - **DGW/BGW Season Planner** (`VG.buildSeasonPlanner`, `VG.teamSeasonRow`) — Ben Crellin-style calendar flagging double/blank weeks + chip windows (Fixtures tab); "no doubles yet" note pre-postponement, becomes live after postponements
-  - **Set-Piece Takers** (new `docs/data/setpieces.json` + `VG.loadSetPieceData`/`VG.setPieceRole`) — pen/FK/corner xP boost in `computeFixtureXP` + "P/F/C" badges (FFHUB/FFS idea). **Seasonal — update each year**
-  - **Transfer Rank-Impact** (`VG.estimateRankImpact`) — transfer xP gain → approximate overall-rank move (FFHub AI idea), in Squad tab transfer panel
-  - **Player Profile** (`VG.playerProfileHTML`) — click any Squad player to expand: form trend, Understat xG/90, regression, EO, set-piece role, value, next-5 fixture run + easy/hard quality (FPL Review/FFHub idea)
-  - **Live Rank tracker** (`VG.fetchTeamRank`) — real FPL Overall Rank + GW points via Team ID, cached 5 min, renders a "📊 Live Rank" card (LiveFPL/FFHub idea)
-  - **Team News feed** (`VG.teamNewsFeed`) — injury/fitness flags + news grouped by club in the Strategy tab
-  - **Chip EV Calendar** (`VG.chipCalendar`, `VG.render.chipCalendar`) — DGW/BGW-aware per-GW TC/BB/FH/WC window scores for the squad; populated once postponements create doubles (Ben Crellin idea)
-- **Next model TODO**: commit v5.6.1 (see **Commit Convention**), then optionally implement **Remaining Improvements** below.
+- **Tests**: 153/153 pass (`npm test`)
+- **State**: `docs/app.js` ~3395 lines, `docs/index.html` ~1030 lines; both syntax-check clean
+- **v5.5/v5.6 shipped** (competitor-borrowed features, per Borrowing Policy): Effective Ownership (`VG.computeEffectiveOwnership`), Monte Carlo GW Projection (`VG.mcGWDistribution`), DGW/BGW Season Planner (`VG.buildSeasonPlanner`), Set-Piece Takers (`docs/data/setpieces.json`, seasonal — update each year), Transfer Rank-Impact (`VG.estimateRankImpact`), Player Profile (`VG.playerProfileHTML`), Live Rank tracker (`VG.fetchTeamRank`), Team News feed (`VG.teamNewsFeed`), Chip EV Calendar (`VG.chipCalendar`)
+- **Next model TODO**: commit v5.7.0 (see **Commit Convention**), then optionally implement **Remaining Improvements** below.
 
 ## Quick Status
 
 - **Architecture**: Pure static HTML/CSS/JS on GitHub Pages (no backend)
 - **Live URL**: https://jadax.github.io/VibeGaffer/
-- **Data**: Auto-fetched on a deadline-aware GitHub Actions schedule → `docs/data/*.json` (30 min inside 6h of a deadline, 2-hourly within 36h, 6-hourly otherwise). **Understat** free xG/forecast data fetched weekly → `docs/data/understat.json`
+- **Data**: Auto-fetched on a deadline-aware GitHub Actions schedule → `docs/data/*.json` (30 min inside 6h of a deadline, 2-hourly within 36h, 6-hourly otherwise). **Understat** free xG/forecast data fetched weekly → `docs/data/understat.json`. **Recent-form** (last-5-GW starts/minutes, rotation-risk) fetched daily → `docs/data/recent-form.json` (v5.7.0; inert until players have 2+ recorded GWs this season)
 - **ILP Solver**: highs-js (HiGHS WASM) loaded from CDN, falls back to greedy. highs-js publishes `window.Module`, **not** `window.Highs` — see Known Issues
 - **Odds**: The-Odds-API free tier (500 req/month), fetched once per GW when deadline is within 30h → `docs/data/odds.json`. Requires optional `ODDS_API_KEY` repo secret (currently unset). **Understat forecasts are the free no-key alternative** used by default
 
@@ -44,22 +41,24 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `docs/app.js` | ~2910 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips, live GW |
-| `docs/index.html` | ~930 | All UI: 9 tabs, CSP, rendering, Chart.js radar/bar, inline JS |
+| `docs/app.js` | ~3395 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips, live GW |
+| `docs/index.html` | ~1030 | All UI: 9 tabs, CSP, rendering, Chart.js radar/bar, inline JS |
 | `docs/style.css` | 275 | All styles |
 | `docs/data/bootstrap.json` | ~1.3MB | Player data (~560 active, 20 teams) |
 | `docs/data/fixtures.json` | ~118KB | 380 fixtures with FDR |
 | `docs/data/understat.json` | ~120KB | Free Understat xG/xA priors + team stats + per-fixture forecasts |
+| `docs/data/recent-form.json` | small | Last-5-GW starts/minutes per player (rotation risk), v5.7.0 |
 | `.github/workflows/fetch-data.yml` | ~125 | Deadline-aware FPL data fetch |
 | `.github/workflows/fetch-understat.yml` | ~230 | Weekly Understat xG/forecast fetch |
 | `.github/workflows/fetch-history-priors.yml` | ~55 | Weekly vaastav historical priors |
+| `.github/workflows/fetch-recent-form.yml` | ~90 | Daily last-5-GW rotation-risk fetch (v5.7.0) |
 | `.github/workflows/fetch-odds.yml` | ~55 | Optional bookmaker odds (needs `ODDS_API_KEY`) |
 | `.github/workflows/test.yml` | ~30 | CI: `node --check` + `npm test` |
-| `tests/run.js` | ~520 | Regression suite (136 checks) |
+| `tests/run.js` | ~590 | Regression suite (153 checks) |
 
 ## Golden Rules (violations cause bugs)
 
-1. **Never reimplement shared helpers.** `VG.esc`, `VG.isAvailable`, `VG.fixtureFDR`, `VG.fixtureInfo`, `VG.pickBestXI`, `VG.formationLegal`, `VG.countUnavailable`, `VG.hasPlayed`, `VG.topCaptainCandidates` exist to be reused.
+1. **Never reimplement shared helpers.** `VG.esc`, `VG.isAvailable`, `VG.fixtureFDR`, `VG.fixtureInfo`, `VG.pickBestXI`, `VG.formationLegal`, `VG.countUnavailable`, `VG.hasPlayed`, `VG.topCaptainCandidates`, `VG._mcLambdas`, `VG._mcDrawTotal` exist to be reused.
 2. **Escape everything API-derived before `innerHTML`.** `VG.esc()` is the real XSS defence (league/manager names are controlled by other FPL users). CSP cannot be tightened because of inline `onclick=` handlers.
 3. **All optimizer/selection code must filter injuries** via `VG.isAvailable(p)`. Doubtful players stay eligible but are flagged.
 4. **When changing a function signature, update every call site** — `docs/index.html` (inline script), `docs/app.js`, `tests/run.js`. Grep `VG.functionName(`.
@@ -72,7 +71,7 @@ Every third-party data integration in this repo is a **deliberate product decisi
 
 **Allowed, intentionally-permitted sources** (all public, read-only, community-licensed):
 
-- **FPL API** (`fantasy.premierleague.com`) — official public read-only endpoint. Primary source.
+- **FPL API** (`fantasy.premierleague.com`) — official public read-only endpoint. Primary source. Includes `element-summary/{id}/` (per-player GW-by-GW history — used by `fetch-recent-form.yml`, v5.7.0, same trust tier as bootstrap-static).
 - **The-Odds-API** — optional bookmaker odds, gated by the `ODDS_API_KEY` repo secret.
 - **Understat** (`https://understat.com/getLeagueData/EPL/{season}`) — free player xG/xA/xGChain/xGBuildup, per-match team xG/xGA/npxG/ppda/deep, and `forecast` w/d/l probabilities for **every fixture** (can replace/backup The-Odds-API). Requires request headers: `Referer: https://understat.com/league/EPL`, a real `User-Agent`, and `X-Requested-With: XMLHttpRequest`.
 - **FBref** — free Opta-level xG/xA/shot maps (read/aggregate; no heavy scraping).
@@ -162,9 +161,9 @@ index.html preload is gated on `is_current` **only** (not `is_next`), runs **non
 - `VG.getRegressionFlag(pid)` → `{flag: "over"|"due"|"stable", diff90, xG90, goals90}` from Understat xG vs FPL actual goals (v5.4)
 - `VG.regressionBadge(reg)` → HTML DUE/OVER badge (empty for stable/null); used in Compare + Differentials tabs (v5.4)
 
-### Minutes Model (v5.1)
+### Minutes Model (v5.1, recency blend v5.7.0)
 
-Start-rate model using last season data: GK binary (nailed #1 = 95%, backup 15-75%); outfield `startRate * (1 - subRisk)`; confidence regression toward league average (72%); replaced old avgMins bucket model.
+Start-rate model using last season data: GK binary (nailed #1 = 95%, backup 15-75%); outfield `startRate * (1 - subRisk)`; confidence regression toward league average (72%); replaced old avgMins bucket model. **v5.7.0**: when `p.recentForm` is present (`VG.loadRecentForm()`, optional, daily-fetched, `gws5 >= 2`), a last-5-GW starts rate is blended into `startRate` with confidence-scaled weight (0.45 at 2/5 GWs of data, 0.6 at 5/5) — closes the gap where a player rotated out in the last few GWs looked identical to one still nailed, as long as season aggregates matched.
 
 ## Key Functions in app.js
 
@@ -226,8 +225,15 @@ Start-rate model using last season data: GK binary (nailed #1 = 95%, backup 15-7
 - `VG.teamNewsFeed()` → {short_name: [{name, chance, news}]} grouped injury/fitness feed
 - `VG.chipCalendar(squad, fixtures, planner)` → [{gw, dgw, bgw, tc, bb, fh, wc}]; `VG.render.chipCalendar(cal)` → DGW/BGW-aware chip-window table (Ben Crellin)
 
-### League Analyzer (v5.1)
-- `VG.analyzeLeague(leagueId, currentGW)` → fetches classic league, compares squads, ownership, differentials, outliers, template detection
+### League Analyzer (v5.1) + Race Simulator (v5.7.0)
+- `VG.analyzeLeague(leagueId, currentGW, fixtures)` → fetches classic league, compares squads, ownership, differentials, outliers, template detection. **3rd param added in v5.7.0** — fixtures, needed by the race sim; call site is `docs/index.html`. Return object now also carries `raceSimulation`.
+- `VG.simulateLeagueRace(squads, fixtures, gw, iterations)` → Monte Carlo win probability among fetched league squads for the current GW; `null` if fewer than 2 squads have picks. Returns `[{entry, name, priorTotal, gwMean, gwFloor, gwCeiling, winProb, top3Prob}]` sorted by winProb (FPL Pulse idea)
+- `VG.currentTeamId` (set in `VG.run()`) → how the race sim and Live Rank tracker both spot "you" among fetched entrants
+
+### v5.7.0 borrowed features
+- `VG.simulateLeagueRace(squads, fixtures, gw, iterations)` — see League Analyzer above (FPL Pulse idea)
+- `VG._mcLambdas(starting, fixtures, gw)` / `VG._mcDrawTotal(lambdas)` — Poisson-lambda + single-draw helpers factored out of `VG.mcGWDistribution` (v5.5) so the race simulator reuses the exact same scoring model instead of a second implementation
+- `VG.loadRecentForm()` → fetches `data/recent-form.json`, attaches `el.recentForm = {starts5, gws5, mins5}`; blended into `VG.computeFixtureXP`'s minutes-probability model — see Minutes Model above
 
 ### Rendering
 - `VG.render.metrics(result)` → metric cards (xP, cost, formation)
@@ -250,7 +256,7 @@ Start-rate model using last season data: GK binary (nailed #1 = 95%, backup 15-7
 5. **Fixtures** — Team Strength Ratings (Understat xG), fixture ticker with swing analysis
 6. **Differentials** — Low ownership, high xP picks + 4-zone differential matrix + Real xG/90 (v5.4)
 7. **Transfer Plan** — Week-by-week transfer schedule with hit optimization
-8. **League** — Mini-league comparison, ownership analysis, differentials
+8. **League** — Mini-league comparison, ownership analysis, differentials, 🏁 Race to the Top Monte Carlo win probability (v5.7.0)
 9. **Strategy** — Dynamic tips + static championship wisdom + Injury & Availability Watch (v5.4)
 
 ## Known Issues
@@ -278,7 +284,8 @@ Run: `npm test`
 - Move `docs/data/` to its own branch to keep `main` history clean
 - Drop third-party CORS proxies or gate them behind explicit user consent
 - Add browser-level smoke tests for the nine UI tabs
-- Un-implemented research candidates: Monte Carlo median xP/ceiling variance, multi-period ILP with free-transfer banking, sensitivity analysis, recency-weighted form, chip EV calendar (DGW/BGW-aware), effective ownership columns, mini-league Monte Carlo win probability (FPL Pulse-style), Reddit r/FantasyPL sentiment feed, defensive vulnerability ticker.
+- **Done in v5.7.0** (was on this list): mini-league Monte Carlo win probability (`VG.simulateLeagueRace`), recency-weighted rotation risk (`fetch-recent-form.yml` + the `startRate` blend). Chip EV calendar and effective ownership were already done in v5.5/v5.6.
+- Un-implemented research candidates: Monte Carlo median xP/ceiling variance in squad *selection* (not just display — an optimizer that trades some mean xP for a higher floor/ceiling), multi-period ILP with free-transfer banking, sensitivity analysis (how much of a squad's edge depends on shaky xP inputs), fixture-congestion/European-minutes rotation risk (needs a non-FPL fixture source — no clean free one identified yet), defensive vulnerability ticker (set-piece/counter-attack concession patterns — needs shot-location data beyond what Understat's league-level endpoint exposes). Reddit r/FantasyPL sentiment feed considered and **rejected**: no statistically validated signal, meaningfully more scraping-ToS risk than the read-only APIs in the allowed list, adds noise rather than correctness.
 
 ## Commit Convention
 
@@ -302,5 +309,6 @@ Key endpoints:
 - `entry/{team_id}/` → user team info
 - `entry/{team_id}/event/{gw}/picks/` → user squad for a GW
 - `leagues-classic/{id}/standings/` → mini-league standings + entries
+- `element-summary/{player_id}/` → per-player GW-by-GW `history` (this season) + `history_past` (prior seasons' aggregates). `history` is `[]` until that player has featured this season — used by `fetch-recent-form.yml` (v5.7.0)
 
-Pre-season note: All `strength_*` fields are 0. Form is 0.0. `total_points`, `minutes`, `starts`, `goals_scored`, `assists`, `clean_sheets`, `saves`, `bonus` are real last-season data.
+Pre-season note: All `strength_*` fields are 0. Form is 0.0. `total_points`, `minutes`, `starts`, `goals_scored`, `assists`, `clean_sheets`, `saves`, `bonus` are real last-season data. `element-summary`'s `history` is empty for every player until GW1 kicks off — confirmed live against the real endpoint while building v5.7.0.

@@ -68,6 +68,43 @@ check("DEFCON uses a bounded threshold probability", VG.poissonAtLeast(0, 10) ==
 check("At least one first-choice GK projects above 20 xP", allXP.some(p => p.position === "GK" && p.totalXP > 20));
 check("Low-minute backup GKs may remain below 20 xP", allXP.some(p => p.position === "GK" && p.totalXP < 20));
 
+// ── Recency-weighted rotation risk (v5.7) ──────────────────────────────
+// Season-total starts can't distinguish "nailed for the last 5 GWs" from
+// "started well early, benched since" — VG.loadRecentForm() (optional,
+// absent pre-season) closes that gap. Test the blend directly against a
+// real mid-rotation-rate player so both directions of the correction show up.
+section("Recency-weighted rotation risk (v5.7)");
+const rotationCandidate = Object.values(VG.players).find(p =>
+  p.element_type !== 1 && (p.starts || 0) >= 10 && (p.starts || 0) <= 30 && (p.minutes || 0) > 0
+);
+check("fixture data has a mid-rotation-rate outfield player to test against", !!rotationCandidate);
+if (rotationCandidate) {
+  const fx = fixtures.find(f => f.event === 1 && (f.team_h === rotationCandidate.team || f.team_a === rotationCandidate.team));
+  const isHome = fx.team_h === rotationCandidate.team;
+  const oppId = isHome ? fx.team_a : fx.team_h;
+  const fdr = isHome ? (fx.team_h_difficulty || 3) : (fx.team_a_difficulty || 3);
+
+  const baseline = VG.computeFixtureXP(rotationCandidate.id, oppId, isHome, fdr);
+  check("baseline projection has no recentForm influence pre-season", rotationCandidate.recentForm === undefined);
+
+  rotationCandidate.recentForm = { starts5: 0, gws5: 5, mins5: 0 }; // just dropped from the XI
+  const droppedProjection = VG.computeFixtureXP(rotationCandidate.id, oppId, isHome, fdr);
+  check("a player with zero recent starts gets a lower minutes probability than the season baseline", droppedProjection.minsProb < baseline.minsProb);
+
+  rotationCandidate.recentForm = { starts5: 5, gws5: 5, mins5: 450 }; // just became nailed
+  const nailedProjection = VG.computeFixtureXP(rotationCandidate.id, oppId, isHome, fdr);
+  check("a player with 5/5 recent starts gets a minutes probability >= the season baseline", nailedProjection.minsProb >= baseline.minsProb);
+  check("recent-form correction moves projected xP in the same direction as minutes probability", nailedProjection.xp >= droppedProjection.xp);
+
+  rotationCandidate.recentForm = { starts5: 1, gws5: 1, mins5: 90 };
+  const thinSample = VG.computeFixtureXP(rotationCandidate.id, oppId, isHome, fdr);
+  check("a single recent GW (below the 2-GW confidence floor) doesn't move the projection", Math.abs(thinSample.minsProb - baseline.minsProb) < 0.001);
+
+  delete rotationCandidate.recentForm;
+  const restored = VG.computeFixtureXP(rotationCandidate.id, oppId, isHome, fdr);
+  check("removing recentForm restores the exact season-aggregate baseline", restored.minsProb === baseline.minsProb);
+}
+
 // ── Shared fixture/team helpers (v5.4 hardening) ──────────────────────
 section("Shared fixture + team helpers (v5.4)");
 const gw1All = VG.fixturesForGW(fixtures, 1);
@@ -471,6 +508,46 @@ check("chip calendar renders or shows a no-window note", typeof VG.render.chipCa
 // fixture run profile reflects easy/hard count
 check("profile fixture run is length-limited to 5", (prof.match(/\(A\)|·|BYE/g) || []).length >= 0);
 
-section("Summary");
-console.log(`${passed} passed, ${failed} failed`);
-if (failed > 0) process.exit(1);
+// ── v5.7: Mini-League Race Simulator ───────────────────────────────────
+section("v5.7 Mini-League Race Simulator");
+
+// A strong squad (the optimizer's actual pick, captained) vs a deliberately
+// weak one (11 cheapest available players, no captain boost) should show
+// the strong squad winning the large majority of Monte Carlo draws.
+const weakEleven = allXP.filter(p => p.positionId).sort((a, b) => a.price - b.price).slice(0, 11)
+  .map(p => ({ ...p, element_type: p.positionId, isCaptain: false, multiplier: 1 }));
+const strongSquad = { entry: 1, teamName: "Strong FC", totalPoints: 500, picks: startingWithCap.map(p => ({ ...p, multiplier: p.isCaptain ? 2 : 1 })) };
+const weakSquad = { entry: 2, teamName: "Weak FC", totalPoints: 500, picks: weakEleven.map(p => ({ ...p, multiplier: 1 })) };
+
+const race = VG.simulateLeagueRace([strongSquad, weakSquad], fixtures, 1, 1500);
+check("race simulator returns one row per entrant", race && race.length === 2);
+check("race simulator favors the stronger squad", race[0].entry === 1 && race[0].winProb > race[1].winProb);
+check("win probabilities are bounded 0-100 and roughly sum to 100", race.every(r => r.winProb >= 0 && r.winProb <= 100) && Math.abs(race.reduce((s, r) => s + r.winProb, 0) - 100) < 1);
+check("top-3 probability is 100% for both when only two entrants exist", race.every(r => r.top3Prob === 100));
+check("race projects a floor <= mean <= ceiling per entrant", race.every(r => r.gwFloor <= r.gwMean && r.gwMean <= r.gwCeiling));
+check("race simulator needs at least two squads", VG.simulateLeagueRace([strongSquad], fixtures, 1, 100) === null);
+check("race simulator ignores squads with no picks", VG.simulateLeagueRace([strongSquad, { entry: 3, teamName: "Empty", totalPoints: 0, picks: [] }], fixtures, 1, 100) === null);
+
+// A same-strength head-to-head should land close to 50/50 (loose bound —
+// this is a stochastic test, so give it real room).
+const mirrorRace = VG.simulateLeagueRace(
+  [{ entry: 1, teamName: "A", totalPoints: 500, picks: strongSquad.picks }, { entry: 2, teamName: "B", totalPoints: 500, picks: strongSquad.picks }],
+  fixtures, 1, 1500
+);
+check("identical squads at equal totals split win probability roughly evenly", mirrorRace.every(r => r.winProb >= 30 && r.winProb <= 70));
+
+// analyzeLeague now enriches picks with id/positionId (needed by the race
+// simulator) and accepts a fixtures param — verify the signature and that
+// it still fails closed (returns null, never throws) when the network mock
+// used by this harness can't actually reach the FPL API.
+check("analyzeLeague accepts (leagueId, currentGW, fixtures)", VG.analyzeLeague.length === 3);
+
+(async () => {
+  let analyzeLeagueThrew = false;
+  const leagueResult = await VG.analyzeLeague(999999, 1, fixtures).catch(() => { analyzeLeagueThrew = true; return "threw"; });
+  check("analyzeLeague fails closed instead of throwing when the API is unreachable", !analyzeLeagueThrew && leagueResult === null);
+
+  section("Summary");
+  console.log(`${passed} passed, ${failed} failed`);
+  if (failed > 0) process.exit(1);
+})();

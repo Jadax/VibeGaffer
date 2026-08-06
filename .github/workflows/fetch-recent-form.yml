@@ -1,0 +1,108 @@
+name: Fetch Recent-Form / Rotation-Risk Data
+
+on:
+  schedule:
+    # Daily. Recent-form only meaningfully changes after full gameweeks
+    # complete (typically weekends), so daily is plenty and stays polite to
+    # the FPL API. Offset from the other fetchers' cron minutes.
+    - cron: '41 5 * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fetch-recent-form.yml'
+
+concurrency:
+  group: fetch-recent-form
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+
+      # Season-cumulative starts/minutes (already in bootstrap.json) can't
+      # tell "nailed on for the last 5 GWs" apart from "started well in
+      # September, benched since" — both can carry the same season total.
+      # This fetches each player's per-GW history (FPL's public, unauthed
+      # element-summary endpoint — same trust tier as bootstrap-static) and
+      # reduces it to a last-5-gameweek starts/minutes signal.
+      - name: Pick candidate player IDs
+        run: |
+          python3 - <<'PY'
+          import json
+          bootstrap = json.load(open('docs/data/bootstrap.json'))
+          # Anyone who featured last season is worth tracking; skip players
+          # who never played (reduces ~570 elements to a more respectful
+          # ~400 requests without dropping anyone rosterable).
+          ids = [p['id'] for p in bootstrap['elements'] if (p.get('minutes') or 0) > 0]
+          with open('/tmp/ids.txt', 'w') as f:
+              f.write('\n'.join(str(i) for i in ids))
+          print(f'{len(ids)} candidate players')
+          PY
+
+      - name: Download per-player history (8-way parallel, respectful of the API)
+        run: |
+          mkdir -p /tmp/history
+          cat /tmp/ids.txt | xargs -P 8 -I{} sh -c '
+            curl -sfL --max-time 10 \
+              -H "User-Agent: Mozilla/5.0 (compatible; VibeGaffer/1.0)" \
+              -o /tmp/history/{}.json \
+              "https://fantasy.premierleague.com/api/element-summary/{}/" || true
+          '
+          echo "Downloaded $(ls /tmp/history | wc -l) of $(wc -l < /tmp/ids.txt) player histories"
+
+      - name: Reduce to a compact last-5-GW recent-form file
+        run: |
+          python3 - <<'PY'
+          import json, os, glob, datetime
+
+          out = {}
+          max_round_seen = 0
+
+          for path in glob.glob('/tmp/history/*.json'):
+              pid = os.path.basename(path)[:-5]
+              try:
+                  with open(path, encoding='utf-8') as f:
+                      data = json.load(f)
+              except Exception:
+                  continue
+              history = data.get('history') or []
+              if not history:
+                  continue  # pre-season or genuinely no minutes yet — fine, client falls back
+              history.sort(key=lambda r: r.get('round') or 0)
+              last5 = history[-5:]
+              max_round_seen = max(max_round_seen, max((r.get('round') or 0) for r in last5))
+
+              def started(row):
+                  # 'starts' is the authoritative field on current-season rows;
+                  # fall back to a 60-minute threshold if it's ever absent.
+                  if 'starts' in row:
+                      return 1 if row.get('starts') else 0
+                  return 1 if (row.get('minutes') or 0) >= 60 else 0
+
+              starts5 = sum(started(r) for r in last5)
+              mins5 = sum((r.get('minutes') or 0) for r in last5)
+              out[pid] = {'starts5': starts5, 'gws5': len(last5), 'mins5': mins5}
+
+          payload = {
+              'source': 'fantasy.premierleague.com/api/element-summary',
+              'generatedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'asOfGW': max_round_seen,
+              'players': out
+          }
+          with open('docs/data/recent-form.json', 'w', encoding='utf-8') as f:
+              json.dump(payload, f, separators=(',', ':'))
+          print(f'Wrote recent-form for {len(out)} players (as of GW{max_round_seen})')
+          PY
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/recent-form.json
+          git diff --staged --quiet || (git commit -m "data: refresh recent-form / rotation-risk priors [skip ci]" && git push)
