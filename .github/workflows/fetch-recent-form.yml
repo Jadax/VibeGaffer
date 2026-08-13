@@ -56,13 +56,29 @@ jobs:
           '
           echo "Downloaded $(ls /tmp/history | wc -l) of $(wc -l < /tmp/ids.txt) player histories"
 
-      - name: Reduce to a compact last-5-GW recent-form file
+      - name: Reduce to compact 1/3/5-round recency features (v5.8)
         run: |
           python3 - <<'PY'
           import json, os, glob, datetime
 
           out = {}
           max_round_seen = 0
+
+          def aggregate(rows):
+              # Aggregate a per-round slice into recency features: starts,
+              # minutes, fantasy points, xGI (goals+assists, FPL's own xGI),
+              # BPS (bonus-point system score). These power the recency-
+              # weighted projection blend (OpenFPL-style 1/3/5-match windows)
+              # and the xMins availability signal.
+              agg = {'starts': 0, 'mins': 0, 'pts': 0, 'xgi': 0.0, 'bps': 0}
+              for r in rows:
+                  agg['starts'] += 1 if r.get('starts') else 0
+                  agg['mins'] += r.get('minutes') or 0
+                  agg['pts'] += r.get('total_points') or 0
+                  agg['xgi'] += (r.get('goals_scored') or 0) + (r.get('assists') or 0)
+                  agg['bps'] += r.get('bps') or 0
+              agg['xgi'] = round(agg['xgi'], 3)
+              return agg
 
           for path in glob.glob('/tmp/history/*.json'):
               pid = os.path.basename(path)[:-5]
@@ -73,21 +89,23 @@ jobs:
                   continue
               history = data.get('history') or []
               if not history:
-                  continue  # pre-season or genuinely no minutes yet — fine, client falls back
+                  continue  # pre-season or genuinely no minutes yet — client falls back
               history.sort(key=lambda r: r.get('round') or 0)
+              max_round_seen = max(max_round_seen, max((r.get('round') or 0) for r in history))
+
               last5 = history[-5:]
-              max_round_seen = max(max_round_seen, max((r.get('round') or 0) for r in last5))
+              last3 = history[-3:]
+              last1 = history[-1:]
+              s5 = aggregate(last5)
+              s3 = aggregate(last3)
+              s1 = aggregate(last1)
 
-              def started(row):
-                  # 'starts' is the authoritative field on current-season rows;
-                  # fall back to a 60-minute threshold if it's ever absent.
-                  if 'starts' in row:
-                      return 1 if row.get('starts') else 0
-                  return 1 if (row.get('minutes') or 0) >= 60 else 0
-
-              starts5 = sum(started(r) for r in last5)
-              mins5 = sum((r.get('minutes') or 0) for r in last5)
-              out[pid] = {'starts5': starts5, 'gws5': len(last5), 'mins5': mins5}
+              out[pid] = {
+                  'n': len(history),
+                  's1': s1, 's3': s3, 's5': s5,
+                  # Back-compat with the v5.7 rotation-risk consumer:
+                  'starts5': s5['starts'], 'gws5': len(last5), 'mins5': s5['mins']
+              }
 
           payload = {
               'source': 'fantasy.premierleague.com/api/element-summary',
@@ -97,7 +115,7 @@ jobs:
           }
           with open('docs/data/recent-form.json', 'w', encoding='utf-8') as f:
               json.dump(payload, f, separators=(',', ':'))
-          print(f'Wrote recent-form for {len(out)} players (as of GW{max_round_seen})')
+          print(f'Wrote recency features for {len(out)} players (as of GW{max_round_seen})')
           PY
 
       - name: Commit if changed

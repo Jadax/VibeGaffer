@@ -291,6 +291,11 @@ VG.loadRecentForm = async () => {
         const el = VG.players[pid];
         if (el) el.recentForm = j.players[pid];
       });
+      // Flag how many rounds of recency data are actually available this
+      // season (used by the recency-weighted projection blend to confidence-
+      // scale its weight, and by the UI to label the signal).
+      VG.recentFormMaxRounds = 0;
+      Object.values(j.players).forEach(pf => { VG.recentFormMaxRounds = Math.max(VG.recentFormMaxRounds, pf.n || 0); });
       return j;
     }
   } catch (e) { console.warn("[VG] Recent-form data unavailable (optional):", e.message); }
@@ -344,6 +349,62 @@ VG.buildMaps = (data) => {
 
   VG.gwData = data.events;
   VG.currentGW = data.events.find(e => e.is_current)?.id || data.events.find(e => e.is_next)?.id || 1;
+};
+
+// Total gameweeks in a season (FPL always runs 38 rounds).
+VG.SEASON_GW_COUNT = 38;
+
+// How many gameweeks remain from `gw` onwards (inclusive). Clamps horizons
+// near the end of the season so a "12 GW" projection isn't requested when
+// only 6 remain (those weeks don't exist — projections would silently be
+// short or, pre-season, inflated by the nGWs multiplier fallback).
+VG.remainingGWs = (gw) => Math.max(0, VG.SEASON_GW_COUNT - (gw || 1) + 1);
+
+// Clamp a requested horizon to the GWs actually left in the season.
+VG.clampHorizon = (nGWs, startGW) => Math.max(1, Math.min(nGWs || 1, VG.remainingGWs(startGW)));
+
+// ── Recency factors (OpenFPL-style 1/3/5-match windows, v5.8) ────────────
+// FPL Review's "Massive Data Model" and OpenFPL (arXiv 2508.09992, MIT)
+// both find that *recent* output beats season aggregates: a 5-GW window that
+// ends in October is a poor predictor of GW30 output. VG.loadRecentForm()
+// (optional, daily-fetched from FPL's own element-summary) supplies per-round
+// aggregates over the last 1/3/5 GWs. This helper reduces them to the shape
+// the xP engine needs and confidence-scales the blend weight from the number
+// of rounds actually on record. Returns null when there is nothing usable.
+VG._recencyFactors = (p) => {
+  const recent = p && p.recentForm;
+  if (!recent) return null;
+  const rounds = recent.n || recent.gws5 || 0;
+  if (rounds < 2) return null; // 1 round is noise, not signal
+
+  // Prefer the 1/3/5 windowed structure (v5.8 fetcher); fall back to the
+  // legacy v5.7 starts5/gws5/mins5 fields for older data files.
+  const s1 = recent.s1, s3 = recent.s3, s5 = recent.s5;
+  const hasWindows = !!(s1 && s3 && s5);
+
+  // Confidence scale 0.4..1.0: more recent rounds = stronger evidence.
+  const wRounds = Math.min(rounds, 5) / 5;
+
+  let startsRate, mins, xgi90, pts90;
+  if (hasWindows) {
+    // Availability: last-5 window, same semantics as the v5.7 rotation-risk
+    // signal (starts ÷ games on record) so nothing regresses.
+    startsRate = s5.mins > 0 ? s5.starts / 5 : 0;
+    mins = s5.mins || s3.mins;
+    // Output: use the last-3 window for a balance between noise (1 GW) and
+    // staleness (5 GW), per the OpenFPL finding that 3-match windows carry
+    // most of the predictive signal. Per-90 from FPL's own xGI/points.
+    const mins3 = s3.mins || 90;
+    xgi90 = mins >= 60 ? (s3.xgi || 0) * 90 / mins3 : 0;
+    pts90 = mins >= 60 ? (s3.pts || 0) * 90 / mins3 : 0;
+  } else {
+    startsRate = recent.starts5 / Math.max(rounds, 1);
+    mins = recent.mins5 || 0;
+    xgi90 = 0; pts90 = 0; // legacy file carries no points — availability only
+  }
+
+  const weight = 0.30 + 0.20 * wRounds; // 0.38 (2 GWs) → 0.50 (5+ GWs)
+  return { weight, rounds, startsRate, mins, xgi90, pts90 };
 };
 
 // ── xP Engine: enhanced with xG/xA, form trends, opponent defense ──────
@@ -469,13 +530,13 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   // Recency blend: a season-total start rate can't tell "nailed on for the
   // last 5 GWs" apart from "started well in September, benched since" — both
   // can carry the same season aggregate. VG.loadRecentForm() (optional,
-  // github-actions-fetched, absent pre-season) supplies a last-5-GW starts
-  // rate; blend it in with a weight that scales with how many recent GWs
-  // are actually on record (2 of 5 is weaker evidence than 5 of 5).
-  const recent = p.recentForm;
-  if (recent && recent.gws5 >= 2) {
-    const recentRate = recent.starts5 / recent.gws5;
-    const recentWeight = 0.35 + 0.25 * (recent.gws5 / 5);
+  // github-actions-fetched, absent pre-season) supplies per-round windows;
+  // blend the recent starts rate in with a weight that scales with how many
+  // recent GWs are actually on record (2 of 5 is weaker evidence than 5 of 5).
+  const recency = VG._recencyFactors(p);
+  if (recency) {
+    const recentRate = recency.startsRate;
+    const recentWeight = recency.weight;
     startRate = recentRate * recentWeight + startRate * (1 - recentWeight);
   }
 
@@ -524,6 +585,20 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   } else {
     projGoalsPer90Raw = 0.6 * xGPer90 + 0.4 * goalsPer90;
     projAssistsPer90Raw = 0.6 * xAPer90 + 0.4 * assistsPer90;
+  }
+
+  // ── Recency-weighted output blend (v5.8, OpenFPL/FPL Review pattern) ──
+  // Season aggregates can't tell "8 goals in the last 3 GWs" from "8 goals
+  // by November". When per-round history is available, nudge the per-90
+  // projection toward the player's last-3-GW xGI rate — a strong predictor
+  // of near-term output — clamped to avoid letting one hot window dominate.
+  // Weight is confidence-scaled by rounds on record via _recencyFactors.
+  if (recency && recency.xgi90 > 0 && (projGoalsPer90Raw + projAssistsPer90Raw) > 0.05) {
+    const seasonXGI90 = projGoalsPer90Raw + projAssistsPer90Raw;
+    const ratio = Math.min(Math.max(recency.xgi90 / seasonXGI90, 0.70), 1.40);
+    const nudge = 1 + (ratio - 1) * recency.weight;
+    projGoalsPer90Raw *= nudge;
+    projAssistsPer90Raw *= nudge;
   }
 
   const csRate = cleanSheets / Math.max(gamesPlayed, 1);
@@ -677,14 +752,38 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const xpNegative = minsProb * (yellowsPerGame * 1 + redsPerGame * 3 + ownGoalsPerGame * 2 + penMissPerGame * 2);
 
   const modelXP = xpAppearance + xpCS + xpGoals + xpAssists + xpBonus + xpSaves + xpDEFCON - xpNegative;
+  // New-to-Premier-League players (new signings / promoted-team squads) have
+  // no FPL history to regress toward. Detection: zero PL minutes/starts and
+  // no xG/xA on record. FPL still supplies an ep_next prior, and Understat
+  // may carry their previous-league xG/xA — both are legitimately stronger
+  // signals for a debutant than a season-aggregate model can produce.
   const noPremierLeagueHistory = mins === 0 && starts === 0 && xG === 0 && xA === 0;
-  // FPL supplies an ep_next prior for new signings and promoted-team players.
-  // Blend it conservatively until observed Premier League data exists.
-  const totalXP = noPremierLeagueHistory && epNext > 0 ? 0.6 * modelXP + 0.4 * epNext : modelXP;
+  let totalXP = modelXP;
+  let newSigningPrior = 0;
+  if (noPremierLeagueHistory) {
+    // Weight FPL's ep_next heavily (it already encodes their expected role),
+    // blended with our own model estimate. Understat previous-league priors
+    // have already flowed in via projGoalsPer90Raw when present, so the model
+    // half is not a blind guess for foreign signings.
+    const epPrior = epNext > 0 ? epNext : 0;
+    newSigningPrior = epPrior;
+    if (epPrior > 0) {
+      totalXP = 0.5 * modelXP + 0.5 * epPrior;
+    } else if (realXGPer90 > 0 || realXAPer90 > 0) {
+      // Understat-only prior: keep the model but flag the lower confidence.
+      totalXP = modelXP;
+    }
+  }
+  const totalXPFinal = Math.max(totalXP, 0.1);
 
   return {
-    xp: Math.max(totalXP, 0.1),
+    xp: totalXPFinal,
+    // Expected minutes for this fixture (FPL Review xMins idea): minsProb is
+    // the P(play 60+) — the cleanest single availability signal to surface.
+    xMins: +((minsProb * 90) || 0).toFixed(1),
     minsProb,
+    isNew: noPremierLeagueHistory,
+    priorSignal: noPremierLeagueHistory ? (newSigningPrior > 0 ? "ep_next" : "understat") : "",
     csProb: projCS,
     goalProb: projGoals,
     assistProb: projAssists,
@@ -780,6 +879,84 @@ VG.computeEffectiveOwnership = (allXP) => {
       return { eo: +eo.toFixed(1), own, capShare: +(cap * 100).toFixed(1) };
     }
   };
+};
+
+// ── Market tags: Buy / Hold / Sell (v5.8) ─────────────────────────────
+// Idea borrowed from FFix's buy/hold/sell and FPL Review's momentum flags.
+// Combines the recency signals (1/3/5-GW xGI + starts, from _recencyFactors),
+// xG regression (DUE/OVER), ownership and value to label what to do with a
+// player. Pure function of the allXP info object — easy to unit-test.
+VG.getMarketTag = (p) => {
+  if (!p) return { tag: "hold", reason: "—", tone: "gray" };
+  const rec = p.recency;
+  const reg = p.regression;
+  const own = p.ownership || 0;
+  const value = p.xpPerPrice || 0;
+
+  // Sell: cooling output (recent xGI well below season) OR over-performing
+  // (xG regression OVER) AND not a steal at the price.
+  if (rec && rec.xgi90 > 0 && p.totalXP > 0) {
+    // Estimate season xGI/90 from the same blend the engine uses.
+    const seasonXGI = (p.xG + p.xA || p.xGI) || 0.5;
+    const cold = rec.xgi90 < seasonXGI * 0.75;
+    const hot = rec.xgi90 > seasonXGI * 1.25;
+    if (cold && own >= 10) return { tag: "sell", reason: "recent xGI below season rate — output cooling", tone: "red" };
+    if (cold && value < 0.5) return { tag: "sell", reason: "cooling output + weak xP/£m", tone: "red" };
+    if (hot && value > 0.8) return { tag: "buy", reason: "recency boost + strong value", tone: "green" };
+  }
+  if (reg && reg.flag === "over" && own >= 15 && value < 0.6) {
+    return { tag: "sell", reason: "xG running hot — regression likely, expensive", tone: "red" };
+  }
+  if (reg && reg.flag === "due" && value > 0.7) {
+    return { tag: "buy", reason: "xG due — goals lagging chances, cheap", tone: "green" };
+  }
+  if (p.isNew && p.priorSignal === "ep_next" && value > 0.8) {
+    return { tag: "buy", reason: "new to PL with a strong FPL prior", tone: "green" };
+  }
+  if (value > 0.85 && own < 20) {
+    return { tag: "buy", reason: "high xP/£m with low ownership", tone: "green" };
+  }
+  if (value < 0.35 && own >= 5) {
+    return { tag: "sell", reason: "poor xP/£m for the price", tone: "red" };
+  }
+  return { tag: "hold", reason: "steady projection", tone: "gray" };
+};
+
+// HTML badge for a market tag (empty when hold — clean UI).
+VG.marketBadge = (tag) => {
+  if (!tag || tag.tag === "hold") return "";
+  const bg = tag.tone === "green" ? "rgba(0,255,135,0.12)" : "rgba(239,68,68,0.12)";
+  const fg = tag.tone === "green" ? "#00ff87" : "#ef4444";
+  const label = tag.tag === "buy" ? "BUY" : "SELL";
+  return `<span title="${VG.esc(tag.reason)}" style="background:${bg};color:${fg};padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;font-weight:600;">${label}</span>`;
+};
+
+// ── Watchlist (v5.8, FFix/FPL Review idea) ────────────────────────────
+// localStorage-backed list of player IDs the user is monitoring. Never
+// touches the network; the toggle is used by inline onclick handlers in the
+// Compare/Differentials tables and the Strategy-tab watchlist panel.
+VG.watchlist = () => {
+  if (!VG._watchlist) {
+    try { VG._watchlist = JSON.parse(localStorage.getItem("vg_watchlist") || "[]"); }
+    catch (e) { VG._watchlist = []; }
+  }
+  return VG._watchlist;
+};
+VG.toggleWatch = (pid) => {
+  const list = VG.watchlist();
+  const i = list.indexOf(pid);
+  if (i >= 0) list.splice(i, 1); else list.push(pid);
+  VG._watchlist = list;
+  try { localStorage.setItem("vg_watchlist", JSON.stringify(list)); } catch (e) {}
+  return list;
+};
+VG.isWatched = (pid) => VG.watchlist().indexOf(pid) >= 0;
+// Small "☆ / ★" toggle button for table rows.
+VG.watchToggle = (p) => {
+  const w = VG.isWatched(p.id);
+  const label = w ? '★' : '☆';
+  const color = w ? '#fbbf24' : '#475569';
+  return `<span onclick="VG.toggleWatch(${p.id});VG.renderComparison();" title="${w ? 'Remove from watchlist' : 'Add to watchlist'}" style="cursor:pointer;color:${color};font-size:0.9rem;">${label}</span>`;
 };
 
 // ── Monte Carlo Gameweek distribution (v5.5) ──────────────────────────
@@ -896,7 +1073,141 @@ VG.simulateLeagueRace = (squads, fixtures, gw, iterations) => {
   }).sort((a, b) => b.winProb - a.winProb);
 };
 
-// ── DGW/BGW Season Planner (v5.5) ─────────────────────────────────────
+// ── What-If race scenarios (v5.8) ─────────────────────────────────────
+// Idea borrowed from FFix's "what if" transfer explorer. Given the league
+// squads already fetched, clone "your" squad, apply a hypothetical change
+// (bring a player in, drop one out, or switch the captain), then re-run the
+// Monte Carlo race against the same rivals. Rival scores are drawn ONCE and
+// reused for both baseline and scenario — only your own squad's draw changes
+// — so the resulting win-probability delta is attributable to the change
+// alone, not simulation noise. Returns { baseline, scenario } shaped like
+// simulateLeagueRace rows, or null when there's nothing to simulate.
+VG.simulateRaceScenario = (squads, fixtures, gw, iterations, scenario) => {
+  if (!scenario) return null;
+  const myEntry = VG.currentTeamId;
+  if (!myEntry) return null;
+  iterations = iterations || 1500;
+
+  const valid = (squads || []).filter(sq => sq.picks && sq.picks.length > 0);
+  if (valid.length < 2) return null;
+  const mine = valid.find(sq => sq.entry === myEntry);
+  if (!mine) return null;
+
+  // Clone the fetched squads so we never mutate analyzeLeague's data.
+  const modified = valid.map(sq => ({
+    entry: sq.entry, teamName: sq.teamName, totalPoints: sq.totalPoints,
+    picks: (sq.picks || []).map(p => ({ ...p }))
+  }));
+  const mineMod = modified.find(sq => sq.entry === myEntry);
+
+  const allXP = VG.allXP || [];
+  const byId = {};
+  allXP.forEach(p => { byId[p.id] = p; });
+
+  // 1. Captain change: pick a different captain from the same squad.
+  if (scenario.captainId) {
+    const newCap = mineMod.picks.find(p => (p.id === scenario.captainId) || (p.element === scenario.captainId));
+    if (newCap) {
+      mineMod.picks.forEach(p => { p.isCaptain = false; p.multiplier = 1; });
+      newCap.isCaptain = true;
+      newCap.multiplier = 2;
+    }
+  }
+
+  // 2. Transfer in: add `scenario.addId`, optionally dropping `scenario.dropId`
+  //    (default: the squad's lowest-xP player in the same position, else the
+  //    lowest-xP non-GK starter). Replacement keeps squad size constant so the
+  //    shared-draw comparison stays apples-to-apples.
+  if (scenario.addId) {
+    const present = mineMod.picks.some(p => (p.id === scenario.addId) || (p.element === scenario.addId));
+    if (!present) {
+      const addXP = byId[scenario.addId];
+      if (addXP) {
+        const added = { ...addXP, element: addXP.id, isCaptain: false, multiplier: 1 };
+        let dropIdx = -1;
+        if (scenario.dropId) {
+          dropIdx = mineMod.picks.findIndex(p => (p.id === scenario.dropId) || (p.element === scenario.dropId));
+        }
+        if (dropIdx < 0) {
+          const candidates = mineMod.picks
+            .map((p, i) => ({ p, i }))
+            .filter(({ p }) => (p.positionId || 0) === added.positionId)
+            .sort((a, b) => (byId[a.p.id]?.totalXP || 0) - (byId[b.p.id]?.totalXP || 0));
+          if (candidates.length) dropIdx = candidates[0].i;
+          else {
+            const fallback = mineMod.picks
+              .map((p, i) => ({ p, i }))
+              .filter(({ p }) => (p.positionId || 0) !== 1 && p.multiplier >= 1)
+              .sort((a, b) => (byId[a.p.id]?.totalXP || 0) - (byId[b.p.id]?.totalXP || 0));
+            if (fallback.length) dropIdx = fallback[0].i;
+          }
+        }
+        if (dropIdx >= 0) mineMod.picks.splice(dropIdx, 1);
+        mineMod.picks.push(added);
+      }
+    }
+  }
+
+  // Precompute lambdas for every entrant, baseline and scenario.
+  const prep = sq => ({
+    entry: sq.entry, name: sq.teamName, priorTotal: sq.totalPoints,
+    lambdas: VG._mcLambdas(sq.picks.filter(p => p.multiplier >= 1), fixtures, gw)
+  });
+  const baseEntrants = valid.map(prep);
+  const scenEntrants = modified.map(prep);
+
+  const wins = { base: {}, scen: {} };
+  const gwScores = { base: {}, scen: {} };
+  baseEntrants.forEach(e => { wins.base[e.entry] = 0; wins.scen[e.entry] = 0; gwScores.base[e.entry] = []; gwScores.scen[e.entry] = []; });
+
+  // Shared-draw Monte Carlo: rivals get the SAME score in both runs; only
+  // your own squad's draw changes. Deltas are therefore change-attributable.
+  for (let it = 0; it < iterations; it++) {
+    const baseDraw = [], scenDraw = [];
+    baseEntrants.forEach(e => {
+      const rivalScore = VG._mcDrawTotal(e.lambdas);
+      gwScores.base[e.entry].push(rivalScore);
+      baseDraw.push({ entry: e.entry, total: e.priorTotal + rivalScore });
+      if (e.entry === myEntry) {
+        const scenScore = VG._mcDrawTotal(scenEntrants.find(s => s.entry === myEntry).lambdas);
+        gwScores.scen[e.entry].push(scenScore);
+        scenDraw.push({ entry: e.entry, total: e.priorTotal + scenScore });
+      } else {
+        gwScores.scen[e.entry].push(rivalScore);
+        scenDraw.push({ entry: e.entry, total: e.priorTotal + rivalScore });
+      }
+    });
+    baseDraw.sort((a, b) => b.total - a.total);
+    scenDraw.sort((a, b) => b.total - a.total);
+    wins.base[baseDraw[0].entry]++;
+    wins.scen[scenDraw[0].entry]++;
+  }
+
+  const row = (winsMap, scoresMap) => baseEntrants.map(e => {
+    const scores = scoresMap[e.entry].slice().sort((a, b) => a - b);
+    const mean = scores.reduce((s, x) => s + x, 0) / scores.length;
+    const at = f => scores[Math.max(0, Math.min(scores.length - 1, Math.floor(f * scores.length)))];
+    return {
+      entry: e.entry, name: e.name, priorTotal: e.priorTotal,
+      gwMean: +mean.toFixed(1), gwFloor: at(0.1), gwCeiling: at(0.9),
+      winProb: +((winsMap[e.entry] / iterations) * 100).toFixed(1),
+      top3Prob: null
+    };
+  }).find(r => r.entry === myEntry);
+
+  const baseline = row(wins.base, gwScores.base);
+  const scenarioRow = row(wins.scen, gwScores.scen);
+  if (!baseline || !scenarioRow) return null;
+  return { baseline, scenario: scenarioRow };
+};
+
+// Delta in probability points between baseline and scenario (0 if equal).
+VG.raceScenarioDelta = (squads, fixtures, gw, iterations, scenario) => {
+  const r = VG.simulateRaceScenario(squads, fixtures, gw, iterations, scenario);
+  if (!r) return null;
+  const delta = +(r.scenario.winProb - r.baseline.winProb).toFixed(1);
+  return { ...r, delta };
+};
 // Idea borrowed from Ben Crellin's FPL planner / FFHub calendars. A full-season
 // grid of double (2 fixtures) and blank (0 fixtures) gameweeks per team, plus
 // per-GW chip-window scoring for a squad.
@@ -963,6 +1274,10 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   const p = VG.players[pid];
   if (!p) return { totalXP: 0, gwDetails: [], info: {} };
 
+  // Clamp the horizon to the GWs actually left in the season (v5.8): near
+  // the end of the season a 12-GW request can only cover 6 remaining weeks.
+  nGWs = VG.clampHorizon(nGWs, startGW);
+
   const teamId = p.team;
   const upcoming = fixtures.filter(f =>
     (f.team_h === teamId || f.team_a === teamId) && f.event >= startGW && f.event < startGW + nGWs
@@ -973,7 +1288,8 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   const aggComponents = { xpAppearance: 0, xpCS: 0, xpGoals: 0, xpAssists: 0, xpBonus: 0, xpSaves: 0, xpDEFCON: 0, xpNegative: 0 };
 
   if (upcoming.length === 0) {
-    // Pre-season / no fixtures: use best available signal
+    // Pre-season / no fixtures: use best available signal, scaled to the
+    // number of GWs actually remaining in the season (not the raw request).
     const ppg = parseFloat(p.points_per_game || "0");
     const form = parseFloat(p.form || "0");
     const epNext = parseFloat(p.ep_next || "0");
@@ -1009,6 +1325,7 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   const bps = parseInt(p.bps || "0");
   const defConPer90 = parseFloat(p.defensive_contribution_per_90 || "0");
   const us = p.understat;
+  const recency = VG._recencyFactors(p);
 
   return {
     totalXP: +totalXP.toFixed(2),
@@ -1041,7 +1358,17 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
       bps,
       defconPer90: +defConPer90.toFixed(2),
       status: p.status,
-      news: p.news || ""
+      news: p.news || "",
+      // v5.8: expected minutes (FPL Review xMins idea) — mean over the
+      // horizon's fixtures; surfaced so rotation risk is visible at a glance.
+      xMins: gwDetails.length > 0
+        ? +(gwDetails.reduce((s, d) => s + (d.xMins || 0), 0) / gwDetails.length).toFixed(1)
+        : 0,
+      // v5.8: new-to-PL flag + the prior signal that was used (ep_next or
+      // understat). Surfaces debutants/promoted players in the UI.
+      isNew: gwDetails.some(d => d.isNew),
+      priorSignal: (gwDetails.find(d => d.priorSignal) || {}).priorSignal || "",
+      recency: recency ? { rounds: recency.rounds, xgi90: +recency.xgi90.toFixed(2), pts90: +recency.pts90.toFixed(2) } : null
     }
   };
 };
@@ -2456,6 +2783,9 @@ VG.analyzeLeague = async (leagueId, currentGW, fixtures) => {
       outliers,
       uniquePicks,
       raceSimulation,
+      // Raw squad objects (entry/picks/multipliers) — consumed by the
+      // What-If race scenarios (v5.8); everything else uses the mapped view.
+      rawSquads: squads,
       squads: squads.map(s => ({
         name: s.teamName,
         rank: s.rank,
@@ -2473,6 +2803,112 @@ VG.analyzeLeague = async (leagueId, currentGW, fixtures) => {
 
 // ── Render Engine ─────────────────────────────────────────────────────
 VG.render = {};
+
+// ── Full-season FDR planner grid (v5.8, Ben Crellin planner idea) ────
+// A single view of every team's fixtures across the whole season: cell shows
+// the opponent's difficulty (FDR 1-5, colour-coded) and DGWs/BGWs are marked
+// with the fixture count. Built on VG.buildSeasonPlanner + VG.teamSeasonRow
+// (which previously had no live caller). Optionally highlights one team's
+// row when teamId is given. Returns HTML.
+VG.render.seasonPlanner = (fixtures, fromGW, nGWs, teamId) => {
+  const planner = VG.buildSeasonPlanner(fixtures || []);
+  if (!planner.length) return "";
+  const teams = Object.values(VG.teams).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  fromGW = fromGW || 1;
+  nGWs = nGWs || 38;
+  const end = Math.min(fromGW + nGWs, 39);
+
+  // Fixture lookup per (teamId, gw): {oppId, isHome, fdr} for cell rendering.
+  const fxIndex = {};
+  (fixtures || []).forEach(f => {
+    if (!f.event || f.event < fromGW || f.event >= end) return;
+    (["team_h", "team_a"]).forEach(side => {
+      const tid = f[side];
+      const isHome = side === "team_h";
+      const oppId = isHome ? f.team_a : f.team_h;
+      const opp = VG.teams[oppId];
+      const key = tid + ":" + f.event;
+      fxIndex[key] = {
+        oppId, isHome,
+        fdr: VG.fixtureFDR(f, tid),
+        oppShort: opp ? opp.short_name : "?"
+      };
+    });
+  });
+
+  let html = '<div class="data-table" style="overflow-x:auto;"><table style="font-size:0.6rem;border-collapse:collapse;">';
+  html += '<tr><th style="text-align:left;position:sticky;left:0;background:#0b1120;">Team</th>';
+  for (let g = fromGW; g < end; g++) {
+    html += `<th style="text-align:center;">GW${g}</th>`;
+  }
+  html += '</tr>';
+
+  teams.forEach(t => {
+    const row = VG.teamSeasonRow(planner, t.id, fromGW, end - fromGW);
+    const isTeam = teamId && t.id === teamId;
+    html += `<tr${isTeam ? ' style="background:rgba(0,255,135,0.05);"' : ''}>`;
+    html += `<td style="text-align:left;position:sticky;left:0;background:#0b1120;color:${isTeam ? '#00ff87' : '#e2e8f0'};font-weight:${isTeam ? 700 : 400};">${VG.esc(t.short_name)}</td>`;
+    const cellMap = {};
+    row.cells.forEach(c => { cellMap[c.gw] = c.n; });
+    for (let g = fromGW; g < end; g++) {
+      const n = cellMap[g];
+      const fx = fxIndex[t.id + ":" + g];
+      let cell;
+      if (n === undefined) {
+        cell = '<td style="text-align:center;color:#1e293b;background:#0f172a;" title="No fixture this GW">&middot;</td>';
+      } else if (n === 0) {
+        cell = '<td style="text-align:center;background:rgba(239,68,68,0.18);color:#ef4444;font-weight:700;" title="Blank gameweek">BGW</td>';
+      } else if (n === 2) {
+        cell = `<td style="text-align:center;background:rgba(0,255,135,0.18);color:#00ff87;font-weight:700;" title="Double gameweek — two fixtures">DGW ${fx ? VG.esc(fx.oppShort) : ''}</td>`;
+      } else if (fx) {
+        const c = VG.fdrColor(fx.fdr);
+        const mark = fx.isHome ? '' : 'A';
+        cell = `<td style="text-align:center;color:${c};background:${c}14;" title="${VG.esc(fx.oppShort)}${fx.isHome ? ' (H)' : ' (A)'} · FDR ${fx.fdr}">${VG.esc(fx.oppShort)}${mark}</td>`;
+      } else {
+        cell = '<td style="text-align:center;color:#475569;">-</td>';
+      }
+      html += cell;
+    }
+    html += '</tr>';
+  });
+  html += '</table></div>';
+  return html;
+};
+
+// Watchlist panel for the Strategy tab: watched players with live xP/value/
+// recency/market signals + remove buttons. Also a quick-add dropdown so the
+// list is editable without hunting through other tabs. Rendered via
+// VG.render.tips so it refreshes with every squad re-analysis.
+VG.render.watchlist = (allXP) => {
+  const list = VG.watchlist();
+  const ids = new Set(list);
+  const watched = allXP.filter(p => ids.has(p.id));
+  const quickAdd = allXP
+    .filter(p => !ids.has(p.id) && p.position !== "GK")
+    .slice(0, 400)
+    .map(p => `<option value="${p.id}">${VG.esc(p.name)} — ${p.teamName} £${p.price.toFixed(1)}m (${p.totalXP.toFixed(1)} xP)</option>`)
+    .join("");
+  let html = `<div class="tips-section"><div class="tips-section-header">👀 Watchlist <span style="font-weight:400;color:#475569;font-size:0.65rem;">(${list.length} players — monitors value changes each refresh)</span></div>`;
+  if (quickAdd) {
+    html += `<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">`;
+    html += `<select id="watchAdd" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:6px 8px;font-size:0.68rem;flex:1;max-width:420px;"><option value="">+ add a player to watch…</option>${quickAdd}</select>`;
+    html += `<button onclick="var s=document.getElementById('watchAdd');if(s.value){VG.toggleWatch(+s.value);s.value='';document.getElementById('tipsContent').innerHTML=VG.render.tips(VG.currentResult,VG.allXP,VG.allFixtures,parseInt(el('gameweek').value));}" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:0.68rem;cursor:pointer;">Add</button>`;
+    html += `</div>`;
+  }
+  if (watched.length === 0) {
+    html += `<p style="color:#475569;font-size:0.7rem;">Add players with the ☆ button in the Compare or Differentials tabs, or use the dropdown above. Watchlist persists in your browser.</p>`;
+  } else {
+    html += `<table class="data-table" style="font-size:0.7rem;"><tr><th></th><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>xMins</th><th>Recency</th><th>xG Reg</th><th>Market</th><th></th></tr>`;
+    watched.forEach(p => {
+      const market = VG.marketBadge(VG.getMarketTag(p));
+      const rec = p.recency ? `${p.recency.xgi90.toFixed(2)} xGI/90` : '—';
+      html += `<tr><td>${VG.watchToggle(p)}</td><td style="color:#e2e8f0;font-weight:600;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.xMins || 0).toFixed(0)}</td><td style="color:#a78bfa;">${rec}</td><td>${VG.regressionBadge(p.regression)}</td><td>${market || '—'}</td><td><span onclick="VG.toggleWatch(${p.id});document.getElementById('tipsContent').innerHTML=VG.render.tips(VG.currentResult,VG.allXP,VG.allFixtures,parseInt(el('gameweek').value));" title="Remove" style="cursor:pointer;color:#ef4444;font-size:0.85rem;">✕</span></td></tr>`;
+    });
+    html += `</table>`;
+  }
+  html += `</div>`;
+  return html;
+};
 VG.render.teamRatings = (ratings) => {
   if (!ratings || !ratings.length) return '<p style="color:#475569;font-size:0.8rem;">Team strength data unavailable (Understat priors not fetched yet).</p>';
   const ratingColor = { 1: "#ef4444", 2: "#fb923c", 3: "#64748b", 4: "#86efac", 5: "#22c55e" };
@@ -2566,6 +3002,109 @@ VG.render.bench = (bench) => {
   return html;
 };
 
+// ── Rate My Team (v5.8, FPL Review / FFix "Rate My Team" idea) ───────
+// A transparent, component-scored team rating so advice is explainable:
+//   25% raw xP strength vs the field, 20% rotation risk (starter xMins),
+//   20% formation/positional balance, 20% budget efficiency, 15% captaincy
+//    quality vs the best available captain in-squad. Pure function — easy to
+//    unit-test. Returns { score, grade, gradeColor, components, advice }.
+VG.rateMyTeam = (result, allXP, fixtures, gw) => {
+  if (!result || !result.squad || !result.squad.length) return null;
+  const squad = result.squad;
+  const starting = result.starting || squad.slice(0, 11);
+  const byId = {};
+  (allXP || []).forEach(p => { byId[p.id] = p; });
+
+  // 1. xP strength vs the field (25%).
+  const squadXP = squad.reduce((s, p) => s + (p.totalXP || 0), 0);
+  const fieldAvg = (allXP && allXP.length ? allXP.slice(0, Math.floor(allXP.length * 0.3)).reduce((s, p) => s + p.totalXP, 0) / Math.max(1, Math.floor(allXP.length * 0.3)) : 30) * 15;
+  const xpScore = Math.min(100, (squadXP / Math.max(fieldAvg, 1)) * 100);
+
+  // 2. Rotation risk — average xMins across starters (20%).
+  let xMinsSum = 0, xMinsN = 0;
+  starting.forEach(p => {
+    const xp = byId[p.id];
+    if (xp && xp.xMins > 0) { xMinsSum += xp.xMins; xMinsN++; }
+  });
+  const avgXMins = xMinsN ? xMinsSum / xMinsN : 75;
+  const rotScore = Math.max(0, Math.min(100, (avgXMins / 90) * 100));
+
+  // 3. Formation/positional balance (20%): legal shapes score, double-position
+  //    errors score poorly, bench must have a GK + at least one of each other.
+  const posCount = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  squad.forEach(p => { if (posCount[p.positionId] !== undefined) posCount[p.positionId]++; });
+  let formScore = 60;
+  if (posCount[1] >= 1 && posCount[2] >= 3 && posCount[3] >= 2 && posCount[4] >= 1) formScore = 100;
+  else if (posCount[1] >= 1 && posCount[2] >= 2 && posCount[3] >= 2 && posCount[4] >= 1) formScore = 85;
+  if (posCount[1] === 0) formScore = 20; // no GK = broken
+  if (posCount[1] > 2) formScore -= 15;  // hoarding GKs wastes budget
+
+  // 4. Budget efficiency (20%): bank + average value.
+  const bank = result.budgetRemaining || 0;
+  const avgValue = squad.reduce((s, p) => s + (p.xpPerPrice || 0), 0) / Math.max(squad.length, 1);
+  const budgetScore = Math.max(0, Math.min(100,
+    50 * Math.min(1, bank / 2.0) + 50 * Math.min(1, avgValue / 0.65)
+  ));
+
+  // 5. Captaincy quality (15%): captain's per-GW xP vs the best non-GK option.
+  const cap = (result.gotCap || [])[0];
+  const nonGK = squad.filter(p => (p.positionId || 0) !== 1).slice().sort((a, b) => (byId[b.id]?.totalXP || 0) - (byId[a.id]?.totalXP || 0));
+  const bestCapXP = nonGK.length ? byId[nonGK[0].id]?.totalXP || 0 : 0;
+  const capXP = cap ? byId[cap.id]?.totalXP || cap.totalXP || 0 : 0;
+  const capScore = bestCapXP > 0 ? Math.min(100, (capXP / bestCapXP) * 100) : 70;
+
+  const score = Math.round(0.25 * xpScore + 0.20 * rotScore + 0.20 * formScore + 0.20 * budgetScore + 0.15 * capScore);
+  const grade = score >= 90 ? "A+" : score >= 80 ? "A" : score >= 70 ? "B" : score >= 60 ? "C" : score >= 50 ? "D" : "F";
+  const gradeColor = score >= 80 ? "#00ff87" : score >= 60 ? "#fbbf24" : "#ef4444";
+
+  const advice = [];
+  if (rotScore < 60) advice.push("Rotation risk is high — several starters project under 60 minutes. Prioritise nailed players.");
+  if (bank > 2.0) advice.push(`£${bank.toFixed(1)}m idle in the bank — upgrade a mid-range pick to a premium.`);
+  if (bank < 0.1) advice.push("Budget fully deployed with no headroom — any premium move needs a sale first.");
+  if (capScore < 85) advice.push("Captaincy could be improved — your squad holds a stronger option than the current captain.");
+  if (formScore < 90) advice.push("Positional balance is off — aim for at least one GK, three DEF, two MID and one FWD.");
+  if (xpScore < 80) advice.push("Squad xP is below the top-third of the player pool — consider wildcard or targeted upgrades.");
+  if (!advice.length) advice.push("Strong, balanced squad. Maintain and monitor for injuries.");
+
+  return {
+    score, grade, gradeColor,
+    components: [
+      { label: "xP strength", score: Math.round(xpScore), note: `${squadXP.toFixed(0)} total` },
+      { label: "Rotation risk", score: Math.round(rotScore), note: `avg ${avgXMins.toFixed(0)} min` },
+      { label: "Formation", score: Math.round(formScore), note: `${posCount[2]}-${posCount[3]}-${posCount[4]}` },
+      { label: "Budget", score: Math.round(budgetScore), note: `£${bank.toFixed(1)}m bank` },
+      { label: "Captaincy", score: Math.round(capScore), note: cap ? cap.name : "none" }
+    ],
+    advice
+  };
+};
+
+// Rate My Team panel HTML for the Squad tab.
+VG.render.rateMyTeam = (result, allXP, fixtures, gw) => {
+  const r = VG.rateMyTeam(result, allXP, fixtures, gw);
+  if (!r) return "";
+  let html = `<div style="margin:14px 0;padding:14px;border:1px solid rgba(251,191,36,0.3);border-radius:12px;background:rgba(251,191,36,0.04);">`;
+  html += `<div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;">`;
+  html += `<span style="font-size:0.72rem;color:#fbbf24;font-weight:700;text-transform:uppercase;">⭐ Rate My Team</span>`;
+  html += `<span style="font-size:1.6rem;font-weight:800;color:${r.gradeColor};">${r.grade}</span>`;
+  html += `<span style="font-size:0.8rem;color:#94a3b8;">${r.score}/100</span>`;
+  html += `</div>`;
+  html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:10px;">`;
+  r.components.forEach(c => {
+    const color = c.score >= 80 ? "#00ff87" : c.score >= 55 ? "#fbbf24" : "#ef4444";
+    html += `<div style="background:rgba(30,41,59,0.5);border-radius:8px;padding:8px 10px;font-size:0.66rem;">`;
+    html += `<div style="color:#64748b;">${c.label}</div>`;
+    html += `<div style="color:${color};font-weight:700;font-size:0.8rem;">${c.score}<span style="font-weight:400;color:#64748b;">/100</span></div>`;
+    html += `<div style="color:#94a3b8;">${VG.esc(c.note)}</div>`;
+    html += `</div>`;
+  });
+  html += `</div>`;
+  html += `<ul style="margin:10px 0 0;padding-left:18px;font-size:0.68rem;color:#94a3b8;line-height:1.7;">`;
+  r.advice.forEach(a => { html += `<li>${VG.esc(a)}</li>`; });
+  html += `</ul></div>`;
+  return html;
+};
+
 VG.render.metrics = (result, extraMetric) => {
   const metrics = [
     { label: "FORMATION", value: `${result.formation.DEF}-${result.formation.MID}-${result.formation.FWD}`, color: "#00ff87" },
@@ -2621,6 +3160,13 @@ VG.playerProfileHTML = (p, fixtures, gw) => {
   const hard = row.filter(r => r && r.fdr >= 4).length;
   const run = row.map(r => r ? `<span style="color:${VG.fdrColor(r.fdr)};font-weight:600;">${VG.esc(r.oppName)}${r.isHome ? '' : '(A)'}</span>` : `<span style="color:#334155;">BYE</span>`).join(' ');
   const trend = p.form != null && p.ppg ? (p.form / p.ppg).toFixed(2) : "—";
+  const market = VG.marketBadge(VG.getMarketTag(p));
+  const newBadge = p.isNew
+    ? `<span style="background:rgba(96,165,250,0.12);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.62rem;white-space:nowrap;">NEW TO PL · ${p.priorSignal === 'ep_next' ? 'FPL PRIOR' : 'UNDERSTAT PRIOR'}</span>`
+    : '';
+  const recLine = p.recency
+    ? `<div style="margin-top:4px;">Recency (last ${p.recency.rounds} GWs): <b style="color:#a78bfa;">${p.recency.xgi90.toFixed(2)} xGI/90</b> · <b style="color:#00ff87;">${p.recency.pts90.toFixed(2)} pts/90</b></div>`
+    : '';
   return `<div class="profile-panel" style="margin-top:8px;font-size:0.7rem;line-height:1.7;color:#94a3b8;">`
     + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;">`
     + `<div>Form/PPG trend: <b style="color:${p.trend >= 1.05 ? '#00ff87' : p.trend <= 0.95 ? '#ef4444' : '#e2e8f0'};">${p.trend >= 1.05 ? '🔥' : p.trend <= 0.95 ? '❄️' : ''} ${p.trend != null ? p.trend : '—'}</b></div>`
@@ -2629,7 +3175,11 @@ VG.playerProfileHTML = (p, fixtures, gw) => {
     + `<div>EO: <b style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}</b> (own ${(p.ownership || 0).toFixed(1)}%)</div>`
     + `<div>Set-pieces: ${roleTxt}</div>`
     + `<div>xP/£m: <b style="color:#00ff87;">${(p.xpPerPrice || 0).toFixed(2)}</b></div>`
+    + `<div>xMins: <b style="color:${(p.xMins || 0) >= 80 ? '#00ff87' : (p.xMins || 0) >= 60 ? '#fbbf24' : '#ef4444'};">${(p.xMins || 0).toFixed(0)}</b> expected minutes</div>`
+    + `<div>Market: ${market || '<span style="color:#475569;">Hold</span>'}</div>`
     + `</div>`
+    + (newBadge ? `<div style="margin-top:6px;">${newBadge}</div>` : '')
+    + recLine
     + `<div style="margin-top:6px;">Next 5 fixtures: <span style="color:#64748b;">${run}</span></div>`
     + `<div style="margin-top:4px;">Run quality: ${easy} easy · ${hard} hard ${hard >= 3 ? '<span style="color:#ef4444;">— sell/hold risk</span>' : easy >= 3 ? '<span style="color:#00ff87;">— strong window</span>' : ''}</div>`
     + `<div style="margin-top:4px;"><b style="color:#e2e8f0;">${VG.esc(p.name)}</b> · £${p.price.toFixed(1)}m · ${p.position} · ${VG.esc(p.teamName)} · ${p.totalPoints || 0} pts</div>`
@@ -2962,6 +3512,13 @@ VG.TIPS = [
 
 VG.render.tips = (result, allXP, fixtures, gw) => {
   let html = '';
+
+  // ── Watchlist (v5.8, FFix/FPL Review idea) — players you're monitoring ──
+  // localStorage-backed so it survives reloads. Render always (even with no
+  // squad analysed yet) so the Strategy tab is useful from first load.
+  if (allXP && allXP.length) {
+    html += VG.render.watchlist(allXP);
+  }
 
   // ── Dynamic: Your Squad Analysis ──
   if (result && allXP) {

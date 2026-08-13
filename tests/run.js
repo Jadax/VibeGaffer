@@ -542,6 +542,126 @@ check("identical squads at equal totals split win probability roughly evenly", m
 // used by this harness can't actually reach the FPL API.
 check("analyzeLeague accepts (leagueId, currentGW, fixtures)", VG.analyzeLeague.length === 3);
 
+// ── v5.8: horizon cap, new-player priors, recency blend, xMins ─────────
+section("v5.8 Horizon cap + new-player priors + recency blend");
+// Horizon must never exceed the GWs left in the season.
+check("remainingGWs caps at the season end", VG.remainingGWs(1) === 38 && VG.remainingGWs(38) === 1 && VG.remainingGWs(50) === 0);
+check("clampHorizon respects remaining GWs", VG.clampHorizon(12, 30) === 9 && VG.clampHorizon(12, 38) === 1 && VG.clampHorizon(6, 1) === 6);
+// Pre-season fallback must scale to remaining weeks, not the raw request.
+const clampPid = allXP[0].id;
+const fallbackXP = VG.computeMultiGWXP(clampPid, 30, 12, []).totalXP;
+const fallbackXPcap = VG.computeMultiGWXP(clampPid, 30, 5, []).totalXP;
+check("pre-season no-fixture fallback is capped to remaining GWs", fallbackXP >= 0 && Math.abs(fallbackXP - fallbackXPcap * (9 / 5)) < 0.5);
+// The in-season fixture filter also honors the cap.
+const lateHorizonXP = VG.computeMultiGWXP(clampPid, 35, 12, fixtures);
+check("computeMultiGWXP only counts fixtures within remaining GWs", lateHorizonXP.gwDetails.length <= 4);
+check("computed xP exposes an expected-minutes (xMins) signal", typeof allXP[0].xMins === "number" && allXP[0].xMins >= 0);
+check("xMins is capped at 90 for a nailed player", allXP.filter(p => p.xMins > 0).every(p => p.xMins <= 90.1));
+
+// New-player prior: a player with zero PL minutes still projects via ep_next,
+// and the fixture result flags them so the UI can label them NEW.
+const newCand = Object.values(VG.players).find(p =>
+  (p.minutes || 0) === 0 && (p.starts || 0) === 0 && parseFloat(p.expected_goals || "0") === 0 && parseFloat(p.expected_assists || "0") === 0
+);
+if (newCand) {
+  const nfx = fixtures.find(f => f.event === 1 && (f.team_h === newCand.team || f.team_a === newCand.team));
+  if (nfx) {
+    const nHome = nfx.team_h === newCand.team;
+    const nOpp = nHome ? nfx.team_a : nfx.team_h;
+    const nFdr = nHome ? (nfx.team_h_difficulty || 3) : (nfx.team_a_difficulty || 3);
+    const nres = VG.computeFixtureXP(newCand.id, nOpp, nHome, nFdr);
+    check("a new-to-PL player is flagged as isNew", nres.isNew === true);
+    check("a new-to-PL player gets a usable prior projection", nres.xp > 0);
+  }
+}
+
+// Recency helper: windowed structure, legacy structure, and confidence floor.
+const recPlayer = { recentForm: {
+  n: 5, starts5: 5, gws5: 5, mins5: 450,
+  s1: { starts: 1, mins: 90, pts: 8, xgi: 1.5, bps: 30 },
+  s3: { starts: 3, mins: 270, pts: 20, xgi: 4.5, bps: 90 },
+  s5: { starts: 5, mins: 450, pts: 35, xgi: 7.0, bps: 150 }
+}};
+const recF = VG._recencyFactors(recPlayer);
+check("recency factors extract a starts rate", recF && recF.startsRate === 1);
+check("recency factors compute last-3-GW xGI/90", Math.abs(recF.xgi90 - 1.5) < 0.01 && Math.abs(recF.pts90 - 6.67) < 0.1);
+check("recency weight is confidence-scaled", recF.weight >= 0.38 && recF.weight <= 0.51);
+check("recency factors fall back to legacy v5.7 fields", (() => {
+  const legacy = VG._recencyFactors({ recentForm: { starts5: 3, gws5: 5, mins5: 300 } });
+  return legacy && legacy.startsRate === 0.6 && legacy.xgi90 === 0;
+})());
+check("recency factors reject a single-GW sample", VG._recencyFactors({ recentForm: { starts5: 1, gws5: 1, mins5: 90 } }) === null);
+check("recency factors reject missing data", VG._recencyFactors({}) === null);
+
+// Recency output blend: a hot recent window should nudge projections up.
+const hotPlayer = Object.values(VG.players).find(p => p.element_type !== 1 && (p.minutes || 0) > 0);
+if (hotPlayer) {
+  const hfx = fixtures.find(f => f.event === 1 && (f.team_h === hotPlayer.team || f.team_a === hotPlayer.team));
+  if (hfx) {
+    const hHome = hfx.team_h === hotPlayer.team;
+    const hOpp = hHome ? hfx.team_a : hfx.team_h;
+    const hFdr = hHome ? (hfx.team_h_difficulty || 3) : (hfx.team_a_difficulty || 3);
+    const base = VG.computeFixtureXP(hotPlayer.id, hOpp, hHome, hFdr);
+    hotPlayer.recentForm = {
+      n: 5, starts5: 5, gws5: 5, mins5: 450,
+      s1: { starts: 1, mins: 90, pts: 10, xgi: 3.0, bps: 45 },
+      s3: { starts: 3, mins: 270, pts: 28, xgi: 7.5, bps: 130 },
+      s5: { starts: 5, mins: 450, pts: 40, xgi: 10.0, bps: 200 }
+    };
+    const hot = VG.computeFixtureXP(hotPlayer.id, hOpp, hHome, hFdr);
+    delete hotPlayer.recentForm;
+    check("a hot recent-xGI window raises the fixture projection", hot.xp > base.xp);
+    const restored = VG.computeFixtureXP(hotPlayer.id, hOpp, hHome, hFdr);
+    check("removing recentForm restores the exact baseline projection", restored.xp === base.xp);
+  }
+}
+
+// ── v5.8: market tags, watchlist, rate-my-team, what-if, FDR planner ───
+section("v5.8 Community features (market tags, watchlist, rate, what-if, planner)");
+check("market tag defaults to hold", VG.getMarketTag({ xpPerPrice: 0.6, ownership: 5 }).tag === "hold");
+check("market tag sells high-ownership cold players", VG.getMarketTag({ recency: { xgi90: 0.3 }, xG: 1.0, xA: 0.5, totalXP: 40, ownership: 15, xpPerPrice: 0.6 }).tag === "sell");
+check("market tag buys low-ownership value", VG.getMarketTag({ xpPerPrice: 0.9, ownership: 5, totalXP: 50 }).tag === "buy");
+check("market badge escapes the reason", VG.marketBadge({ tag: "sell", reason: "<script>", tone: "red" }).includes("&lt;script&gt;"));
+const buyBadge = VG.marketBadge({ tag: "buy", reason: "ok", tone: "green" });
+check("market badge renders BUY/SELL text", buyBadge.includes("BUY") && VG.marketBadge({ tag: "sell", reason: "x", tone: "red" }).includes("SELL"));
+check("market badge is empty on hold", VG.marketBadge({ tag: "hold" }) === "");
+
+// Watchlist: toggle/persist through the localStorage mock.
+check("watchlist starts empty", VG.watchlist().length === 0);
+VG.toggleWatch(111);
+check("watchlist gains an id after toggle", VG.watchlist().length === 1 && VG.isWatched(111));
+VG.toggleWatch(111);
+check("watchlist removes the id on second toggle", VG.watchlist().length === 0 && !VG.isWatched(111));
+const wlHtml = VG.render.watchlist(allXP);
+check("watchlist panel renders a section", typeof wlHtml === "string" && wlHtml.includes("Watchlist"));
+const wlToggleHtml = VG.watchToggle(allXP[0]);
+check("watch toggle renders a star", typeof wlToggleHtml === "string" && wlToggleHtml.includes("☆"));
+
+// Rate My Team.
+const rmt = VG.rateMyTeam(mcDraft, allXP, fixtures, 1);
+check("rate-my-team returns a graded score", rmt && typeof rmt.score === "number" && rmt.score >= 0 && rmt.score <= 100 && ["A+", "A", "B", "C", "D", "F"].includes(rmt.grade));
+check("rate-my-team exposes all five components", rmt && rmt.components.length === 5 && rmt.components.every(c => typeof c.score === "number"));
+check("rate-my-team gives at least one piece of advice", rmt && rmt.advice.length >= 1);
+check("rate-my-team renders an HTML panel", typeof VG.render.rateMyTeam(mcDraft, allXP, fixtures, 1) === "string");
+check("rate-my-team is safe on a missing result", VG.rateMyTeam(null, allXP, fixtures, 1) === null);
+
+// What-If race scenarios.
+VG.currentTeamId = 1;
+const scenario = VG.simulateRaceScenario([strongSquad, weakSquad], fixtures, 1, 1200, { captainId: strongSquad.picks[0].id });
+check("what-if captain scenario returns baseline + scenario rows", scenario && scenario.baseline.entry === 1 && scenario.scenario.entry === 1);
+const transferScenario = VG.simulateRaceScenario([strongSquad, weakSquad], fixtures, 1, 1200, { addId: allXP[0].id });
+check("what-if transfer-in scenario keeps squad size constant", transferScenario && transferScenario.baseline && transferScenario.scenario);
+const delta = VG.raceScenarioDelta([strongSquad, weakSquad], fixtures, 1, 1200, { addId: allXP[0].id });
+check("what-if delta is a bounded probability-point number", delta && typeof delta.delta === "number" && delta.delta >= -100 && delta.delta <= 100);
+check("what-if scenario needs two+ squads", VG.simulateRaceScenario([strongSquad], fixtures, 1, 100, { addId: 1 }) === null);
+VG.currentTeamId = 0;
+
+// Full-season FDR planner grid (now consumes teamSeasonRow in the UI).
+const plannerHtml = VG.render.seasonPlanner(fixtures, 1, 38, null);
+check("season planner renders a full-season grid", typeof plannerHtml === "string" && plannerHtml.includes("GW38") && plannerHtml.includes("Team"));
+check("season planner renders every team", Object.keys(VG.teams).length >= 19 && (plannerHtml.match(/<tr/g) || []).length >= 21);
+check("season planner is safe on empty fixtures", typeof VG.render.seasonPlanner([], 1, 38, null) === "string");
+
 (async () => {
   let analyzeLeagueThrew = false;
   const leagueResult = await VG.analyzeLeague(999999, 1, fixtures).catch(() => { analyzeLeagueThrew = true; return "threw"; });

@@ -1,4 +1,4 @@
-# VibeGaffer v5.7.0
+# VibeGaffer v5.8.0
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
@@ -64,7 +64,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.7.0)
+## Features (v5.8.0)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -162,6 +162,26 @@ Monte Carlo win-probability simulator for your mini-league, built on data the Le
 ### Recency-Weighted Rotation Risk (v5.7.0)
 
 Season-total starts can't tell "nailed for the last 5 GWs" apart from "started well in September, benched since" — both carry the same season aggregate. A weekly-refreshed last-5-gameweek starts/minutes signal (from FPL's own per-player history endpoint) now blends into the minutes-probability model, weighted more heavily than the season total. Fully optional and additive — absent (e.g. pre-season, before GW1), the engine behaves exactly as before.
+
+### Recency-Weighted Projections + xMins (v5.8.0)
+
+The "massive-model-lite" upgrade (a lite, no-ML version of FPL Review's Massive Data Model / OpenFPL arXiv 2508.09992): recency beats season aggregates. When per-round history is on hand, the engine:
+- **1/3/5-round windows** — the daily recent-form fetcher now emits per-player windows over the last 1, 3 and 5 GWs (starts, minutes, points, xGI, BPS) plus a confidence-scaled blend weight
+- **Recency-weighted projection** — the per-90 goals/assists prior is nudged toward the player's last-3-GW xGI rate (clamped 0.70–1.40), and the recent starts rate feeds the minutes probability — so a player in red-hot form is no longer averaged back to their season mean
+- **xMins** — expected minutes per fixture (mins-prob × 90), surfaced in Compare, Differentials, Player Profile and Rate My Team
+- **New-to-PL handling** — players with no Premier League history get a visible `NEW TO PL · FPL PRIOR/UNDERSTAT PRIOR` badge and a stronger FPL ep_next prior
+
+### Horizon cap (v5.8.0)
+
+The xP horizon no longer hardcodes 12 GWs. Options are built from the GWs actually left in the season (defaulting to min(12, remaining)), and the engine clamps internally, so near the season's end you never project into weeks that don't exist or over-inflate the pre-season fallback.
+
+### Watchlist, Buy/Hold/Sell, Rate My Team, What-If, Full-Season Planner (v5.8.0)
+
+- **Watchlist** — a localStorage-backed list of players you're monitoring, with live xP/value/recency/market signals, quick-add dropdown, and ☆ toggles in the Compare/Differentials tables
+- **Buy/Hold/Sell tags** — a classifier (recency + xG regression + ownership + value) labels what to do with a player in Compare, Differentials and the Player Profile
+- **Rate My Team** — a transparent, component-scored team rating (xP strength / rotation risk / formation / budget / captaincy) with a letter grade and actionable advice on the Squad tab
+- **What-If race scenarios** — in the League tab, test a transfer or captaincy change against your real rivals; rivals' scores are drawn once and reused, so the win-probability delta is attributable to the change alone
+- **Full-season fixture planner** — every team × every GW, colour-coded FDR cells with DGW/BGW markers, in the Fixtures tab
 
 ### Chip Strategy
 
@@ -399,6 +419,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.8.0 | — | "Massive-model-lite" recency/rotation upgrade + community features: horizon cap (options built from remaining GWs, engine clamps), new-to-PL priors + visible NEW badge, OpenFPL-style 1/3/5-round recency-weighted projections (fetcher now emits s1/s3/s5 windows), xMins surfaced everywhere, Buy/Hold/Sell market tags, localStorage Watchlist (Strategy tab + ☆ toggles), What-If race scenarios (shared rival draws → change-attributable deltas) in League tab, Rate My Team card (Squad tab), full-season FDR planner grid (Fixtures tab) |
 | v5.7.0 | — | Mini-League Race Simulator: Monte Carlo win probability (P(1st)/P(top 3)) among fetched league squads for the current GW, built entirely on data VG.analyzeLeague already had (no new API calls); Recency-Weighted Rotation Risk: new fetch-recent-form.yml pulls last-5-GW starts/minutes per player from FPL's own per-player history endpoint, blended into the minutes-probability model (season aggregates alone can't distinguish a player nailed for the last 5 GWs from one benched since September) |
 | v5.6.1 | — | Hardening + refactor: fixed a player-profile XSS (unescaped opponent name), removed dead code/params/vars, consolidated shared helpers (`playerName`/`fdrColor`/`hasFitnessFlag`/`setPieceBadge`), removed redundant render init + stray comments, author attribution = Tushant Sharma only |
 | v5.6.0 | — | Player Profile (form/xG/EO/set-piece/fixture-run per player), Live Rank tracker (real FPL OR via Team ID), Team News feed grouped by club (Strategy tab), DGW/BGW-aware Chip EV Calendar |
@@ -443,7 +464,7 @@ Test coverage:
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.7.0
+- **Application**: VibeGaffer v5.8.0
 - **Author**: Tushant Sharma
 - **License**: Proprietary
 - **Live URL**: https://jadax.github.io/VibeGaffer/

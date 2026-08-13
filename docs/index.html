@@ -18,11 +18,11 @@
     form-action 'none'">
     <title>VibeGaffer — FPL Intelligence</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.7.0">
+  <link rel="stylesheet" href="style.css?v=5.8.0">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
           integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=5.7.0"></script>
+  <script src="app.js?v=5.8.0"></script>
 </head>
 <body>
 
@@ -31,7 +31,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Tushant Sharma</strong> · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.7.0</span></div>
+    <div><span class="badge pulse-glow">v5.8.0</span></div>
 </div>
 
 <div class="app">
@@ -44,7 +44,7 @@
   <label>Gameweek</label>
   <select id="gameweek"><option value="1">GW1</option></select>
   <label>xP Horizon</label>
-  <select id="horizon"><option value="6">6 GWs</option><option value="8">8 GWs</option><option value="12" selected>12 GWs</option></select>
+  <select id="horizon"></select>
   <label>Free Transfers</label>
   <select id="freeTransfers"><option value="1">1</option><option value="2">2</option></select>
   <label>Bank Override (£m)</label>
@@ -146,7 +146,7 @@
 </div>
 </div>
 
-    <div class="footer">VibeGaffer v5.7.0 · Built by Tushant Sharma</div>
+    <div class="footer">VibeGaffer v5.8.0 · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -173,6 +173,18 @@ VG.init = async () => {
     gwSel.innerHTML = "";
     for (let i = 1; i <= 38; i++) {
       gwSel.innerHTML += `<option value="${i}" ${i === VG.currentGW ? "selected" : ""}>GW${i}</option>`;
+    }
+    // Horizon options capped to the GWs actually left in the season (v5.8):
+    // near the season's end a 12-GW horizon is impossible, so offer only the
+    // remaining windows. Defaults to the largest useful window (max 12).
+    const rem = VG.remainingGWs(VG.currentGW);
+    const horizonSel = el("horizon");
+    horizonSel.innerHTML = "";
+    [3, 6, 8, 12].filter(n => n <= rem).forEach(n => {
+      horizonSel.innerHTML += `<option value="${n}" ${n === Math.min(12, rem) ? "selected" : ""}>${n} GW${n > 1 ? 's' : ''}</option>`;
+    });
+    if (!horizonSel.innerHTML) {
+      horizonSel.innerHTML = `<option value="${rem}" selected>${rem} GW${rem > 1 ? 's' : ''}</option>`;
     }
     el("status").innerHTML = '<span class="status-dot ok"></span> ' + VG.bootstrapData.elements.length + ' players loaded · GW' + VG.currentGW;
   } catch(e) {
@@ -203,7 +215,9 @@ VG.run = async () => {
     if (!VG.recentFormLoaded) await VG.loadRecentForm();
 
     const gw = parseInt(el("gameweek").value);
-    const horizon = parseInt(el("horizon").value);
+    let horizon = parseInt(el("horizon").value);
+    // Belt-and-braces: never project beyond the remaining GWs of the season.
+    horizon = VG.clampHorizon(horizon, gw);
     const teamIdVal = el("teamId").value.trim();
     const teamId = teamIdVal ? parseInt(teamIdVal) : 0;
     VG.currentTeamId = teamId; // used by VG.analyzeLeague to spot "you" in the league race
@@ -290,6 +304,9 @@ VG.run = async () => {
     const gwProjStarting = (result.starting?.length >= 11 ? result.starting : (result.gwPicks?.[0]?.starting || result.squad.slice(0, 11)));
     const mcMetric = (gwProjStarting && gwProjStarting.length >= 11) ? VG.render.gwProjection(gwProjStarting, VG.allFixtures, gw, result.gotCap?.[0]?.id) : null;
     html += VG.render.metrics(result, mcMetric);
+
+    // Rate My Team (v5.8, FPL Review/FFix idea) — transparent component scores.
+    html += VG.render.rateMyTeam(result, VG.allXP, VG.allFixtures, gw);
 
     // Transfers
     if (result.transfersIn?.length || result.transfersOut?.length) {
@@ -703,6 +720,12 @@ VG.preloadTabs = async (gw) => {
       fixtureHTML += `<div class="swing-card"><span class="swing-name">${VG.esc(s.name)}</span><span class="swing-avg">FDR ${s.avgFDR}</span>${runTag}</div>`;
     });
     fixtureHTML += '</div></div>';
+    // Full-season FDR planner grid (v5.8): every team vs every GW, colour-
+    // coded FDR cells with DGW/BGW markers. Consumes VG.teamSeasonRow, which
+    // previously had no live caller.
+    fixtureHTML += '<div class="section-title" style="margin-top:16px;font-size:0.8rem;">Full-Season Fixture Planner <span style="font-weight:400;color:#475569;font-size:0.68rem;">(DGW/BGW-aware)</span></div>';
+    fixtureHTML += '<p class="subtitle" style="margin-top:0;">Cell = opponent (A = away) coloured by FDR. DGW = two fixtures that GW, BGW = blank.</p>';
+    fixtureHTML += VG.render.seasonPlanner(VG.allFixtures, 1, 38, null);
     document.getElementById("fixtureContent").innerHTML = fixtureHTML;
   } catch(e) {
     console.warn("[VG] Fixture ticker:", e);
@@ -789,14 +812,16 @@ VG.preloadTabs = async (gw) => {
       dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(251,191,36,0.1);color:#fbbf24;">● Wait — low owned, weak value</span>';
       dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(239,68,68,0.1);color:#ef4444;">● Trap — popular but weak value</span>';
       dh += '</div>';
-      dh += '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>Real xG/90</th><th>xG Reg</th><th>EP</th><th>Own%</th><th>EO</th><th>Zone</th><th>Diff Score</th></tr>';
+      dh += '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>Real xG/90</th><th>xG Reg</th><th>EP</th><th>Own%</th><th>EO</th><th>xMins</th><th>Zone</th><th>Market</th><th>Diff Score</th></tr>';
       diffs.forEach((p, i) => {
         const rank = i + 1;
         const ownColor = (p.ownership || 0) <= 2 ? '#00ff87' : (p.ownership || 0) <= 5 ? '#fbbf24' : '#94a3b8';
         const zone = VG.getDifferentialZone(p);
         const sp = p.setPiece || {};
         const spBadge = (sp.pen ? '<span style="color:#fbbf24;" title="Penalty taker">P</span>' : '') + (sp.fk ? '<span style="color:#60a5fa;" title="Free-kick taker">F</span>' : '') + (sp.cor ? '<span style="color:#a78bfa;" title="Corner/Set-piece">C</span>' : '');
-        dh += `<tr><td style="color:#e2e8f0;">${rank}. ${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td><td>${VG.regressionBadge(p.regression)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}${spBadge ? ' ' + spBadge : ''}</td><td><span style="color:${zone.color};">${VG.esc(zone.label)}</span></td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
+        const market = VG.marketBadge(VG.getMarketTag(p));
+        const isNewBadge = p.isNew ? '<span style="background:rgba(96,165,250,0.12);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;">NEW</span>' : '';
+        dh += `<tr><td style="color:#e2e8f0;">${VG.watchToggle(p)} ${rank}. ${VG.esc(p.name)} ${isNewBadge}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td><td>${VG.regressionBadge(p.regression)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}${spBadge ? ' ' + spBadge : ''}</td><td>${(p.xMins || 0).toFixed(0)}</td><td><span style="color:${zone.color};">${VG.esc(zone.label)}</span></td><td>${market || '—'}</td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
       });
       dh += '</table>';
       if (diffs.length === 0) dh = '<p style="color:#475569;">No differentials found matching criteria (low ownership + high xP)</p>';
@@ -895,6 +920,28 @@ VG.preloadTabs = async (gw) => {
             lh += `<tr style="${rowStyle}"><td style="color:#94a3b8;">${i + 1}</td><td style="color:#e2e8f0;${isYou ? 'font-weight:700;' : ''}">${VG.esc(r.name)}${isYou ? ' <span style="color:#00ff87;font-size:0.62rem;">(you)</span>' : ''}</td><td style="color:#94a3b8;">${r.priorTotal}</td><td style="color:#64748b;">${r.gwMean} (${r.gwFloor}–${r.gwCeiling})</td><td style="color:${r.winProb >= 20 ? '#00ff87' : '#94a3b8'};font-weight:600;">${r.winProb}%</td><td style="color:#60a5fa;">${r.top3Prob}%</td></tr>`;
           });
           lh += '</table></div>';
+
+          // What-If: Monte Carlo race scenarios against the same rivals (v5.8).
+          // Test "what if I bring X in / captain Y" and see the impact on your
+          // win probability — same draws for baseline and scenario so the delta
+          // is attributable to the change, not simulation noise.
+          if (race.you) {
+            const you = race.you;
+            lh += '<div style="margin-top:14px;"><div class="section-title" style="font-size:0.8rem;color:#60a5fa;">🔀 What-If Race Scenarios</div>';
+            lh += '<p class="subtitle" style="margin-top:-6px;">Simulate a transfer or captaincy change and re-run the race against your rivals. Changes affect only your squad.</p>';
+            lh += `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:0.7rem;">`;
+            lh += `<select id="whatIfPlayer" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:5px 8px;font-size:0.68rem;max-width:300px;"><option value="">Select a player…</option>`;
+            (VG.allXP || []).filter(p => p.position !== 'GK').slice(0, 300).forEach(p => {
+              lh += `<option value="${p.id}">${VG.esc(p.name)} — ${p.teamName} £${p.price.toFixed(1)}m (${p.totalXP.toFixed(1)} xP)</option>`;
+            });
+            lh += `</select>`;
+            lh += `<button onclick="VG.runWhatIf('transfer', ${gw})" style="background:#60a5fa;color:#0b1120;border:none;border-radius:6px;padding:6px 12px;font-size:0.68rem;font-weight:600;cursor:pointer;">Transfer In</button>`;
+            lh += `<button onclick="VG.runWhatIf('captain', ${gw})" style="background:#fbbf24;color:#0b1120;border:none;border-radius:6px;padding:6px 12px;font-size:0.68rem;font-weight:600;cursor:pointer;">Make Captain</button>`;
+            lh += `<span style="color:#475569;font-size:0.62rem;">Your current win prob: <b style="color:#00ff87;">${you.winProb}%</b></span>`;
+            lh += `</div>`;
+            lh += `<div id="whatIfResult" style="margin-top:8px;"></div>`;
+            lh += `</div>`;
+          }
         }
 
         // Differentials
@@ -943,6 +990,40 @@ VG.preloadTabs = async (gw) => {
     document.getElementById("tipsContent").innerHTML = VG.render.tips(VG.currentResult, VG.allXP, VG.allFixtures, parseInt(el('gameweek').value));
   } catch(e) {
     console.warn("[VG] Tips:", e);
+  }
+};
+
+// What-If race scenario runner (v5.8). Reuses analyzeLeague's cached league
+// fetch, applies the change, re-runs the Monte Carlo race, renders the delta.
+VG.runWhatIf = async (mode, gw) => {
+  const resultEl = document.getElementById("whatIfResult");
+  if (!resultEl) return;
+  const playerId = parseInt(document.getElementById("whatIfPlayer")?.value || "0");
+  if (!playerId) { resultEl.innerHTML = '<p style="color:#475569;">Select a player first.</p>'; return; }
+  const leagueId = parseInt(el("leagueId").value);
+  if (!leagueId) return;
+  try {
+    resultEl.innerHTML = '<p style="color:#60a5fa;">Simulating…</p>';
+    const league = await VG.analyzeLeague(leagueId, gw, VG.allFixtures);
+    if (!league || !league.rawSquads) { resultEl.innerHTML = '<p style="color:#ef4444;">Could not reload league for scenario.</p>'; return; }
+    const scenario = mode === 'captain' ? { captainId: playerId } : { addId: playerId };
+    const result = VG.raceScenarioDelta(league.rawSquads, VG.allFixtures, gw, 1500, scenario);
+    if (!result) { resultEl.innerHTML = '<p style="color:#ef4444;">Scenario unavailable (need 2+ squads and your team ID).</p>'; return; }
+    const b = result.baseline, s = result.scenario;
+    const delta = result.delta;
+    const color = delta > 0 ? '#00ff87' : delta < 0 ? '#ef4444' : '#94a3b8';
+    const arrow = delta > 0 ? '▲' : delta < 0 ? '▼' : '—';
+    const deltaTxt = `${arrow} ${delta >= 0 ? '+' : ''}${delta}pp`;
+    const gain = s.winProb - b.winProb;
+    resultEl.innerHTML = `<div class="chip-sequence">
+      <div class="chip-card"><div class="chip-label">Baseline Win Prob.</div><div class="chip-score" style="color:#00ff87;">${b.winProb}%</div><div class="chip-advice">current squad</div></div>
+      <div class="chip-card"><div class="chip-label">${mode === 'captain' ? 'New Captain Win Prob.' : 'With Transfer Win Prob.'}</div><div class="chip-score" style="color:${color};">${s.winProb}%</div><div class="chip-advice">${deltaTxt}</div></div>
+      <div class="chip-card"><div class="chip-label">GW Mean</div><div class="chip-score" style="color:#60a5fa;">${b.gwMean} → ${s.gwMean}</div><div class="chip-advice">${gain >= 0 ? '+' : ''}${gain.toFixed(1)} xP</div></div>
+    </div>
+    <p style="color:#475569;font-size:0.62rem;margin-top:4px;">Baseline and scenario share the same 1,500 random draws, so the ${deltaTxt} is attributable to the change alone (first-order: rivals' squads are fixed).</p>`;
+  } catch(e) {
+    console.warn("[VG] What-If:", e);
+    resultEl.innerHTML = '<p style="color:#ef4444;">Scenario simulation failed.</p>';
   }
 };
 
@@ -1008,15 +1089,21 @@ VG.renderComparison = () => {
   }
 
   // ── Table: raw stats + xP components ──
-  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>Real xG</th><th>xG/90</th><th>xG Reg</th><th>EO</th><th>SP</th><th>App</th><th>CS</th><th>Goals</th><th>Assists</th><th>Bonus</th><th>DEFCON</th><th>Saves</th></tr>';
+  let tableHtml = '<table class="data-table"><tr><th>Player</th><th>Pos</th><th>Price</th><th>Total xP</th><th>xP/£m</th><th>Real xG</th><th>xG/90</th><th>xG Reg</th><th>EO</th><th>SP</th><th>xMins</th><th>Rec</th><th>Market</th><th>App</th><th>CS</th><th>Goals</th><th>Assists</th><th>Bonus</th><th>DEFCON</th><th>Saves</th></tr>';
   selected.forEach((p) => {
     const xc = p.xpComponents || {};
     const spBadge = VG.setPieceBadge(p.setPiece || {});
-    tableHtml += `<tr><td style="color:#e2e8f0;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
+    const market = VG.marketBadge(VG.getMarketTag(p));
+    const isNewBadge = p.isNew ? '<span style="background:rgba(96,165,250,0.12);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;">NEW</span>' : '';
+    const recLine = p.recency ? `<span title="Last-3-GW xGI/90: ${p.recency.xgi90} · pts/90: ${p.recency.pts90}" style="color:#a78bfa;">${p.recency.rounds}GW</span>` : '<span style="color:#475569;">—</span>';
+    tableHtml += `<tr><td style="color:#e2e8f0;">${VG.watchToggle(p)} ${VG.esc(p.name)} ${isNewBadge}</td><td>${VG.esc(p.position)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${(p.realXG || 0).toFixed(1)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${VG.regressionBadge(p.regression)}</td>`;
     tableHtml += `<td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}</td>`;
     tableHtml += `<td style="color:#fbbf24;">${spBadge || '—'}</td>`;
+    tableHtml += `<td>${(p.xMins || 0).toFixed(0)}</td>`;
+    tableHtml += `<td>${recLine}</td>`;
+    tableHtml += `<td>${market || '—'}</td>`;
     tableHtml += `<td>${(xc.xpAppearance || 0).toFixed(1)}</td>`;
     tableHtml += `<td>${(xc.xpCS || 0).toFixed(1)}</td>`;
     tableHtml += `<td>${(xc.xpGoals || 0).toFixed(1)}</td>`;

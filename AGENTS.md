@@ -4,13 +4,20 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 ## Handover Status
 
-- **Current version**: v5.7.0 (v5.6.1 committed as `9e7fd8a`; v5.7.0 built on top — see below)
-- **v5.7.0 shipped**: two gap-fills chosen from an explicit codebase review against the goal "reach #1 in a mini-league":
-  1. **Mini-League Race Simulator** (`VG.simulateLeagueRace`) — Monte Carlo win probability among the fetched top-10 league squads for the current GW. Reuses `VG._mcLambdas`/`VG._mcDrawTotal` (factored out of `VG.mcGWDistribution`, behavior-preserving refactor) rather than duplicating the Poisson model. Wired into `VG.analyzeLeague` (now takes a 3rd `fixtures` param, attaches `raceSimulation` to its return) and rendered as a "🏁 Race to the Top" panel in the League tab. `VG.currentTeamId` (set in `VG.run()`) is how it spots "you" among the entrants. Squads are simulated independently (no cross-squad player-sharing correlation) — a documented first-order approximation.
-  2. **Recency-Weighted Rotation Risk** — season-total starts/minutes can't distinguish "nailed for the last 5 GWs" from "started well in September, benched since." New `fetch-recent-form.yml` (daily) pulls last-5-GW starts/minutes per player from FPL's own `element-summary/{id}/` endpoint (same trust tier as bootstrap-static, ~400 candidate players with `minutes>0` last season, 8-way parallel curl), writes `docs/data/recent-form.json`. `VG.loadRecentForm()` attaches `el.recentForm = {starts5, gws5, mins5}`; `VG.computeFixtureXP` blends it into `startRate` with confidence-scaled weight (0.45 at 2/5 GWs of data, 0.6 at 5/5), only when `gws5 >= 2`. Fully optional/additive — absent (pre-season, or before a player has 2 recorded GWs) it's byte-identical to the old season-aggregate-only behavior.
-  - Tests: 136 → 153 (17 new: 7 rotation-risk blend tests incl. both-direction correction + fallback-exactness, 10 race-simulator tests incl. a stochastic 50/50 sanity check)
-  - Verified live in-browser: ILP solver + full run unaffected by the new loaders (both gracefully absent pre-season); League tab race panel end-to-end with mocked league data, including an XSS probe through the new render path (payload neutralized, matches existing `VG.esc()` convention)
-  - **Data source note**: `element-summary` history is empty for everyone right now (genuine pre-season, GW1 hasn't happened) — the feature is correctly inert today and self-activates once GW1+ results exist. Could not verify against real current-season data for this reason; verified against synthetic `recentForm` objects instead.
+- **Current version**: v5.8.0 (v5.7.0 was `21be73c`; v5.8.0 built on top — see below)
+- **v5.8.0 shipped** — "massive-model-lite" recency/rotation upgrade + a batch of community features, chosen from an explicit research pass against FPL Review's paid **Massive Data Model** (ML ensemble, xMins, hourly odds/team-news) and **OpenFPL** (arXiv 2508.09992, MIT — a public-data rival that beats season aggregates using recency-weighted 1/3/5-match windows). Decided to ship a *lite* version (recency-weighted features, no Python/ML runtime) + all five approved community features. Notes below:
+  1. **Horizon cap** — `#horizon` select was hardcoded `6/8/12` (12 default, `index.html:47`), and `computeMultiGWXP`'s pre-season/no-fixtures fallback did `totalXP = nGWs * base * 0.6`, over-projecting near season end. New `VG.SEASON_GW_COUNT` (38), `VG.remainingGWs(gw)` and `VG.clampHorizon(nGWs, startGW)`; `computeMultiGWXP` clamps its horizon (app.js) and `VG.init` builds the horizon options from the GWs actually left (defaulting to `min(12, remaining)`); `VG.run` also clamps defensively.
+  2. **New-player handling** — `computeFixtureXP` now returns `isNew` (no PL minutes/starts/xG/xA) and `priorSignal` ("ep_next" | "understat"); the ep_next blend went 0.6/0.4 → 0.5/0.5 for stronger FPL-prior weight. New players surface a `NEW TO PL · FPL PRIOR / UNDERSTAT PRIOR` badge in Compare + Differentials + Player Profile.
+  3. **Recency-weighted projection (OpenFPL-style)** — `fetch-recent-form.yml` now emits full 1/3/5-round windows per player: `{n, s1, s3, s5}` each `{starts, mins, pts, xgi, bps}` (plus back-compat `starts5/gws5/mins5`). New `VG._recencyFactors(p)` reduces these to `{weight, rounds, startsRate, mins, xgi90, pts90}` with confidence scaling (0.38 at 2 GWs → 0.50 at 5+); `computeFixtureXP` blends the recent starts rate into `startRate` and nudges the per-90 goals/assists toward the last-3-GW xGI rate (clamped 0.70–1.40). Fully optional/additive — absent pre-season it's byte-identical to old behavior.
+  4. **xMins surfaced** — `computeFixtureXP` returns `xMins` (minsProb × 90, FPL Review idea); `computeMultiGWXP.info` carries mean `xMins`, `isNew`, `priorSignal`, and `recency`; shown in Compare, Differentials, Player Profile, Rate My Team.
+  5. **Buy/Hold/Sell tags** — `VG.getMarketTag(p)` (recency + xG regression + ownership + xP/£m) + `VG.marketBadge()`; rendered in Compare, Differentials, Player Profile.
+  6. **Watchlist** — `VG.watchlist()/toggleWatch()/isWatched()/watchToggle()`, localStorage-backed (`vg_watchlist`); `VG.render.watchlist()` panel in the Strategy tab with a quick-add dropdown + remove buttons; ☆ toggle in Compare + Differentials tables.
+  7. **What-If race scenarios** — `VG.simulateRaceScenario(squads, fixtures, gw, iters, {addId[, dropId] | captainId})` + `VG.raceScenarioDelta()` in the League tab. Rivals' scores are drawn ONCE and reused for baseline + scenario (only your squad's draw changes), so the win-prob delta is attributable to the change, not noise. `VG.analyzeLeague` now returns `rawSquads` (the full picks) for this. `VG.runWhatIf(mode, gw)` drives the UI.
+  8. **Rate My Team** — `VG.rateMyTeam(result, allXP, fixtures, gw)` → transparent component scores (xP strength 25% / rotation risk 20% / formation 20% / budget 20% / captaincy 15%) + letter grade + advice; rendered as a card on the Squad tab.
+  9. **Full-season FDR planner** — `VG.render.seasonPlanner(fixtures, fromGW, nGWs, teamId)` in the Fixtures tab: every team × every GW, colour-coded FDR cells with DGW/BGW markers. Consumes `VG.teamSeasonRow`/`VG.buildSeasonPlanner`, which previously had no live caller.
+  - Tests: 153 → 192 (39 new: horizon clamping + capped pre-season fallback + late-season fixture filter, isNew flag + prior, `_recencyFactors` windowed/legacy/thin/null, recency output blend both-directions + fallback-exactness, market-tag classify + XSS-escape, watchlist toggle/persist/render, rate-my-team scores/components/advice/safety, what-if captain + transfer + delta + needs-2-squads, full-season planner HTML)
+  - Verified live in-browser (local http server): Squad tab (Rate My Team card A/89), Strategy tab (Watchlist panel + quick-add), Fixtures tab (full-season planner grid), Compare + Differentials (xMins/Rec/Market/☆ columns), League tab What-If end-to-end with mocked league data (baseline 99.4 → scenario 99.4, delta 0 for identical squads). Only console messages are the 3 expected pre-season data 404s. **Also caught + fixed a real bug my earlier edit introduced**: `VG.renderComparison` lost its `const sel = document.getElementById("compareSelect")` line during the What-If UI edit — restored (would have thrown `sel is not defined`).
+  - **Data source note**: recent-form 1/3/5 windows are inert until GW1+ results exist (pre-season now) — the blend self-activates once players have 2+ recorded GWs. Verified against synthetic `recentForm` objects in tests; the fetcher emits the new shape daily.
 - **v5.6.1 hardening/refactor (uncommitted)**:
   - Fixed a real XSS class-bug: `VG.playerProfileHTML` interpolated the opponent `short_name` raw into HTML (`app.js:2512`) — now `VG.esc()`-wrapped (Golden Rule 2)
   - Removed dead code: `price` var in `computeFixtureXP`, `rows`/`gotCap`-misread in `render.pitch` (only `rows` was dead), `maxScore` in `index.html` chip timeline, unused `fixtures`/`ids`/`plannerByGw` in `chipCalendar`, unused `horizon` param on `VG.preloadTabs` (+ test/call-site updated), redundant `VG.render = VG.render || {};`, orphaned "Fixture Ticker" header, stale "~8 historical copies" comment
@@ -24,16 +31,16 @@ Primary context document for AI models working on this codebase. Read fully befo
 - **Post-commit review fixes** (v5.4.1, applied after `93fa865`):
   - `render.tips`'s weaknesses bullets skipped `VG.esc()` while the strengths bullets right above them didn't — inconsistent with the codebase's escape-everything-API-derived convention. Team names aren't attacker-controlled today (unlike league/manager names), so this wasn't exploitable, but it's the same class of bug v5.3.0 hardened against. Fixed in `docs/app.js`.
   - The Live tab's "auto-refresh every 5 min" comment described recurring behaviour, but was a single `setTimeout` that fired once and stopped. Made it self-reschedule in `docs/index.html`.
-- **Tests**: 153/153 pass (`npm test`)
-- **State**: `docs/app.js` ~3395 lines, `docs/index.html` ~1030 lines; both syntax-check clean
+- **Tests**: 192/192 pass (`npm test`)
+- **State**: `docs/app.js` ~4400 lines, `docs/index.html` ~1120 lines; both syntax-check clean
 - **v5.5/v5.6 shipped** (competitor-borrowed features, per Borrowing Policy): Effective Ownership (`VG.computeEffectiveOwnership`), Monte Carlo GW Projection (`VG.mcGWDistribution`), DGW/BGW Season Planner (`VG.buildSeasonPlanner`), Set-Piece Takers (`docs/data/setpieces.json`, seasonal — update each year), Transfer Rank-Impact (`VG.estimateRankImpact`), Player Profile (`VG.playerProfileHTML`), Live Rank tracker (`VG.fetchTeamRank`), Team News feed (`VG.teamNewsFeed`), Chip EV Calendar (`VG.chipCalendar`)
-- **Next model TODO**: commit v5.7.0 (see **Commit Convention**), then optionally implement **Remaining Improvements** below.
+- **Next model TODO**: commit v5.8.0 (see **Commit Convention**), then optionally implement **Remaining Improvements** below.
 
 ## Quick Status
 
 - **Architecture**: Pure static HTML/CSS/JS on GitHub Pages (no backend)
 - **Live URL**: https://jadax.github.io/VibeGaffer/
-- **Data**: Auto-fetched on a deadline-aware GitHub Actions schedule → `docs/data/*.json` (30 min inside 6h of a deadline, 2-hourly within 36h, 6-hourly otherwise). **Understat** free xG/forecast data fetched weekly → `docs/data/understat.json`. **Recent-form** (last-5-GW starts/minutes, rotation-risk) fetched daily → `docs/data/recent-form.json` (v5.7.0; inert until players have 2+ recorded GWs this season)
+- **Data**: Auto-fetched on a deadline-aware GitHub Actions schedule → `docs/data/*.json` (30 min inside 6h of a deadline, 2-hourly within 36h, 6-hourly otherwise). **Understat** free xG/forecast data fetched weekly → `docs/data/understat.json`. **Recent-form** (1/3/5-round starts/mins/points/xGI/BPS, rotation-risk + recency) fetched daily → `docs/data/recent-form.json` (v5.8.0 shape `{n, s1, s3, s5}` + back-compat; inert until players have 2+ recorded GWs this season)
 - **ILP Solver**: highs-js (HiGHS WASM) loaded from CDN, falls back to greedy. highs-js publishes `window.Module`, **not** `window.Highs` — see Known Issues
 - **Odds**: The-Odds-API free tier (500 req/month), fetched once per GW when deadline is within 30h → `docs/data/odds.json`. Requires optional `ODDS_API_KEY` repo secret (currently unset). **Understat forecasts are the free no-key alternative** used by default
 
@@ -41,13 +48,13 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `docs/app.js` | ~3395 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips, live GW |
-| `docs/index.html` | ~1030 | All UI: 9 tabs, CSP, rendering, Chart.js radar/bar, inline JS |
+| `docs/app.js` | ~4400 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips, live GW |
+| `docs/index.html` | ~1120 | All UI: 9 tabs, CSP, rendering, Chart.js radar/bar, inline JS |
 | `docs/style.css` | 275 | All styles |
 | `docs/data/bootstrap.json` | ~1.3MB | Player data (~560 active, 20 teams) |
 | `docs/data/fixtures.json` | ~118KB | 380 fixtures with FDR |
 | `docs/data/understat.json` | ~120KB | Free Understat xG/xA priors + team stats + per-fixture forecasts |
-| `docs/data/recent-form.json` | small | Last-5-GW starts/minutes per player (rotation risk), v5.7.0 |
+| `docs/data/recent-form.json` | small | Per-player 1/3/5-round starts/mins/points/xGI/BPS windows (rotation risk + recency), v5.8.0 |
 | `.github/workflows/fetch-data.yml` | ~125 | Deadline-aware FPL data fetch |
 | `.github/workflows/fetch-understat.yml` | ~230 | Weekly Understat xG/forecast fetch |
 | `.github/workflows/fetch-history-priors.yml` | ~55 | Weekly vaastav historical priors |
@@ -234,6 +241,15 @@ Start-rate model using last season data: GK binary (nailed #1 = 95%, backup 15-7
 - `VG.simulateLeagueRace(squads, fixtures, gw, iterations)` — see League Analyzer above (FPL Pulse idea)
 - `VG._mcLambdas(starting, fixtures, gw)` / `VG._mcDrawTotal(lambdas)` — Poisson-lambda + single-draw helpers factored out of `VG.mcGWDistribution` (v5.5) so the race simulator reuses the exact same scoring model instead of a second implementation
 - `VG.loadRecentForm()` → fetches `data/recent-form.json`, attaches `el.recentForm = {starts5, gws5, mins5}`; blended into `VG.computeFixtureXP`'s minutes-probability model — see Minutes Model above
+
+### v5.8.0 features (massive-model-lite + community)
+- `VG.SEASON_GW_COUNT` / `VG.remainingGWs(gw)` / `VG.clampHorizon(nGWs, startGW)` — horizon cap (see Handover note 1)
+- `VG._recencyFactors(p)` → `{weight, rounds, startsRate, mins, xgi90, pts90}` from the 1/3/5-round recent-form windows; feeds the `startRate` + per-90 xGI blend in `computeFixtureXP` (OpenFPL/FPL Review pattern)
+- `VG.getMarketTag(p)` / `VG.marketBadge()` — Buy/Hold/Sell classifier (FFix/FPL Review idea)
+- `VG.watchlist()` / `VG.toggleWatch(pid)` / `VG.isWatched(pid)` / `VG.watchToggle(p)` — localStorage-backed watchlist (`vg_watchlist`); `VG.render.watchlist(allXP)` panel (Strategy tab)
+- `VG.simulateRaceScenario(squads, fixtures, gw, iters, scenario)` / `VG.raceScenarioDelta()` — What-If race scenarios (shared rival draws, so deltas are change-attributable); `VG.analyzeLeague` now also returns `rawSquads`
+- `VG.rateMyTeam(result, allXP, fixtures, gw)` / `VG.render.rateMyTeam(...)` — transparent component-scored team rating (Squad tab)
+- `VG.render.seasonPlanner(fixtures, fromGW, nGWs, teamId)` — full-season FDR grid, consumes the previously-dead `VG.teamSeasonRow`/`VG.buildSeasonPlanner` (Fixtures tab)
 
 ### Rendering
 - `VG.render.metrics(result)` → metric cards (xP, cost, formation)
