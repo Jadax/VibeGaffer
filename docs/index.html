@@ -16,22 +16,22 @@
                 https://api.allorigins.win https://corsproxy.io;
     base-uri 'none';
     form-action 'none'">
-    <title>VibeGaffer — FPL Intelligence</title>
+    <title>VibeGaffer · FPL Intelligence</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.8.1">
+  <link rel="stylesheet" href="style.css?v=5.9.0">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
           integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=5.8.1"></script>
+  <script src="app.js?v=5.9.0"></script>
 </head>
 <body>
 
 <div class="header">
   <div>
     <h1><span>⚽</span> VibeGaffer</h1>
-    <div class="header-sub"><strong>Tushant Sharma</strong> · FPL Intelligence Engine</div>
+    <div class="header-sub"><strong>Astraiva</strong> · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.8.1</span></div>
+    <div><span class="badge pulse-glow">v5.9.0</span></div>
 </div>
 
 <div class="app">
@@ -50,7 +50,7 @@
   <label>Bank Override (£m)</label>
   <input type="number" id="bankOverride" placeholder="Auto-detect" step="0.1" min="0">
   <label>Mini-League ID</label>
-  <input type="number" id="leagueId" placeholder="Optional — compare vs rivals" min="0">
+  <input type="number" id="leagueId" placeholder="Optional, compare vs rivals" min="0">
   <label>Squad Strategy</label>
   <select id="strategy">
     <option value="balanced">⚖️ Balanced</option>
@@ -67,22 +67,26 @@
 <div id="main">
   <div class="welcome" id="welcome">
     <div class="welcome-icon">⚽</div>
-    <h2>Welcome to VibeGaffer</h2>
-    <p>Your <strong>FPL intelligence engine</strong> — AI-powered xP projections, optimal squad building, and fixture analysis.</p>
-    <p>Click <strong>Optimize Squad</strong> to generate a data-driven squad.</p>
+    <h2>Your FPL edge, sorted</h2>
+    <p>Squad-building, transfers, and captaincy, backed by a projection engine that actually looks at fixtures, form, and underlying stats.</p>
+    <div class="welcome-steps">
+      <div class="welcome-step"><span class="step-num">1</span><div><strong>Add your Team ID</strong><small>Or skip it for a fresh GW1 draft</small></div></div>
+      <div class="welcome-step"><span class="step-num">2</span><div><strong>Set your horizon</strong><small>How many gameweeks to plan for</small></div></div>
+      <div class="welcome-step"><span class="step-num">3</span><div><strong>Hit Optimize</strong><small>Get your squad in seconds</small></div></div>
+    </div>
   </div>
 
   <div id="results" style="display:none;">
     <div class="tabs">
-      <button class="tab active" onclick="VG.switchTab('squad')">Squad</button>
-      <button class="tab" onclick="VG.switchTab('live')">Live</button>
-      <button class="tab" onclick="VG.switchTab('compare')">Compare</button>
-      <button class="tab" onclick="VG.switchTab('prices')">Prices</button>
-      <button class="tab" onclick="VG.switchTab('fixtures')">Fixtures</button>
-      <button class="tab" onclick="VG.switchTab('diffs')">Differentials</button>
-      <button class="tab" onclick="VG.switchTab('plan')">Transfer Plan</button>
-      <button class="tab" onclick="VG.switchTab('league')">League</button>
-      <button class="tab" onclick="VG.switchTab('tips')">Strategy</button>
+      <button class="tab active" onclick="VG.switchTab('squad')">🎯 Squad</button>
+      <button class="tab" onclick="VG.switchTab('live')">🔴 Live</button>
+      <button class="tab" onclick="VG.switchTab('compare')">⚖️ Compare</button>
+      <button class="tab" onclick="VG.switchTab('prices')">💷 Prices</button>
+      <button class="tab" onclick="VG.switchTab('fixtures')">📅 Fixtures</button>
+      <button class="tab" onclick="VG.switchTab('diffs')">💎 Differentials</button>
+      <button class="tab" onclick="VG.switchTab('plan')">🔁 Transfer Plan</button>
+      <button class="tab" onclick="VG.switchTab('league')">🏆 League</button>
+      <button class="tab" onclick="VG.switchTab('tips')">🧠 Strategy</button>
     </div>
 
     <div class="tab-content active" id="tab-squad">
@@ -119,7 +123,7 @@
 
     <div class="tab-content" id="tab-diffs">
       <div class="section-title">Differential Picks</div>
-      <p class="subtitle">Low ownership, high xP — your secret weapons.</p>
+      <p class="subtitle">Low ownership, high xP: your secret weapons.</p>
       <div id="diffContent"></div>
     </div>
 
@@ -146,7 +150,7 @@
 </div>
 </div>
 
-    <div class="footer">VibeGaffer v5.8.1 · Built by Tushant Sharma</div>
+    <div class="footer">VibeGaffer · An Astraiva product · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -165,10 +169,10 @@ VG.init = async () => {
     VG.applyHistoryPriors(VG.bootstrapData, await VG.loadHistoryPriors());
     VG.buildMaps(VG.bootstrapData);
     VG.allFixtures = await VG.loadFixtures();
-    VG.loadOdds(); // Optional — loads in background, non-blocking
-    VG.loadUnderstat(); // Optional — loads in background, non-blocking
-    VG.loadSetPieceData(); // Optional — bundled set-piece takers (non-blocking)
-    VG.loadRecentForm(); // Optional — last-5-GW rotation-risk signal (non-blocking)
+    VG.loadOdds(); // Optional , loads in background, non-blocking
+    VG.loadUnderstat(); // Optional , loads in background, non-blocking
+    VG.loadSetPieceData(); // Optional , bundled set-piece takers (non-blocking)
+    VG.loadRecentForm(); // Optional , last-5-GW rotation-risk signal (non-blocking)
     const gwSel = el("gameweek");
     gwSel.innerHTML = "";
     for (let i = 1; i <= 38; i++) {
@@ -191,7 +195,7 @@ VG.init = async () => {
     console.error("[VG] init failed:", e);
     VG._retries++;
     const secs = Math.min(VG._retries * 3, 30);
-    el("status").innerHTML = '<span class="status-dot error"></span> Load failed (attempt ' + VG._retries + ') — retrying in ' + secs + 's';
+    el("status").innerHTML = '<span class="status-dot error"></span> Load failed (attempt ' + VG._retries + ') retrying in ' + secs + 's';
     setTimeout(VG.init, secs * 1000);
   }
 };
@@ -283,7 +287,7 @@ VG.run = async () => {
     // Build HTML
     let html = '<div id="rankCard"></div>';
 
-    // Live Rank tracker card (v5.6, LiveFPL/FFHub idea) — real OR when team ID set
+    // Live Rank tracker card (v5.6, LiveFPL/FFHub idea) , real OR when team ID set
     if (teamId > 0) {
       VG.fetchTeamRank(teamId, gw).then(rank => {
         if (!rank || !rank.name) return;
@@ -293,7 +297,7 @@ VG.run = async () => {
         box += `<div style="font-size:0.72rem;color:#a78bfa;font-weight:600;margin-bottom:4px;">📊 Live Rank · ${VG.esc(rank.name)}</div>`;
         if (rk != null) box += `<div style="font-size:1rem;color:${rkColor};font-weight:700;">OR ${rk.toLocaleString()}</div>`;
         else box += `<div style="color:#475569;font-size:0.75rem;">Overall rank not yet available</div>`;
-        box += `<div style="font-size:0.68rem;color:#94a3b8;margin-top:4px;">GW${rank.ev} points: ${rank.gwPts != null ? rank.gwPts : '—'} · auto-refreshes every 5 min</div>`;
+        box += `<div style="font-size:0.68rem;color:#94a3b8;margin-top:4px;">GW${rank.ev} points: ${rank.gwPts != null ? rank.gwPts : '-'} · auto-refreshes every 5 min</div>`;
         box += `</div>`;
         const rkEl = document.getElementById("rankCard");
         if (rkEl) rkEl.innerHTML = box;
@@ -305,7 +309,7 @@ VG.run = async () => {
     const mcMetric = (gwProjStarting && gwProjStarting.length >= 11) ? VG.render.gwProjection(gwProjStarting, VG.allFixtures, gw, result.gotCap?.[0]?.id) : null;
     html += VG.render.metrics(result, mcMetric);
 
-    // Rate My Team (v5.8, FPL Review/FFix idea) — transparent component scores.
+    // Rate My Team (v5.8, FPL Review/FFix idea) , transparent component scores.
     html += VG.render.rateMyTeam(result, VG.allXP, VG.allFixtures, gw);
 
     // Transfers
@@ -327,7 +331,7 @@ VG.run = async () => {
         const ri = VG.estimateRankImpact(inXP - outXP, { nGWs: 5 });
         if (ri.rankDelta !== 0) {
           const col = ri.rankDelta < 0 ? "#00ff87" : "#ef4444";
-          html += `<div style="text-align:center;font-size:0.72rem;margin-top:6px;color:${col};">≈ projected rank ${ri.direction === 'gain' ? 'improvement' : 'loss'} of ${Math.abs(ri.rankDelta).toLocaleString()} (${ri.pts > 0 ? '+' : ''}${ri.pts} xP over 5 GW) — estimate</div>`;
+          html += `<div style="text-align:center;font-size:0.72rem;margin-top:6px;color:${col};">≈ projected rank ${ri.direction === 'gain' ? 'improvement' : 'loss'} of ${Math.abs(ri.rankDelta).toLocaleString()} (${ri.pts > 0 ? '+' : ''}${ri.pts} xP over 5 GW), estimate</div>`;
         }
       }
       if (result.hitCost > 0) {
@@ -338,7 +342,7 @@ VG.run = async () => {
           });
         }
       } else if (result.freeTransfersUsed <= 1) {
-        html += `<div style="text-align:center;color:#00ff87;font-size:0.72rem;margin-top:8px;">✓ Using free transfer only — champion strategy</div>`;
+        html += `<div style="text-align:center;color:#00ff87;font-size:0.72rem;margin-top:8px;">✓ Using free transfer only, champion strategy</div>`;
       }
     }
 
@@ -665,7 +669,7 @@ VG.preloadTabs = async (gw) => {
     const tickerData = VG.buildFixtureTicker(gw, 8, VG.allFixtures);
     const swings = VG.analyzeFixtureSwings(gw, 8, VG.allFixtures);
     let fixtureHTML = '';
-    // DGW/BGW Season Planner (v5.5, Ben Crellin planner idea) — highlights
+    // DGW/BGW Season Planner (v5.5, Ben Crellin planner idea) , highlights
     // the first-half double/blank weeks. Base fixtures have none; becomes
     // live when postponements create them.
     const planner = VG.buildSeasonPlanner(VG.allFixtures);
@@ -689,7 +693,7 @@ VG.preloadTabs = async (gw) => {
       fixtureHTML += '</div>';
     }
     if (!dgwWeeks.length && !bgwWeeks.length) {
-      fixtureHTML += '<p style="color:#334155;font-size:0.7rem;">No doubles/blanks yet — base fixtures have all 20 teams playing once weekly. Doubles appear after postponements; this planner will flag DGW/BGW chip windows automatically once they do.</p>';
+      fixtureHTML += '<p style="color:#334155;font-size:0.7rem;">No doubles/blanks yet. Base fixtures have all 20 teams playing once weekly. Doubles appear after postponements; this planner will flag DGW/BGW chip windows automatically once they do.</p>';
     }
     // Team strength ratings from free Understat npxG priors (v5.4)
     const teamRatings = VG.computeTeamRatings();
@@ -807,10 +811,10 @@ VG.preloadTabs = async (gw) => {
         .slice(0, 20);
       let dh = '<div class="section-title" style="font-size:0.8rem;margin-bottom:4px;">Differential Matrix</div>';
       dh += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;font-size:0.65rem;">';
-      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(0,255,135,0.1);color:#00ff87;">● Gold — low owned, high xP/£m (buy)</span>';
-      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(59,130,246,0.1);color:#3b82f6;">● Anchor — template, high xP/£m (safe)</span>';
-      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(251,191,36,0.1);color:#fbbf24;">● Wait — low owned, weak value</span>';
-      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(239,68,68,0.1);color:#ef4444;">● Trap — popular but weak value</span>';
+      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(0,255,135,0.1);color:#00ff87;">● Gold: low owned, high xP/£m (buy)</span>';
+      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(59,130,246,0.1);color:#3b82f6;">● Anchor: template, high xP/£m (safe)</span>';
+      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(251,191,36,0.1);color:#fbbf24;">● Wait: low owned, weak value</span>';
+      dh += '<span style="padding:3px 8px;border-radius:4px;background:rgba(239,68,68,0.1);color:#ef4444;">● Trap: popular but weak value</span>';
       dh += '</div>';
       dh += '<table class="diff-table"><tr><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>Real xG/90</th><th>xG Reg</th><th>EP</th><th>Own%</th><th>EO</th><th>xMins</th><th>Zone</th><th>Market</th><th>Diff Score</th></tr>';
       diffs.forEach((p, i) => {
@@ -821,7 +825,7 @@ VG.preloadTabs = async (gw) => {
         const spBadge = (sp.pen ? '<span style="color:#fbbf24;" title="Penalty taker">P</span>' : '') + (sp.fk ? '<span style="color:#60a5fa;" title="Free-kick taker">F</span>' : '') + (sp.cor ? '<span style="color:#a78bfa;" title="Corner/Set-piece">C</span>' : '');
         const market = VG.marketBadge(VG.getMarketTag(p));
         const isNewBadge = p.isNew ? '<span style="background:rgba(96,165,250,0.12);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;">NEW</span>' : '';
-        dh += `<tr><td style="color:#e2e8f0;">${VG.watchToggle(p)} ${rank}. ${VG.esc(p.name)} ${isNewBadge}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td><td>${VG.regressionBadge(p.regression)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}${spBadge ? ' ' + spBadge : ''}</td><td>${(p.xMins || 0).toFixed(0)}</td><td><span style="color:${zone.color};">${VG.esc(zone.label)}</span></td><td>${market || '—'}</td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
+        dh += `<tr><td style="color:#e2e8f0;">${VG.watchToggle(p)} ${rank}. ${VG.esc(p.name)} ${isNewBadge}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td><td>${VG.regressionBadge(p.regression)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}${spBadge ? ' ' + spBadge : ''}</td><td>${(p.xMins || 0).toFixed(0)}</td><td><span style="color:${zone.color};">${VG.esc(zone.label)}</span></td><td>${market || '-'}</td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
       });
       dh += '</table>';
       if (diffs.length === 0) dh = '<p style="color:#475569;">No differentials found matching criteria (low ownership + high xP)</p>';
@@ -852,7 +856,7 @@ VG.preloadTabs = async (gw) => {
         // Per-GW schedule
         plan.schedule.forEach(gwPlan => {
           if (gwPlan.transfers.length === 0) {
-            ph += `<div style="margin:10px 0;padding:10px 14px;background:rgba(30,41,59,0.4);border-radius:8px;border-left:3px solid #334155;"><span style="color:#94a3b8;font-weight:600;">GW${gwPlan.gw}</span> <span style="color:#475569;font-size:0.75rem;">No changes — squad holds (${gwPlan.squadXP} xP)</span></div>`;
+            ph += `<div style="margin:10px 0;padding:10px 14px;background:rgba(30,41,59,0.4);border-radius:8px;border-left:3px solid #334155;"><span style="color:#94a3b8;font-weight:600;">GW${gwPlan.gw}</span> <span style="color:#475569;font-size:0.75rem;">No changes, squad holds (${gwPlan.squadXP} xP)</span></div>`;
             return;
           }
           const border = gwPlan.hitCost > 0 ? '#ef4444' : '#00ff87';
@@ -899,7 +903,7 @@ VG.preloadTabs = async (gw) => {
         // Race to the Top: Monte Carlo win probability among fetched squads
         if (league.raceSimulation && league.raceSimulation.entrants.length > 0) {
           const race = league.raceSimulation;
-          lh += '<div style="margin-top:16px;"><div class="section-title" style="font-size:0.8rem;color:#fbbf24;">🏁 Race to the Top — GW' + gw + ' Win Probability</div>';
+          lh += '<div style="margin-top:16px;"><div class="section-title" style="font-size:0.8rem;color:#fbbf24;">🏁 Race to the Top: GW' + gw + ' Win Probability</div>';
           lh += '<p class="subtitle" style="margin-top:-6px;">Monte Carlo simulation (1,500 draws) of this GW added to each manager\'s season total. Squads are simulated independently of each other.</p>';
           if (race.you) {
             const you = race.you;
@@ -911,7 +915,7 @@ VG.preloadTabs = async (gw) => {
             lh += `<div class="chip-card"><div class="chip-label">${isLeading ? "You're Favored" : "Front-Runner"}</div><div class="chip-score" style="color:${isLeading ? '#00ff87' : '#ef4444'};font-size:0.8rem;">${VG.esc(isLeading ? you.name : leader.name)}</div><div class="chip-advice">${isLeading ? "highest win prob." : leader.winProb + "% win prob."}</div></div>`;
             lh += `</div>`;
           } else {
-            lh += '<p style="color:#475569;font-size:0.72rem;margin-top:-4px;">Enter your FPL Team ID in the sidebar to see your own win probability — showing the field below.</p>';
+            lh += '<p style="color:#475569;font-size:0.72rem;margin-top:-4px;">Enter your FPL Team ID in the sidebar to see your own win probability. Showing the field below.</p>';
           }
           lh += '<table class="data-table" style="font-size:0.72rem;margin-top:8px;"><tr><th>#</th><th>Manager</th><th>Season Pts</th><th>GW Proj. (floor–ceiling)</th><th>Win %</th><th>Top-3 %</th></tr>';
           race.entrants.forEach((r, i) => {
@@ -923,7 +927,7 @@ VG.preloadTabs = async (gw) => {
 
           // What-If: Monte Carlo race scenarios against the same rivals (v5.8).
           // Test "what if I bring X in / captain Y" and see the impact on your
-          // win probability — same draws for baseline and scenario so the delta
+          // win probability , same draws for baseline and scenario so the delta
           // is attributable to the change, not simulation noise.
           if (race.you) {
             const you = race.you;
@@ -932,7 +936,7 @@ VG.preloadTabs = async (gw) => {
             lh += `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:0.7rem;">`;
             lh += `<select id="whatIfPlayer" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:5px 8px;font-size:0.68rem;max-width:300px;"><option value="">Select a player…</option>`;
             (VG.allXP || []).filter(p => p.position !== 'GK').slice(0, 300).forEach(p => {
-              lh += `<option value="${p.id}">${VG.esc(p.name)} — ${p.teamName} £${p.price.toFixed(1)}m (${p.totalXP.toFixed(1)} xP)</option>`;
+              lh += `<option value="${p.id}">${VG.esc(p.name)} · ${p.teamName} £${p.price.toFixed(1)}m (${p.totalXP.toFixed(1)} xP)</option>`;
             });
             lh += `</select>`;
             lh += `<button onclick="VG.runWhatIf('transfer', ${gw})" style="background:#60a5fa;color:#0b1120;border:none;border-radius:6px;padding:6px 12px;font-size:0.68rem;font-weight:600;cursor:pointer;">Transfer In</button>`;
@@ -1012,7 +1016,7 @@ VG.runWhatIf = async (mode, gw) => {
     const b = result.baseline, s = result.scenario;
     const delta = result.delta;
     const color = delta > 0 ? '#00ff87' : delta < 0 ? '#ef4444' : '#94a3b8';
-    const arrow = delta > 0 ? '▲' : delta < 0 ? '▼' : '—';
+    const arrow = delta > 0 ? '▲' : delta < 0 ? '▼' : '-';
     const deltaTxt = `${arrow} ${delta >= 0 ? '+' : ''}${delta}pp`;
     const gain = s.winProb - b.winProb;
     resultEl.innerHTML = `<div class="chip-sequence">
@@ -1095,15 +1099,15 @@ VG.renderComparison = () => {
     const spBadge = VG.setPieceBadge(p.setPiece || {});
     const market = VG.marketBadge(VG.getMarketTag(p));
     const isNewBadge = p.isNew ? '<span style="background:rgba(96,165,250,0.12);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;">NEW</span>' : '';
-    const recLine = p.recency ? `<span title="Last-3-GW xGI/90: ${p.recency.xgi90} · pts/90: ${p.recency.pts90}" style="color:#a78bfa;">${p.recency.rounds}GW</span>` : '<span style="color:#475569;">—</span>';
+    const recLine = p.recency ? `<span title="Last-3-GW xGI/90: ${p.recency.xgi90} · pts/90: ${p.recency.pts90}" style="color:#a78bfa;">${p.recency.rounds}GW</span>` : '<span style="color:#475569;">-</span>';
     tableHtml += `<tr><td style="color:#e2e8f0;">${VG.watchToggle(p)} ${VG.esc(p.name)} ${isNewBadge}</td><td>${VG.esc(p.position)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${(p.realXG || 0).toFixed(1)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${VG.regressionBadge(p.regression)}</td>`;
     tableHtml += `<td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}</td>`;
-    tableHtml += `<td style="color:#fbbf24;">${spBadge || '—'}</td>`;
+    tableHtml += `<td style="color:#fbbf24;">${spBadge || '-'}</td>`;
     tableHtml += `<td>${(p.xMins || 0).toFixed(0)}</td>`;
     tableHtml += `<td>${recLine}</td>`;
-    tableHtml += `<td>${market || '—'}</td>`;
+    tableHtml += `<td>${market || '-'}</td>`;
     tableHtml += `<td>${(xc.xpAppearance || 0).toFixed(1)}</td>`;
     tableHtml += `<td>${(xc.xpCS || 0).toFixed(1)}</td>`;
     tableHtml += `<td>${(xc.xpGoals || 0).toFixed(1)}</td>`;

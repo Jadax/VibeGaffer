@@ -400,7 +400,7 @@ VG._recencyFactors = (p) => {
   } else {
     startsRate = recent.starts5 / Math.max(rounds, 1);
     mins = recent.mins5 || 0;
-    xgi90 = 0; pts90 = 0; // legacy file carries no points — availability only
+    xgi90 = 0; pts90 = 0; // legacy file carries no points, availability only
   }
 
   const weight = 0.30 + 0.20 * wRounds; // 0.38 (2 GWs) → 0.50 (5+ GWs)
@@ -887,7 +887,7 @@ VG.computeEffectiveOwnership = (allXP) => {
 // xG regression (DUE/OVER), ownership and value to label what to do with a
 // player. Pure function of the allXP info object — easy to unit-test.
 VG.getMarketTag = (p) => {
-  if (!p) return { tag: "hold", reason: "—", tone: "gray" };
+  if (!p) return { tag: "hold", reason: "-", tone: "gray" };
   const rec = p.recency;
   const reg = p.regression;
   const own = p.ownership || 0;
@@ -900,15 +900,15 @@ VG.getMarketTag = (p) => {
     const seasonXGI = (p.xG + p.xA || p.xGI) || 0.5;
     const cold = rec.xgi90 < seasonXGI * 0.75;
     const hot = rec.xgi90 > seasonXGI * 1.25;
-    if (cold && own >= 10) return { tag: "sell", reason: "recent xGI below season rate — output cooling", tone: "red" };
+    if (cold && own >= 10) return { tag: "sell", reason: "recent xGI below season rate, output cooling", tone: "red" };
     if (cold && value < 0.5) return { tag: "sell", reason: "cooling output + weak xP/£m", tone: "red" };
     if (hot && value > 0.8) return { tag: "buy", reason: "recency boost + strong value", tone: "green" };
   }
   if (reg && reg.flag === "over" && own >= 15 && value < 0.6) {
-    return { tag: "sell", reason: "xG running hot — regression likely, expensive", tone: "red" };
+    return { tag: "sell", reason: "xG running hot, regression likely, expensive", tone: "red" };
   }
   if (reg && reg.flag === "due" && value > 0.7) {
-    return { tag: "buy", reason: "xG due — goals lagging chances, cheap", tone: "green" };
+    return { tag: "buy", reason: "xG due, goals lagging chances, cheap", tone: "green" };
   }
   if (p.isNew && p.priorSignal === "ep_next" && value > 0.8) {
     return { tag: "buy", reason: "new to PL with a strong FPL prior", tone: "green" };
@@ -2230,9 +2230,9 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
       score: tcBest.tcScore,
       reason: tcBest.tcScore >= TC_THRESHOLD
         ? `GW${tcBest.gw}: ${tcBest.capName} ${tcBest.capIsDGW ? "(DGW!) " : ""}xP ${tcBest.capGWXP.toFixed(1)} · FDR ${tcBest.capFDR}`
-        : `No DGW trigger — save for a Double Gameweek`,
+        : `No DGW trigger, save for a Double Gameweek`,
       tip: tcBest.tcScore >= TC_THRESHOLD
-        ? "Double Gameweek captain — high ceiling play"
+        ? "Double Gameweek captain, high ceiling play"
         : "TC doubles your captain's points. Only play when your captain has TWO fixtures (DGW) against weak opponents. Classic timing: GW36-37."
     },
     bench_boost: {
@@ -2241,9 +2241,9 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
       score: bbBest.bbScore,
       reason: bbBest.bbScore >= BB_THRESHOLD
         ? `GW${bbBest.gw}: Bench xP ${bbBest.benchXP.toFixed(1)}${bbBest.benchDGWCount >= 2 ? ` · ${bbBest.benchDGWCount} DGW players` : ""}`
-        : `No DGW bench coverage — save for a Double Gameweek`,
+        : `No DGW bench coverage, save for a Double Gameweek`,
       tip: bbBest.bbScore >= BB_THRESHOLD
-        ? "Multiple bench players have double fixtures — ideal BB window"
+        ? "Multiple bench players have double fixtures, ideal BB window"
         : "BB is best in DGW when bench players play twice. Classic sequence: WC → BB → FH → TC. New rule: must use one chip in first half."
     },
     wildcard: {
@@ -2252,9 +2252,9 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
       score: wcBest.wcScore,
       reason: wcBest.wcScore >= WC_THRESHOLD
         ? `GW${wcBest.gw}: ${wcBest.injuredCount >= 3 ? wcBest.injuredCount + ' injuries' : wcBest.badFixCount >= 8 ? wcBest.badFixCount + ' tough fixtures' : 'Squad needs restructuring'}`
-        : `Squad looks healthy — hold WC for later`,
+        : `Squad looks healthy, hold WC for later`,
       tip: wcBest.wcScore >= WC_THRESHOLD
-        ? "Significant squad issues detected — WC can fix multiple problems at once"
+        ? "Significant squad issues detected, WC can fix multiple problems at once"
         : "Save WC until you have 3+ injuries or a run of tough fixtures. Use it to set up for BB. Classic: WC early to fix mistakes, or WC GW32 to prepare for DGW run."
     },
     free_hit: {
@@ -2262,10 +2262,10 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
       bestGW: fhBest.gw,
       score: fhBest.fhScore,
       reason: fhBest.fhScore >= FH_THRESHOLD
-        ? `GW${fhBest.gw}: ${fhBest.isBGW ? "Blank GW — many teams out" : `DGW with ${fhBest.dgwTeams?.length || 0} double teams`}`
-        : `No BGW/DGW trigger — save for a Blank Gameweek`,
+        ? `GW${fhBest.gw}: ${fhBest.isBGW ? "Blank GW, many teams out" : `DGW with ${fhBest.dgwTeams?.length || 0} double teams`}`
+        : `No BGW/DGW trigger, save for a Blank Gameweek`,
       tip: fhBest.fhScore >= FH_THRESHOLD
-        ? "Blank Gameweek — use FH to field 11 without hits"
+        ? "Blank Gameweek, use FH to field 11 without hits"
         : "FH lets you pick any 15 players for one week. Best on BGWs. Also powerful in GW38 for differential sprint to win mini-league."
     },
     gwScores
@@ -2597,7 +2597,7 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank) => {
         totalGainFromHits += opt.cumGain;
         gwTransfer.transfers.push({ ...opt, isHit: true });
       } else {
-        continue; // Skip — not worth a hit
+        continue; // Skip, not worth a hit
       }
 
       // Apply the transfer
@@ -2859,7 +2859,7 @@ VG.render.seasonPlanner = (fixtures, fromGW, nGWs, teamId) => {
       } else if (n === 0) {
         cell = '<td style="text-align:center;background:rgba(239,68,68,0.18);color:#ef4444;font-weight:700;" title="Blank gameweek">BGW</td>';
       } else if (n === 2) {
-        cell = `<td style="text-align:center;background:rgba(0,255,135,0.18);color:#00ff87;font-weight:700;" title="Double gameweek — two fixtures">DGW ${fx ? VG.esc(fx.oppShort) : ''}</td>`;
+        cell = `<td style="text-align:center;background:rgba(0,255,135,0.18);color:#00ff87;font-weight:700;" title="Double gameweek, two fixtures">DGW ${fx ? VG.esc(fx.oppShort) : ''}</td>`;
       } else if (fx) {
         const c = VG.fdrColor(fx.fdr);
         const mark = fx.isHome ? '' : 'A';
@@ -2886,9 +2886,9 @@ VG.render.watchlist = (allXP) => {
   const quickAdd = allXP
     .filter(p => !ids.has(p.id) && p.position !== "GK")
     .slice(0, 400)
-    .map(p => `<option value="${p.id}">${VG.esc(p.name)} — ${p.teamName} £${p.price.toFixed(1)}m (${p.totalXP.toFixed(1)} xP)</option>`)
+    .map(p => `<option value="${p.id}">${VG.esc(p.name)} · ${p.teamName} £${p.price.toFixed(1)}m (${p.totalXP.toFixed(1)} xP)</option>`)
     .join("");
-  let html = `<div class="tips-section"><div class="tips-section-header">👀 Watchlist <span style="font-weight:400;color:#475569;font-size:0.65rem;">(${list.length} players — monitors value changes each refresh)</span></div>`;
+  let html = `<div class="tips-section"><div class="tips-section-header">👀 Watchlist <span style="font-weight:400;color:#475569;font-size:0.65rem;">(${list.length} players, monitors value changes each refresh)</span></div>`;
   if (quickAdd) {
     html += `<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">`;
     html += `<select id="watchAdd" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:6px 8px;font-size:0.68rem;flex:1;max-width:420px;"><option value="">+ add a player to watch…</option>${quickAdd}</select>`;
@@ -2901,8 +2901,8 @@ VG.render.watchlist = (allXP) => {
     html += `<table class="data-table" style="font-size:0.7rem;"><tr><th></th><th>Player</th><th>Pos</th><th>Team</th><th>Price</th><th>xP</th><th>xP/£m</th><th>xMins</th><th>Recency</th><th>xG Reg</th><th>Market</th><th></th></tr>`;
     watched.forEach(p => {
       const market = VG.marketBadge(VG.getMarketTag(p));
-      const rec = p.recency ? `${p.recency.xgi90.toFixed(2)} xGI/90` : '—';
-      html += `<tr><td>${VG.watchToggle(p)}</td><td style="color:#e2e8f0;font-weight:600;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.xMins || 0).toFixed(0)}</td><td style="color:#a78bfa;">${rec}</td><td>${VG.regressionBadge(p.regression)}</td><td>${market || '—'}</td><td><span onclick="VG.toggleWatch(${p.id});document.getElementById('tipsContent').innerHTML=VG.render.tips(VG.currentResult,VG.allXP,VG.allFixtures,parseInt(el('gameweek').value));" title="Remove" style="cursor:pointer;color:#ef4444;font-size:0.85rem;">✕</span></td></tr>`;
+      const rec = p.recency ? `${p.recency.xgi90.toFixed(2)} xGI/90` : '-';
+      html += `<tr><td>${VG.watchToggle(p)}</td><td style="color:#e2e8f0;font-weight:600;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.xMins || 0).toFixed(0)}</td><td style="color:#a78bfa;">${rec}</td><td>${VG.regressionBadge(p.regression)}</td><td>${market || '-'}</td><td><span onclick="VG.toggleWatch(${p.id});document.getElementById('tipsContent').innerHTML=VG.render.tips(VG.currentResult,VG.allXP,VG.allFixtures,parseInt(el('gameweek').value));" title="Remove" style="cursor:pointer;color:#ef4444;font-size:0.85rem;">✕</span></td></tr>`;
     });
     html += `</table>`;
   }
@@ -3058,12 +3058,12 @@ VG.rateMyTeam = (result, allXP, fixtures, gw) => {
   const gradeColor = score >= 80 ? "#00ff87" : score >= 60 ? "#fbbf24" : "#ef4444";
 
   const advice = [];
-  if (rotScore < 60) advice.push("Rotation risk is high — several starters project under 60 minutes. Prioritise nailed players.");
-  if (bank > 2.0) advice.push(`£${bank.toFixed(1)}m idle in the bank — upgrade a mid-range pick to a premium.`);
-  if (bank < 0.1) advice.push("Budget fully deployed with no headroom — any premium move needs a sale first.");
-  if (capScore < 85) advice.push("Captaincy could be improved — your squad holds a stronger option than the current captain.");
-  if (formScore < 90) advice.push("Positional balance is off — aim for at least one GK, three DEF, two MID and one FWD.");
-  if (xpScore < 80) advice.push("Squad xP is below the top-third of the player pool — consider wildcard or targeted upgrades.");
+  if (rotScore < 60) advice.push("Rotation risk is high: several starters project under 60 minutes. Prioritise nailed players.");
+  if (bank > 2.0) advice.push(`£${bank.toFixed(1)}m idle in the bank. Upgrade a mid-range pick to a premium.`);
+  if (bank < 0.1) advice.push("Budget fully deployed with no headroom: any premium move needs a sale first.");
+  if (capScore < 85) advice.push("Captaincy could be improved: your squad holds a stronger option than the current captain.");
+  if (formScore < 90) advice.push("Positional balance is off: aim for at least one GK, three DEF, two MID and one FWD.");
+  if (xpScore < 80) advice.push("Squad xP is below the top-third of the player pool: consider wildcard or targeted upgrades.");
   if (!advice.length) advice.push("Strong, balanced squad. Maintain and monitor for injuries.");
 
   return {
@@ -3153,13 +3153,13 @@ VG.playerProfileHTML = (p, fixtures, gw) => {
   const sp = p.setPiece || {};
   const spBadge = VG.setPieceBadge(sp);
   const reg = p.regression;
-  const roleTxt = spBadge.trim() ? `<span style="color:#fbbf24;font-weight:600;">${VG.esc(spBadge)}</span>` : '—';
+  const roleTxt = spBadge.trim() ? `<span style="color:#fbbf24;font-weight:600;">${VG.esc(spBadge)}</span>` : '-';
   // Fixture run over next 5 GWs
   const row = VG.teamFixtureRow(p.teamId, gw, 5, fixtures);
   const easy = row.filter(r => r && r.fdr <= 2).length;
   const hard = row.filter(r => r && r.fdr >= 4).length;
   const run = row.map(r => r ? `<span style="color:${VG.fdrColor(r.fdr)};font-weight:600;">${VG.esc(r.oppName)}${r.isHome ? '' : '(A)'}</span>` : `<span style="color:#334155;">BYE</span>`).join(' ');
-  const trend = p.form != null && p.ppg ? (p.form / p.ppg).toFixed(2) : "—";
+  const trend = p.form != null && p.ppg ? (p.form / p.ppg).toFixed(2) : "-";
   const market = VG.marketBadge(VG.getMarketTag(p));
   const newBadge = p.isNew
     ? `<span style="background:rgba(96,165,250,0.12);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.62rem;white-space:nowrap;">NEW TO PL · ${p.priorSignal === 'ep_next' ? 'FPL PRIOR' : 'UNDERSTAT PRIOR'}</span>`
@@ -3169,7 +3169,7 @@ VG.playerProfileHTML = (p, fixtures, gw) => {
     : '';
   return `<div class="profile-panel" style="margin-top:8px;font-size:0.7rem;line-height:1.7;color:#94a3b8;">`
     + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;">`
-    + `<div>Form/PPG trend: <b style="color:${p.trend >= 1.05 ? '#00ff87' : p.trend <= 0.95 ? '#ef4444' : '#e2e8f0'};">${p.trend >= 1.05 ? '🔥' : p.trend <= 0.95 ? '❄️' : ''} ${p.trend != null ? p.trend : '—'}</b></div>`
+    + `<div>Form/PPG trend: <b style="color:${p.trend >= 1.05 ? '#00ff87' : p.trend <= 0.95 ? '#ef4444' : '#e2e8f0'};">${p.trend >= 1.05 ? '🔥' : p.trend <= 0.95 ? '❄️' : ''} ${p.trend != null ? p.trend : '-'}</b></div>`
     + `<div>Real xG/90: <b style="color:#a78bfa;">${(p.realXG90 || 0).toFixed(2)}</b></div>`
     + `<div>xG Reg: ${VG.regressionBadge(reg) || '<span style="color:#475569;">stable</span>'}</div>`
     + `<div>EO: <b style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}</b> (own ${(p.ownership || 0).toFixed(1)}%)</div>`
@@ -3181,7 +3181,7 @@ VG.playerProfileHTML = (p, fixtures, gw) => {
     + (newBadge ? `<div style="margin-top:6px;">${newBadge}</div>` : '')
     + recLine
     + `<div style="margin-top:6px;">Next 5 fixtures: <span style="color:#64748b;">${run}</span></div>`
-    + `<div style="margin-top:4px;">Run quality: ${easy} easy · ${hard} hard ${hard >= 3 ? '<span style="color:#ef4444;">— sell/hold risk</span>' : easy >= 3 ? '<span style="color:#00ff87;">— strong window</span>' : ''}</div>`
+    + `<div style="margin-top:4px;">Run quality: ${easy} easy · ${hard} hard ${hard >= 3 ? '<span style="color:#ef4444;">sell/hold risk</span>' : easy >= 3 ? '<span style="color:#00ff87;">strong window</span>' : ''}</div>`
     + `<div style="margin-top:4px;"><b style="color:#e2e8f0;">${VG.esc(p.name)}</b> · £${p.price.toFixed(1)}m · ${p.position} · ${VG.esc(p.teamName)} · ${p.totalPoints || 0} pts</div>`
     + `</div>`;
 };
@@ -3335,22 +3335,22 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
   // Generate per-player start/bench reasoning
   const reasoning = bestPicks.starting.map(p => {
     const reasons = [];
-    if (p.isDoubtful) reasons.push('⚠ Doubtful — monitor team news');
+    if (p.isDoubtful) reasons.push('⚠ Doubtful, monitor team news');
     if (!p.isNailed && p.fdr >= 4) reasons.push('Tough fixture, rotation risk');
-    if (p.fdr <= 2) reasons.push('Excellent fixture — attack/clean sheet opportunity');
+    if (p.fdr <= 2) reasons.push('Excellent fixture, attack/clean sheet opportunity');
     if (p.totalXP >= 7) reasons.push(`High projected return (${p.totalXP.toFixed(1)} xP)`);
-    if (p.totalXP < 3) reasons.push('Low xP projection — consider benching');
+    if (p.totalXP < 3) reasons.push('Low xP projection, consider benching');
     if (reasons.length === 0) reasons.push('Solid pick based on xP projection');
     return { name: p.name, position: p.position, totalXP: p.totalXP, fdr: p.fdr, oppName: p.oppName, isHome: p.isHome, reasons, positionId: p.positionId };
   });
 
   const benchReasoning = bestPicks.bench.map(p => {
     const reasons = [];
-    if (p.fdr >= 4) reasons.push(`Tough fixture (FDR ${p.fdr}) — benched`);
+    if (p.fdr >= 4) reasons.push(`Tough fixture (FDR ${p.fdr}), benched`);
     if (p.totalXP < 4) reasons.push(`Lower xP (${p.totalXP.toFixed(1)}) than starters`);
-    if (p.isDoubtful) reasons.push('Doubtful — risk of 0 minutes');
-    if (p.fdr <= 2) reasons.push(`Easy fixture (FDR ${p.fdr}) — could haul from bench`);
-    if (reasons.length === 0) reasons.push('Bench option — monitor for rotation');
+    if (p.isDoubtful) reasons.push('Doubtful, risk of 0 minutes');
+    if (p.fdr <= 2) reasons.push(`Easy fixture (FDR ${p.fdr}), could haul from bench`);
+    if (reasons.length === 0) reasons.push('Bench option, monitor for rotation');
     return { name: p.name, position: p.position, totalXP: p.totalXP, fdr: p.fdr, oppName: p.oppName, isHome: p.isHome, reasons, positionId: p.positionId };
   });
 
@@ -3378,25 +3378,25 @@ VG.computeLineupAdvice = (squad, allXP, fixtures, gw) => {
 VG.getCaptainReasoning = (cap, fixtures, gw, vice) => {
   if (!cap) return { summary: 'No captain selected', details: [] };
   const reasons = [];
-  if (cap.isDoubtful || cap.status === 'd' || cap.status === 'u') reasons.push('⚠ Doubtful — have a VC ready');
-  if (cap.fdr <= 2) reasons.push(`Easy fixture (FDR ${cap.fdr}) — high scoring potential`);
-  if (cap.fdr >= 4) reasons.push(`Tough fixture (FDR ${cap.fdr}) — consider alternatives`);
-  if (cap.gwXP >= 7) reasons.push(`Elite projection (${cap.gwXP.toFixed(1)} xP) — premium captaincy`);
-  if (cap.gwXP >= 5 && cap.gwXP < 7) reasons.push(`Strong projection (${cap.gwXP.toFixed(1)} xP) — solid captaincy`);
-  if (cap.gwXP < 5) reasons.push(`Modest projection (${cap.gwXP.toFixed(1)} xP) — look for a better option`);
-  if (cap.positionId === 4) reasons.push('Forward — highest ceiling position for captaincy');
-  if (cap.positionId === 3 && (cap.price || 0) >= 9) reasons.push('Premium midfielder — consistent point scorer');
+  if (cap.isDoubtful || cap.status === 'd' || cap.status === 'u') reasons.push('⚠ Doubtful, have a VC ready');
+  if (cap.fdr <= 2) reasons.push(`Easy fixture (FDR ${cap.fdr}), high scoring potential`);
+  if (cap.fdr >= 4) reasons.push(`Tough fixture (FDR ${cap.fdr}), consider alternatives`);
+  if (cap.gwXP >= 7) reasons.push(`Elite projection (${cap.gwXP.toFixed(1)} xP): premium captaincy`);
+  if (cap.gwXP >= 5 && cap.gwXP < 7) reasons.push(`Strong projection (${cap.gwXP.toFixed(1)} xP): solid captaincy`);
+  if (cap.gwXP < 5) reasons.push(`Modest projection (${cap.gwXP.toFixed(1)} xP): look for a better option`);
+  if (cap.positionId === 4) reasons.push('Forward: highest ceiling position for captaincy');
+  if (cap.positionId === 3 && (cap.price || 0) >= 9) reasons.push('Premium midfielder: consistent point scorer');
   if (cap.positionId === 1 || cap.positionId === 2) reasons.push('Defender/GK captain is very high variance');
 
   // Blank probability (P: fails to play 60+ mins) + vice-captain EV (v5.3)
   const blank = VG.computeBlankProbability(cap, fixtures, gw);
-  if (blank.pBlank >= 0.30) reasons.push(`⚠ High blank risk (${(blank.pBlank * 100).toFixed(0)}%) — ${blank.reasons[0] || 'rotation risk'}`);
-  else if (blank.pBlank >= 0.15) reasons.push(`Moderate blank risk (${(blank.pBlank * 100).toFixed(0)}%) — ${blank.reasons[0] || 'rotation risk'}`);
-  else reasons.push(`Low blank risk (${(blank.pBlank * 100).toFixed(0)}%) — ${blank.reasons[0] || 'secure minutes'}`);
+  if (blank.pBlank >= 0.30) reasons.push(`⚠ High blank risk (${(blank.pBlank * 100).toFixed(0)}%): ${blank.reasons[0] || 'rotation risk'}`);
+  else if (blank.pBlank >= 0.15) reasons.push(`Moderate blank risk (${(blank.pBlank * 100).toFixed(0)}%): ${blank.reasons[0] || 'rotation risk'}`);
+  else reasons.push(`Low blank risk (${(blank.pBlank * 100).toFixed(0)}%): ${blank.reasons[0] || 'secure minutes'}`);
 
   const vcEV = VG.computeViceCaptainEV(cap, vice, fixtures, gw);
-  if (vcEV >= 1.0) reasons.push(`💡 Strong VC insurance — a quality vice-captain adds ~${vcEV.toFixed(1)} EV`);
-  else if (vcEV >= 0.5) reasons.push(`Decent VC insurance (${vcEV.toFixed(1)} EV) — pick a low-blank-risk backup`);
+  if (vcEV >= 1.0) reasons.push(`💡 Strong VC insurance: a quality vice-captain adds ~${vcEV.toFixed(1)} EV`);
+  else if (vcEV >= 0.5) reasons.push(`Decent VC insurance (${vcEV.toFixed(1)} EV): pick a low-blank-risk backup`);
 
   const venue = cap.isHome === 'H'
     ? 'at home'
@@ -3424,15 +3424,15 @@ VG.getSquadAnalysis = (result, fixtures, gw) => {
     else byCost.budget++;
   });
   strengths.push(`Budget: ${byCost.premium} premium, ${byCost.mid} mid-range, ${byCost.budget} budget picks`);
-  if (byCost.premium >= 4) strengths.push('Multiple premium assets — high ceiling');
-  if (byCost.budget >= 8) weaknesses.push('Budget-heavy — may lack consistent haul potential');
+  if (byCost.premium >= 4) strengths.push('Multiple premium assets: high ceiling');
+  if (byCost.budget >= 8) weaknesses.push('Budget-heavy: may lack consistent haul potential');
 
   // Team distribution
   const teamCount = {};
   squad.forEach(p => { teamCount[p.teamName] = (teamCount[p.teamName] || 0) + 1; });
   const maxTeam = Object.entries(teamCount).sort((a, b) => b[1] - a[1])[0];
-  if (maxTeam && maxTeam[1] >= 3) strengths.push(`Triple-up on ${maxTeam[0]} — strong fixture alignment`);
-  if (maxTeam && maxTeam[1] >= 4) weaknesses.push(`4 players from ${maxTeam[0]} — overexposed`);
+  if (maxTeam && maxTeam[1] >= 3) strengths.push(`Triple-up on ${maxTeam[0]}: strong fixture alignment`);
+  if (maxTeam && maxTeam[1] >= 4) weaknesses.push(`4 players from ${maxTeam[0]}: overexposed`);
 
   // Fixture difficulty
   const { easy: easyFix, hard: hardFix } = VG.countFixtureDifficulty(squad, fixtures, gw);
@@ -3449,8 +3449,8 @@ VG.getSquadAnalysis = (result, fixtures, gw) => {
   const formation = result.formation;
   if (formation) {
     const fwdCount = formation.FWD || 0;
-    if (fwdCount >= 3) strengths.push('3-forward formation — aggressive attacking setup');
-    if (fwdCount <= 1) weaknesses.push('Only 1 forward — limits attacking ceiling');
+    if (fwdCount >= 3) strengths.push('3-forward formation: aggressive attacking setup');
+    if (fwdCount <= 1) weaknesses.push('Only 1 forward: limits attacking ceiling');
   }
 
   return { strengths, weaknesses };
@@ -3462,9 +3462,9 @@ VG.TIPS = [
     category: "Core Strategy",
     icon: "🏆",
     tips: [
-      { title: "Avoid Points Hits", text: "2025/26 champion Erik Ibsen did not take a single points hit all season. \"Better to play a player with a bad fixture than take a hit — it's mathematically never the right call.\"", source: "Erik Ibsen (2025/26 Champion)" },
+      { title: "Avoid Points Hits", text: "2025/26 champion Erik Ibsen did not take a single points hit all season. \"Better to play a player with a bad fixture than take a hit. It's mathematically never the right call.\"", source: "Erik Ibsen (2025/26 Champion)" },
       { title: "Master Rolling Transfers", text: "Ibsen made zero transfers in 15 out of 38 gameweeks, rolling his free transfers. This gave him 2 free transfers in 8 GWs and 3 in 3 GWs for \"big moves\" to restructure his squad.", source: "Erik Ibsen" },
-      { title: "Balance Template vs Differentials", text: "The \"template\" squad has high-ownership players — safe but limited upside. Top players hunt low-ownership differentials in mid-to-late season to jump up ranks.", source: "General wisdom" },
+      { title: "Balance Template vs Differentials", text: "The \"template\" squad has high-ownership players: safe, but limited upside. Top players hunt low-ownership differentials in mid-to-late season to jump up ranks.", source: "General wisdom" },
       { title: "Stay Adaptable", text: "2023/24 champion Jonas Sand Labakk was struggling early and decisively used his Wildcard in GW8. \"You need to think for yourself. You can't let others make all the decisions for you.\"", source: "Jonas Sand Labakk (2023/24 Champion)" }
     ]
   },
@@ -3472,9 +3472,9 @@ VG.TIPS = [
     category: "Player Selection",
     icon: "⚽",
     tips: [
-      { title: "Invest in Starting Players", text: "Ibsen stresses having 15 regular starters. He strongly advises against picking non-playing \"bench fillers\" just to save money — every player should get minutes.", source: "Erik Ibsen" },
+      { title: "Invest in Starting Players", text: "Ibsen stresses having 15 regular starters. He strongly advises against picking non-playing \"bench fillers\" just to save money. Every player should get minutes.", source: "Erik Ibsen" },
       { title: "Goalkeeper Rotation", text: "Ibsen experimented with two premium keepers (Raya and Pickford) and rotated them based on fixtures. A rotating GK pair can outperform a single premium pick.", source: "Erik Ibsen" },
-      { title: "Captaincy is King", text: "Champion Lovro Budisin scored 29.1% of his total points from his captain — nearly 8% more than the previous season's winner. Captain choice is the single biggest lever.", source: "Lovro Budisin (2024/25 Champion)" },
+      { title: "Captaincy is King", text: "Champion Lovro Budisin scored 29.1% of his total points from his captain, nearly 8% more than the previous season's winner. Captain choice is the single biggest lever.", source: "Lovro Budisin (2024/25 Champion)" },
       { title: "Don't Rely on a Single God", text: "Budisin went almost the entire season without Haaland, allowing him to have multiple captaincy options like Salah, Palmer, and Son. Flexibility beats rigidity.", source: "Lovro Budisin" },
       { title: "Hunt for Value Picks", text: "Budisin chose Isak and Chris Wood. Their combined price (£14.5m) was £0.5m cheaper than Haaland alone, yet they outperformed him as the season's top forwards.", source: "Lovro Budisin" }
     ]
@@ -3487,7 +3487,7 @@ VG.TIPS = [
       { title: "Wildcard Timing", text: "Use when your squad needs a major overhaul. Fix early mistakes (like Ibsen did in GW2), reverse bad form (like Labakk in GW8), or prepare for DGWs.", source: "Multiple champions" },
       { title: "Bench Boost in DGW", text: "Classic strategy: Play Bench Boost during a Double Gameweek when all 15 players have fixtures. With new rules forcing one chip in the first half, GW1 is a viable alternative.", source: "FPL experts" },
       { title: "Free Hit for BGWs", text: "Make unlimited free transfers for a single gameweek. Cover Blank Gameweeks when multiple teams have no fixture. Also powerful for GW38 differential sprint.", source: "FPL experts" },
-      { title: "Triple Captain in DGW", text: "Play during a Double Gameweek on an in-form player with two favorable fixtures. Never waste it on a single fixture — the upside isn't there.", source: "FPL experts" }
+      { title: "Triple Captain in DGW", text: "Play during a Double Gameweek on an in-form player with two favorable fixtures. Never waste it on a single fixture. The upside isn't there.", source: "FPL experts" }
     ]
   },
   {
@@ -3505,7 +3505,7 @@ VG.TIPS = [
     tips: [
       { title: "Patience Beats Recklessness", text: "FPL is a marathon, not a sprint. Patience and discipline will almost always outperform reckless, short-term moves.", source: "General wisdom" },
       { title: "Trust Your Gut", text: "Budisin makes his own decisions right before the deadline and trusts his instincts. Data informs, but intuition decides.", source: "Lovro Budisin" },
-      { title: "Avoid Points Hits", text: "It's almost always better to roll your transfer. The math doesn't lie — a 4-point hit needs to outperform by 4+ points to break even.", source: "Multiple champions" }
+      { title: "Avoid Points Hits", text: "It's almost always better to roll your transfer. The math doesn't lie: a 4-point hit needs to outperform by 4+ points to break even.", source: "Multiple champions" }
     ]
   }
 ];
@@ -3531,7 +3531,7 @@ VG.render.tips = (result, allXP, fixtures, gw) => {
     const analysis = VG.getSquadAnalysis(result, fixtures, gw);
     if (analysis) {
       html += `<div class="tips-section">`;
-      html += `<div class="tips-section-header">📊 Squad DNA — Strengths & Weaknesses</div>`;
+      html += `<div class="tips-section-header">📊 Squad DNA: Strengths & Weaknesses</div>`;
       html += `<div class="tips-dna" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">`;
       if (analysis.strengths.length > 0) {
         html += `<div style="background:rgba(0,255,135,0.04);border-radius:8px;padding:10px;">`;
@@ -3580,7 +3580,7 @@ VG.render.tips = (result, allXP, fixtures, gw) => {
       const capShare = gwTotal > 0 ? ((capXP / gwTotal) * 100).toFixed(0) : '?';
       tips.push({
         title: `Captain: ${c.name} (${capXP.toFixed(1)} xP)`,
-        text: `Your captain contributes ~${capShare}% of GW${gw} expected points. ${capXP >= 6 ? 'Strong pick — this is a premium captaincy.' : capXP >= 4 ? 'Decent pick — consider alternatives if fixtures worsen.' : 'Weak pick — look for a better option in your squad or via transfer.'}`,
+        text: `Your captain contributes ~${capShare}% of GW${gw} expected points. ${capXP >= 6 ? 'Strong pick, this is a premium captaincy.' : capXP >= 4 ? 'Decent pick, consider alternatives if fixtures worsen.' : 'Weak pick, look for a better option in your squad or via transfer.'}`,
         source: 'VibeGaffer Analysis'
       });
     }
@@ -3590,7 +3590,7 @@ VG.render.tips = (result, allXP, fixtures, gw) => {
     if (injuredCount >= 3) {
       tips.push({
         title: `${injuredCount} Injured/Doubtful Players`,
-        text: `Your squad has ${injuredCount} players with injury concerns. This is a wildcard trigger — consider using WC to replace them before they lose value.`,
+        text: `Your squad has ${injuredCount} players with injury concerns. This is a wildcard trigger: consider using WC to replace them before they lose value.`,
         source: 'VibeGaffer Analysis'
       });
     } else if (injuredCount >= 1) {
@@ -3659,7 +3659,7 @@ VG.render.tips = (result, allXP, fixtures, gw) => {
     if (missing.length >= 3) {
       tips.push({
         title: `Missing ${missing.length} Template Players`,
-        text: `You're missing popular high-xP picks: ${missing.slice(0, 3).map(p => p.name).join(', ')}. These are highly owned — if they score well, you'll lose rank. Consider whether your differentials can compensate.`,
+        text: `You're missing popular high-xP picks: ${missing.slice(0, 3).map(p => p.name).join(', ')}. These are highly owned, so if they score well you'll lose rank. Consider whether your differentials can compensate.`,
         source: 'VibeGaffer Analysis'
       });
     }
@@ -3671,7 +3671,7 @@ VG.render.tips = (result, allXP, fixtures, gw) => {
         html += `<div class="tip-card" style="border-left:3px solid #00ff87;">`;
         html += `<div class="tip-title">${VG.esc(tip.title)}</div>`;
         html += `<div class="tip-text">${VG.esc(tip.text)}</div>`;
-        html += `<div class="tip-source">— ${VG.esc(tip.source)}</div>`;
+        html += `<div class="tip-source">${VG.esc(tip.source)}</div>`;
         html += `</div>`;
       });
       html += `</div>`;
@@ -3717,7 +3717,7 @@ VG.render.tips = (result, allXP, fixtures, gw) => {
       html += `<div class="tip-card">`;
       html += `<div class="tip-title">${VG.esc(tip.title)}</div>`;
       html += `<div class="tip-text">${VG.esc(tip.text)}</div>`;
-      html += `<div class="tip-source">— ${VG.esc(tip.source)}</div>`;
+      html += `<div class="tip-source">${VG.esc(tip.source)}</div>`;
       html += `</div>`;
     });
     html += `</div>`;
@@ -3826,8 +3826,8 @@ VG.computeBlankProbability = (cap, fixtures, gw) => {
     const minutes = parseInt(data.minutes || "0");
     if (starts >= 30 && minutes >= 2600) { p += 0.01; reasons.push("Nailed starter (30+ starts)"); }
     else if (starts >= 25 && minutes >= 2000) { p += 0.05; reasons.push("Regular starter"); }
-    else if (starts >= 15) { p += 0.10; reasons.push("Rotation risk — partial starter"); }
-    else { p += 0.20; reasons.push("Not a nailed starter — high rotation risk"); }
+    else if (starts >= 15) { p += 0.10; reasons.push("Rotation risk: partial starter"); }
+    else { p += 0.20; reasons.push("Not a nailed starter, high rotation risk"); }
     if (data.status === "d") { p += 0.25; reasons.push("⚠ Doubtful (status=d)"); }
     if (data.status === "u") { p += 0.30; reasons.push("⚠ Unavailable risk"); }
     // FPL fitness flag: chance_of_playing_next_round (null when not flagged)
@@ -3846,8 +3846,8 @@ VG.computeBlankProbability = (cap, fixtures, gw) => {
     const oppId = isHome ? f.team_a : f.team_h;
     const opp = VG.teams[oppId];
     const oppStr = opp ? (isHome ? opp.strength_overall_away : opp.strength_overall_home) : 1100;
-    if (!isHome && oppStr >= 1150) { p += 0.06; reasons.push("Away vs strong side — minutes risk"); }
-    if (isHome && oppStr <= 1000) { p -= 0.03; reasons.push("Home vs weak side — locked minutes"); }
+    if (!isHome && oppStr >= 1150) { p += 0.06; reasons.push("Away vs strong side, minutes risk"); }
+    if (isHome && oppStr <= 1000) { p -= 0.03; reasons.push("Home vs weak side, locked minutes"); }
   });
   const yellows = parseInt(data?.yellow_cards || "0");
   const games = Math.max(1, parseInt(data?.starts || "0"));
@@ -3949,9 +3949,9 @@ VG.renderLive = async (gw, teamId) => {
           const playedNow = liveMins[p.id] > 0;
           const pts = (livePts[p.id] || 0) * (p.isCaptain ? Math.max(p.multiplier, 1) : 1);
           const st = !isBench
-            ? (playedNow ? '<span style="color:#00ff87;">● playing</span>' : '<span style="color:#ef4444;">● 0 mins — sub risk</span>')
+            ? (playedNow ? '<span style="color:#00ff87;">● playing</span>' : '<span style="color:#ef4444;">● 0 mins, sub risk</span>')
             : (playedNow ? '<span style="color:#60a5fa;">● on bench (played)</span>' : '<span style="color:#334155;">● bench</span>');
-          html += `<tr><td style="color:#e2e8f0;">${p.isCaptain ? '(C) ' : p.isVice ? '(VC) ' : ''}${VG.esc(p.name)}</td><td>${p.position}</td><td>${liveMins[p.id] ?? 0}'</td><td style="color:#00ff87;">${pts}</td><td style="color:#fbbf24;">${bonus[p.id] ? '+' + bonus[p.id] : '—'}</td><td>${st}</td></tr>`;
+          html += `<tr><td style="color:#e2e8f0;">${p.isCaptain ? '(C) ' : p.isVice ? '(VC) ' : ''}${VG.esc(p.name)}</td><td>${p.position}</td><td>${liveMins[p.id] ?? 0}'</td><td style="color:#00ff87;">${pts}</td><td style="color:#fbbf24;">${bonus[p.id] ? '+' + bonus[p.id] : '-'}</td><td>${st}</td></tr>`;
         });
         html += `</table>`;
         if (subResult.subs.length > 0) {
