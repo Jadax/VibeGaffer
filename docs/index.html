@@ -18,11 +18,11 @@
     form-action 'none'">
     <title>VibeGaffer — FPL Intelligence</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.8.0">
+  <link rel="stylesheet" href="style.css?v=5.8.1">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
           integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=5.8.0"></script>
+  <script src="app.js?v=5.8.1"></script>
 </head>
 <body>
 
@@ -31,7 +31,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Tushant Sharma</strong> · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.8.0</span></div>
+    <div><span class="badge pulse-glow">v5.8.1</span></div>
 </div>
 
 <div class="app">
@@ -146,7 +146,7 @@
 </div>
 </div>
 
-    <div class="footer">VibeGaffer v5.8.0 · Built by Tushant Sharma</div>
+    <div class="footer">VibeGaffer v5.8.1 · Built by Tushant Sharma</div>
 
 <script>
 VG.switchTab = (name) => {
@@ -1000,7 +1000,7 @@ VG.runWhatIf = async (mode, gw) => {
   if (!resultEl) return;
   const playerId = parseInt(document.getElementById("whatIfPlayer")?.value || "0");
   if (!playerId) { resultEl.innerHTML = '<p style="color:#475569;">Select a player first.</p>'; return; }
-  const leagueId = parseInt(el("leagueId").value);
+  const leagueId = parseInt(document.getElementById("leagueId").value);
   if (!leagueId) return;
   try {
     resultEl.innerHTML = '<p style="color:#60a5fa;">Simulating…</p>';

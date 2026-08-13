@@ -184,7 +184,15 @@ jobs:
           git add docs/data/odds.json
           if git diff --staged --quiet; then
             echo "No odds changes"
-          else
-            git commit -m "data: auto-fetch bookmaker odds [skip ci]"
-            git push
+            exit 0
           fi
+          git commit -m "data: auto-fetch bookmaker odds [skip ci]"
+          # This file is only ever touched by this workflow, so a rejected
+          # push means another run of THIS workflow (or an unrelated commit)
+          # landed first — a plain rebase resolves it, no replay needed.
+          for attempt in 1 2 3; do
+            git push && exit 0
+            git pull --rebase origin main
+          done
+          echo "Could not push after 3 attempts"
+          exit 1

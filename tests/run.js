@@ -667,6 +667,13 @@ check("season planner is safe on empty fixtures", typeof VG.render.seasonPlanner
   const leagueResult = await VG.analyzeLeague(999999, 1, fixtures).catch(() => { analyzeLeagueThrew = true; return "threw"; });
   check("analyzeLeague fails closed instead of throwing when the API is unreachable", !analyzeLeagueThrew && leagueResult === null);
 
+  // VG.runWhatIf is a top-level function (not nested inside VG.run/preloadTabs),
+  // so it can't reach their local `const el = id => document.getElementById(id)`
+  // closures. It briefly called bare el("leagueId") and threw "el is not
+  // defined" on every real click — silently, since the onclick has no .catch().
+  // Guard against that class of bug reappearing.
+  check("runWhatIf resolves its own DOM lookups, not a borrowed `el` closure", !/VG\.runWhatIf = async[\s\S]*?\bel\(/.test(indexSource.slice(indexSource.indexOf("VG.runWhatIf"), indexSource.indexOf("VG.runWhatIf") + 1500)));
+
   section("Summary");
   console.log(`${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

@@ -1,4 +1,4 @@
-# VibeGaffer v5.8.0
+# VibeGaffer v5.8.1
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
@@ -64,7 +64,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.8.0)
+## Features (v5.8.1)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -419,6 +419,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.8.1 | — | Post-review fixes on v5.8.0: the League tab's What-If scenario buttons (Make Captain / Transfer In) threw `ReferenceError: el is not defined` on every click and failed silently (no `.catch()` on the async onclick) — `VG.runWhatIf` is a top-level function and can't reach `VG.run`/`preloadTabs`' local `el` closures; fixed to call `document.getElementById` directly. Also fixed a git-push race in three of four secondary data workflows (`fetch-understat.yml`, `fetch-history-priors.yml`, `fetch-odds.yml`, `fetch-recent-form.yml`) that had no retry-on-reject logic, unlike `fetch-data.yml` — caused a real CI failure when two fetchers committed in the same window; all four now retry with `git pull --rebase` |
 | v5.8.0 | — | "Massive-model-lite" recency/rotation upgrade + community features: horizon cap (options built from remaining GWs, engine clamps), new-to-PL priors + visible NEW badge, OpenFPL-style 1/3/5-round recency-weighted projections (fetcher now emits s1/s3/s5 windows), xMins surfaced everywhere, Buy/Hold/Sell market tags, localStorage Watchlist (Strategy tab + ☆ toggles), What-If race scenarios (shared rival draws → change-attributable deltas) in League tab, Rate My Team card (Squad tab), full-season FDR planner grid (Fixtures tab) |
 | v5.7.0 | — | Mini-League Race Simulator: Monte Carlo win probability (P(1st)/P(top 3)) among fetched league squads for the current GW, built entirely on data VG.analyzeLeague already had (no new API calls); Recency-Weighted Rotation Risk: new fetch-recent-form.yml pulls last-5-GW starts/minutes per player from FPL's own per-player history endpoint, blended into the minutes-probability model (season aggregates alone can't distinguish a player nailed for the last 5 GWs from one benched since September) |
 | v5.6.1 | — | Hardening + refactor: fixed a player-profile XSS (unescaped opponent name), removed dead code/params/vars, consolidated shared helpers (`playerName`/`fdrColor`/`hasFitnessFlag`/`setPieceBadge`), removed redundant render init + stray comments, author attribution = Tushant Sharma only |
@@ -464,7 +465,7 @@ Test coverage:
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.8.0
+- **Application**: VibeGaffer v5.8.1
 - **Author**: Tushant Sharma
 - **License**: Proprietary
 - **Live URL**: https://jadax.github.io/VibeGaffer/

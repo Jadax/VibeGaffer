@@ -45,4 +45,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/data/history-priors.json
-          git diff --staged --quiet || (git commit -m "data: refresh free FPL history priors [skip ci]" && git push)
+          git diff --staged --quiet && exit 0
+          git commit -m "data: refresh free FPL history priors [skip ci]"
+          # This file is only ever touched by this workflow, so a rejected
+          # push means another run of THIS workflow (or an unrelated commit)
+          # landed first — a plain rebase resolves it, no replay needed.
+          for attempt in 1 2 3; do
+            git push && exit 0
+            git pull --rebase origin main
+          done
+          echo "Could not push after 3 attempts"
+          exit 1
