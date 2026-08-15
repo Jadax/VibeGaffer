@@ -445,6 +445,61 @@ check("team ratings render HTML table", typeof VG.render.teamRatings(teamRates) 
 check("team ratings render gracefully without data", VG.render.teamRatings(null).includes("unavailable"));
 VG.understat = null;
 
+// ── v5.10: season-adaptive Elo team strength ────────────────────────────
+// computeTeamElo blends results-driven attack/defence Elo back into the
+// strength_* fields computeFixtureXP reads. It mutates VG.teams, so snapshot
+// the strength fields and restore them after the section to keep later tests
+// hermetic.
+section("Season-adaptive Elo team strength (v5.10)");
+const eloStrengths = {};
+Object.values(VG.teams).forEach(t => {
+  eloStrengths[t.id] = {
+    ah: t.strength_attack_home, aa: t.strength_attack_away,
+    dh: t.strength_defence_home, da: t.strength_defence_away,
+    oh: t.strength_overall_home, oa: t.strength_overall_away
+  };
+});
+const preElo = VG.computeTeamElo(fixtures); // real fixtures.json: none finished pre-season
+check("elo returns a full 20-team table pre-season", preElo && preElo.length === 20);
+check("elo is seed-only pre-season (no finished fixtures)", preElo.every(r => r.played === 0 && r.weight === 0 && r.source === "seed"));
+check("elo pre-season leaves the strength fields byte-identical", Object.values(VG.teams).every(t => t.strength_attack_home === eloStrengths[t.id].ah && t.strength_overall_home === eloStrengths[t.id].oh));
+check("elo HTML renders nothing pre-season", VG.eloRatingsHTML(preElo) === "");
+
+// Synthetic finished fixtures: ARS (1) beats SHU (19) 3-0 and LIV (5) 2-1;
+// MCI (20) wins 2-0 away at CHE (2). Enough to move ratings off the seed.
+const eloFx = [
+  { id: 1001, event: 1, finished: true, team_h: 1, team_a: 19, team_h_score: 3, team_a_score: 0 },
+  { id: 1002, event: 1, finished: true, team_h: 2, team_a: 20, team_h_score: 0, team_a_score: 2 },
+  { id: 1003, event: 2, finished: true, team_h: 1, team_a: 5, team_h_score: 2, team_a_score: 1 }
+];
+const eloRows = VG.computeTeamElo(eloFx);
+const arsElo = eloRows.find(r => r.id === 1);
+const shuElo = eloRows.find(r => r.id === 19);
+check("elo ranks all 20 teams and sorts by overall", eloRows.length === 20 && eloRows[0].rank === 1 && eloRows[19].rank === 20 && eloRows.every((r, i) => i === 0 || eloRows[i - 1].overall >= r.overall));
+check("a two-win side ranks above a two-loss side", arsElo.rank < shuElo.rank);
+check("a winning side carries higher attack Elo than the team it thumped", arsElo.att > shuElo.att);
+check("played teams carry results stats", arsElo.played === 2 && arsElo.w === 2 && arsElo.gf === 5 && arsElo.ga === 1);
+const idleElo = eloRows.find(r => r.id === 3);
+check("a team with no finished fixtures keeps the seed", idleElo.played === 0 && idleElo.weight === 0 && idleElo.source === "seed");
+check("elo blends a winning streak into the strength fields", VG.teams[1].strength_attack_home > eloStrengths[1].ah);
+check("elo attaches a per-team elo record", VG.teams[1].elo && VG.teams[1].elo.played === 2 && VG.teams[1].elo.weight > 0);
+const manyFx = Array.from({ length: 8 }, (_, i) => ({ id: 2000 + i, event: 1 + i, finished: true, team_h: 1, team_a: 3, team_h_score: 2, team_a_score: 1 }));
+const capRows = VG.computeTeamElo(manyFx);
+check("blend weight caps at 0.85 once a team has 8+ games", capRows.find(r => r.id === 1).weight === 0.85);
+const eloHtml = VG.eloRatingsHTML(eloRows);
+check("elo table renders ticker-table markup", typeof eloHtml === "string" && eloHtml.includes("ticker-table") && eloHtml.includes("Attack Elo"));
+check("elo table shows each team's short name", eloRows.every(r => eloHtml.includes(r.short)));
+Object.values(VG.teams).forEach(t => {
+  t.strength_attack_home = eloStrengths[t.id].ah;
+  t.strength_attack_away = eloStrengths[t.id].aa;
+  t.strength_defence_home = eloStrengths[t.id].dh;
+  t.strength_defence_away = eloStrengths[t.id].da;
+  t.strength_overall_home = eloStrengths[t.id].oh;
+  t.strength_overall_away = eloStrengths[t.id].oa;
+  delete t.elo;
+});
+delete VG.teamElo;
+
 // ── v5.5 features: EO, Monte Carlo, DGW/BGW planner, set-pieces, rank impact ──
 section("v5.5 features (EO, MC, planner, set-pieces, rank)");
 // Effective ownership

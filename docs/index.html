@@ -703,6 +703,17 @@ VG.preloadTabs = async (gw) => {
       fixtureHTML += VG.render.teamRatings(teamRatings);
       fixtureHTML += '<div class="section-title" style="margin-top:16px;font-size:0.8rem;">Fixture Difficulty Ticker</div>';
     }
+    // Season-adaptive Elo (v5.10): re-ranks teams from finished-match results
+    // and blends the drift back into the strength fields the xP engine reads.
+    // Renders nothing pre-season (no finished fixtures), then ramps up to an
+    // 85% results weight as games accumulate.
+    const eloRows = VG.computeTeamElo(VG.allFixtures);
+    const eloHTML = VG.eloRatingsHTML(eloRows);
+    if (eloHTML) {
+      fixtureHTML += '<div class="section-title" style="margin-top:16px;font-size:0.8rem;">Season-Adaptive Elo <span style="font-weight:400;color:#475569;font-size:0.68rem;">(results-driven strength)</span></div>';
+      fixtureHTML += '<p class="subtitle" style="margin-top:0;">Attack/defence Elo re-ranked from finished fixtures. "Blend" = how much of the rating is results vs the API pre-season seed (ramps to 85%).</p>';
+      fixtureHTML += eloHTML;
+    }
     fixtureHTML += VG.render.ticker(tickerData, gw, 8);
     // Add fixture swing summary
     fixtureHTML += '<div class="section-title" style="margin-top:16px;font-size:0.8rem;">Fixture Swing Analysis</div>';

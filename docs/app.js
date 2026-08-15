@@ -351,6 +351,142 @@ VG.buildMaps = (data) => {
   VG.currentGW = data.events.find(e => e.is_current)?.id || data.events.find(e => e.is_next)?.id || 1;
 };
 
+// ── Season-adaptive Elo team strength (v5.10) ───────────────────────────
+// Idea borrowed from fpl-dataset / fpl-predict's live Elo ratings and the
+// OpenFPL arXiv write-up (arXiv:2508.09992). FPL's own strength_* fields are
+// a pre-season snapshot that stays static all year (and is all-zeros before
+// GW1), so "who is actually good right now" never reaches the xP engine. This
+// derives attack/defence Elo from finished fixtures (team_h_score/team_a_score,
+// present once a match completes) and blends the drift back into the strength
+// fields VG.computeFixtureXP already reads.
+//
+// Pre-season (no finished fixtures) the blend weight is 0, so the engine is
+// byte-identical to the buildMaps fallback. The blend ramps up to 0.85 as
+// games are played, so week one only nudges the ratings while mid-season the
+// results fully re-rank the league.
+VG.computeTeamElo = (fixtures) => {
+  const fx = fixtures || VG.allFixtures || [];
+  if (!VG.teams) return null;
+
+  // Seed from the same 1000-scale the buildMaps fallback and computeFixtureXP
+  // expect. Real-season API fields (when non-zero) are the seed; otherwise use
+  // the 1-5 rating → base scale, matching the promoted-team fallback exactly.
+  const seed = {};
+  Object.values(VG.teams).forEach(t => {
+    const rating = Math.max(1, Math.min(5, Number(t.strength) || 3));
+    const base = 1000 + (rating - 3) * 100;
+    seed[t.id] = {
+      attH: Number(t.strength_attack_home) || base + 40,
+      attA: Number(t.strength_attack_away) || base - 10,
+      defH: Number(t.strength_defence_home) || base + 30,
+      defA: Number(t.strength_defence_away) || base - 20
+    };
+  });
+
+  // Independent attack & defence Elo per team, seeded from the same scale.
+  const elo = {};
+  Object.keys(seed).forEach(id => {
+    elo[id] = {
+      att: (seed[id].attH + seed[id].attA) / 2,
+      def: (seed[id].defH + seed[id].defA) / 2,
+      played: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0
+    };
+  });
+
+  const HOME_ADV = 60; // Elo points of home advantage
+  const obs = (gd) => 1 / (1 + Math.exp(-gd * 0.25)); // logistic of goal diff → 0..1
+  const expect = (mine, theirs) => 1 / (1 + Math.pow(10, (theirs - mine) / 400));
+
+  // Sort chronologically so Elo evolves in match order.
+  const finished = fx
+    .filter(f => f && f.finished && f.team_h_score != null && f.team_a_score != null)
+    .sort((a, b) => (a.event || 0) - (b.event || 0) || (a.id || 0) - (b.id || 0));
+
+  finished.forEach(f => {
+    const H = f.team_h, A = f.team_a;
+    const eH = elo[H], eA = elo[A];
+    if (!eH || !eA) return;
+    const hs = f.team_h_score, as = f.team_a_score;
+    const gd = hs - as;
+    // Expected goals-scored share for each side.
+    const expH = expect(eH.att + HOME_ADV, eA.def);
+    const expA = expect(eA.att, eH.def + HOME_ADV);
+    // Observed share, shaped by the actual margin (wins count more than draws).
+    const obsH = obs(gd), obsA = 1 - obsH;
+    // Margin-scaled K: bigger wins move ratings more, capped.
+    const K = 36 * (1 + Math.min(1, Math.abs(gd) / 4));
+    eH.att += K * (obsH - expH);
+    eA.def -= K * (obsH - expH); // conceding a beating drops your defence
+    eA.att += K * (obsA - expA);
+    eH.def -= K * (obsA - expA);
+    eH.played++; eA.played++;
+    eH.gf += hs; eH.ga += as; eA.gf += as; eA.ga += hs;
+    if (gd > 0) { eH.w++; eA.l++; } else if (gd < 0) { eA.w++; eH.l++; } else { eH.d++; eA.d++; }
+  });
+
+  // Blend Elo drift back into the strength fields, weighting by games played.
+  const weight = (n) => Math.min(0.85, n / 8); // 0 pre-season → 0.85 after 8
+  const rows = Object.values(VG.teams).map(t => {
+    const id = t.id;
+    const s = seed[id], e = elo[id];
+    if (!s || !e) return null;
+    const w = weight(e.played);
+    const driftAtt = e.att - (s.attH + s.attA) / 2;
+    const driftDef = e.def - (s.defH + s.defA) / 2;
+    // Only mutate the shared strength fields once results exist. At weight 0
+    // the seed's overall formula ((attH+defH)/2) differs from buildMaps'
+    // base+30, so writing back would silently change values with zero games.
+    if (w > 0) {
+      t.strength_attack_home = +(s.attH + w * driftAtt).toFixed(0);
+      t.strength_attack_away = +(s.attA + w * driftAtt).toFixed(0);
+      t.strength_defence_home = +(s.defH + w * driftDef).toFixed(0);
+      t.strength_defence_away = +(s.defA + w * driftDef).toFixed(0);
+      t.strength_overall_home = +(((s.attH + s.defH) / 2 + w * (driftAtt + driftDef) / 2)).toFixed(0);
+      t.strength_overall_away = +(((s.attA + s.defA) / 2 + w * (driftAtt + driftDef) / 2)).toFixed(0);
+    }
+    t.elo = { att: e.att, def: e.def, played: e.played, weight: w };
+    return {
+      id, short: t.short_name,
+      name: t.name,
+      att: +e.att.toFixed(0), def: +e.def.toFixed(0),
+      overall: +((e.att + e.def) / 2).toFixed(0),
+      played: e.played, w: e.w, d: e.d, l: e.l, gf: e.gf, ga: e.ga,
+      weight: +w.toFixed(2), source: e.played > 0 ? "elo" : "seed"
+    };
+  }).filter(Boolean);
+  rows.sort((a, b) => b.overall - a.overall);
+  rows.forEach((r, i) => { r.rank = i + 1; });
+  VG.teamElo = rows;
+  return rows;
+};
+
+// HTML for the Fixtures-tab Elo table: live attack/defence/overall Elo with
+// W-D-L, goal record and the blend weight (so users see how much of the rating
+// is results-driven vs API seed). Renders empty pre-season (weight 0).
+VG.eloRatingsHTML = (rows) => {
+  if (!rows || rows.length === 0 || rows.every(r => r.played === 0)) return "";
+  const bar = (eloVal, col) => {
+    const w = Math.max(4, Math.min(100, 45 + (eloVal - 1000) / 3));
+    return `<span style="display:inline-block;width:56px;height:6px;background:#1e293b;border-radius:3px;vertical-align:middle;margin-right:6px;"><span style="display:block;height:6px;width:${w}%;background:${col};border-radius:3px;"></span></span><span style="color:${col};font-weight:700;font-size:0.8rem;">${eloVal}</span>`;
+  };
+  let html = '<div class="ticker-scroll"><table class="ticker-table"><thead><tr><th>#</th><th>Team</th><th>Attack Elo</th><th>Defence Elo</th><th>Overall</th><th>W-D-L</th><th>GF/GA</th><th>Blend</th></tr></thead><tbody>';
+  rows.forEach(r => {
+    const color = r.played > 0 ? "#a78bfa" : "#64748b";
+    html += `<tr>
+      <td style="color:#94a3b8;">${r.rank}</td>
+      <td class="ticker-team"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${VG.esc(VG.teamColor(r.short))};margin-right:6px;"></span>${VG.esc(r.short)}</td>
+      <td>${bar(r.att, color)}</td>
+      <td>${bar(r.def, color)}</td>
+      <td>${bar(r.overall, r.played > 0 ? "#00ff87" : "#64748b")}</td>
+      <td style="font-size:0.75rem;color:#94a3b8;">${r.played > 0 ? `${r.w}-${r.d}-${r.l}` : "–"}</td>
+      <td style="font-size:0.75rem;color:#94a3b8;">${r.played > 0 ? `${r.gf}/${r.ga}` : "–"}</td>
+      <td style="font-size:0.7rem;color:#64748b;">${(r.weight * 100).toFixed(0)}% results</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  return html;
+};
+
 // Total gameweeks in a season (FPL always runs 38 rounds).
 VG.SEASON_GW_COUNT = 38;
 
