@@ -1,12 +1,12 @@
 {
   "name": "vibegaffer",
-  "version": "5.10.0",
+  "version": "5.11.0",
   "private": true,
   "description": "Static Fantasy Premier League optimization and planning engine",
   "author": "Tushant Sharma",
   "license": "UNLICENSED",
   "scripts": {
-    "check": "node --check docs/app.js",
+    "check": "node --check docs/app.js && node --check docs/ui.js",
     "test": "node tests/run.js"
   }
 }

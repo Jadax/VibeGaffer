@@ -118,6 +118,43 @@ jobs:
           if not isinstance(fixtures, list) or len(fixtures) < 300:
               sys.exit(f'Implausible fixtures: {type(fixtures).__name__}')
           print(f'OK: {len(fixtures)} fixtures')
+
+          # Publish a compact, read-only bootstrap for the public app. Keep
+          # the full snapshot for compatibility/debugging, but avoid shipping
+          # API metadata the client never reads.
+          player_fields = {
+              'id', 'code', 'first_name', 'second_name', 'web_name', 'team',
+              'element_type', 'now_cost', 'status', 'chance_of_playing_next_round',
+              'news', 'form', 'ep_next', 'value_form', 'selected_by_percent',
+              'total_points', 'minutes', 'starts', 'goals_scored', 'assists',
+              'clean_sheets', 'saves', 'bonus', 'bps', 'creativity', 'influence',
+              'threat', 'ict_index', 'expected_goals', 'expected_assists',
+              'expected_goal_involvements', 'expected_goals_conceded',
+              'expected_goals_per_90', 'expected_assists_per_90',
+              'expected_goal_involvements_per_90', 'clean_sheets_per_90',
+              'defensive_contribution_per_90', 'penalties_missed', 'red_cards',
+              'yellow_cards', 'transfers_in_event', 'transfers_out_event',
+              'shirt_number', 'own_goals', 'penalties_saved', 'team_code'
+          }
+          team_fields = {
+              'id', 'name', 'short_name', 'code', 'strength',
+              'strength_attack_home', 'strength_attack_away',
+              'strength_defence_home', 'strength_defence_away',
+              'strength_overall_home', 'strength_overall_away'
+          }
+          event_fields = {'id', 'is_current', 'is_next'}
+          compact = {
+              'elements': [{k: p.get(k) for k in player_fields if k in p} for p in bootstrap['elements']],
+              'teams': [{k: t.get(k) for k in team_fields if k in t} for t in bootstrap['teams']],
+              'events': [{k: e.get(k) for k in event_fields if k in e} for e in bootstrap.get('events', [])]
+          }
+          with open('docs/data/bootstrap-lite.json', 'w') as f:
+              json.dump(compact, f, separators=(',', ':'))
+          full_size = __import__('os').path.getsize('docs/data/bootstrap.json')
+          lite_size = __import__('os').path.getsize('docs/data/bootstrap-lite.json')
+          if lite_size >= full_size:
+              sys.exit(f'Compact bootstrap is not smaller: {lite_size} >= {full_size}')
+          print(f"Wrote compact bootstrap: {lite_size} bytes ({lite_size / full_size:.0%} of full)")
           PY
 
       - name: Commit and push if changed

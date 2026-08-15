@@ -4,14 +4,14 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 ## Handover Status
 
-- **Current version**: v5.9.0 (custom domain + delisting + design/copy pass on top of v5.8.1)
+- **Current version**: v5.11.0 (architectural hardening and modular transport/UI layer on top of v5.10.0)
 - **v5.9.0 shipped** (user request: custom subdomain, delist the repo from the live product, modernize the UI, remove AI-writing-tells from all visitor-facing copy):
   1. **Custom domain**: `docs/CNAME` now contains `vibegaffer.astraiva.app`. This only takes effect once the user adds a DNS CNAME record (`vibegaffer` → `jadax.github.io`) at their DNS provider and sets the custom domain in the GitHub repo's Settings → Pages (which also lets "Enforce HTTPS" be turned on once DNS propagates) — neither of those is something a model can do from the repo. Until then the site keeps serving fine at `jadax.github.io/VibeGaffer/`.
   2. **Delisting, not privacy**: the user was told plainly that a static client-side app can't hide its own JS from visitors (View Source/DevTools always works, independent of GitHub repo visibility) — chose "just delist," i.e. no GitHub/repo links anywhere in the live product or the docs' Live URL line, repo itself stays public. Do not add repo links back into `docs/index.html` or the README header without being asked.
   3. **Astraiva branding restored** in the header (`.header-sub`) and footer, reversing the v5.6.1 removal — now that this ships under an astraiva.app subdomain, hiding the affiliation didn't make sense. If a future request removes it again, that supersedes this note.
   4. **Design pass** (scope: "polish the current theme," not a rebrand — no new color system): pill-style tab nav with per-tab emoji icons and an active-state gradient fill (`docs/style.css` `.tabs`/`.tab`), custom themed scrollbar, `fadeUp` transitions on tab switches and the results/welcome mount (respects `prefers-reduced-motion`), consistent hover-lift (`translateY(-2px)`) added across `.metric`/`.chip`/`.strategy-card`/`.gw-card`/`.price-card`/`.tip-card` (previously inconsistent, some cards had zero hover feedback), rewrote the welcome screen with a punchier headline and a 3-step "how it works" strip (`.welcome-steps`) instead of two paragraphs of prose.
   5. **Copy pass**: every em dash in visitor-facing strings in `docs/app.js` and `docs/index.html` (tips, chip reasoning, captain reasoning, badges, market tags, watchlist, table cells, headings) rewritten with natural punctuation (colon/comma/period, chosen per sentence, not a blanket find-replace). Em dashes remaining in the two files are exclusively inside `//` comments (invisible to visitors) — grep `—` and check every hit is preceded by `//` if verifying this later. README's changelog table and deep technical sections were deliberately left alone (internal dev docs, not visitor-facing, disproportionate effort for the ask's intent).
-  - Verified live in-browser: full run unaffected (ILP solver, all tabs, ~192k chars of rendered HTML across squad+fixtures), tab switching works with the new emoji labels (selector matches on the `onclick` attribute, unaffected by label text), no new console errors. 193/193 tests still pass (this pass touched no JS logic, only `docs/style.css`, `docs/index.html` markup/copy, and `docs/app.js` string literals).
+  - Verified live in-browser at release point: full run unaffected (ILP solver, all tabs, ~192k chars of rendered HTML across squad+fixtures), tab switching works with delegated data actions, no new console errors. 193/193 tests passed at that release point.
 - **Previous**: v5.8.1 (`ed6ea7c` → v5.8.1 was a post-review fix pass — see below)
 - **v5.8.1 fixes** (found by a full duplication/correctness review, both verified live in-browser):
   1. **What-If scenario buttons were completely broken.** `VG.runWhatIf` (new in v5.8.0) is a top-level function, but called bare `el("leagueId")` — `el` only exists as a local closure inside `VG.init`/`VG.run`/`preloadTabs`. Every click threw `ReferenceError: el is not defined`, silently (the `onclick` has no `.catch()`), leaving the panel stuck on "Simulating…" forever. Fixed to `document.getElementById("leagueId")`. Regression test added (static-analysis check on `indexSource`, since `tests/run.js` doesn't execute the inline `<script>`).
@@ -44,16 +44,16 @@ Primary context document for AI models working on this codebase. Read fully befo
 - **Post-commit review fixes** (v5.4.1, applied after `93fa865`):
   - `render.tips`'s weaknesses bullets skipped `VG.esc()` while the strengths bullets right above them didn't — inconsistent with the codebase's escape-everything-API-derived convention. Team names aren't attacker-controlled today (unlike league/manager names), so this wasn't exploitable, but it's the same class of bug v5.3.0 hardened against. Fixed in `docs/app.js`.
   - The Live tab's "auto-refresh every 5 min" comment described recurring behaviour, but was a single `setTimeout` that fired once and stopped. Made it self-reschedule in `docs/index.html`.
-- **Tests**: 192/192 pass (`npm test`)
-- **State**: `docs/app.js` ~4400 lines, `docs/index.html` ~1120 lines; both syntax-check clean
+- **Tests**: 216/216 pass (`npm test`)
+- **State**: `docs/app.js` analytical core, `docs/data.js` transport, `docs/ui.js` UI actions, `docs/index.html` markup; all JavaScript modules syntax-check clean
 - **v5.5/v5.6 shipped** (competitor-borrowed features, per Borrowing Policy): Effective Ownership (`VG.computeEffectiveOwnership`), Monte Carlo GW Projection (`VG.mcGWDistribution`), DGW/BGW Season Planner (`VG.buildSeasonPlanner`), Set-Piece Takers (`docs/data/setpieces.json`, seasonal — update each year), Transfer Rank-Impact (`VG.estimateRankImpact`), Player Profile (`VG.playerProfileHTML`), Live Rank tracker (`VG.fetchTeamRank`), Team News feed (`VG.teamNewsFeed`), Chip EV Calendar (`VG.chipCalendar`)
-- **Next model TODO**: commit v5.8.0 (see **Commit Convention**), then optionally implement **Remaining Improvements** below.
+- **Next model TODO**: keep the release-hardening checks and public-data workflows green; update this handover when the next version ships.
 
 ## Quick Status
 
 - **Architecture**: Pure static HTML/CSS/JS on GitHub Pages (no backend)
 - **Live URL**: https://vibegaffer.astraiva.app/ (custom domain, CNAME'd to jadax.github.io — repo is not linked from the live product; keep it that way)
-- **Data**: Auto-fetched on a deadline-aware GitHub Actions schedule → `docs/data/*.json` (30 min inside 6h of a deadline, 2-hourly within 36h, 6-hourly otherwise). **Understat** free xG/forecast data fetched weekly → `docs/data/understat.json`. **Recent-form** (1/3/5-round starts/mins/points/xGI/BPS, rotation-risk + recency) fetched daily → `docs/data/recent-form.json` (v5.8.0 shape `{n, s1, s3, s5}` + back-compat; inert until players have 2+ recorded GWs this season)
+- **Data**: Auto-fetched on a deadline-aware GitHub Actions schedule → `docs/data/*.json` (30 min inside 6h of a deadline, 2-hourly within 36h, 6-hourly otherwise). The workflow now emits a compact `docs/data/bootstrap-lite.json` for the public app and retains `bootstrap.json` as a fallback/debug snapshot. **Understat** free xG/forecast data fetched weekly → `docs/data/understat.json`. **Recent-form** (1/3/5-round starts/mins/points/xGI/BPS, rotation-risk + recency) fetched daily → `docs/data/recent-form.json` (v5.8.0 shape `{n, s1, s3, s5}` + back-compat; inert until players have 2+ recorded GWs this season)
 - **ILP Solver**: highs-js (HiGHS WASM) loaded from CDN, falls back to greedy. highs-js publishes `window.Module`, **not** `window.Highs` — see Known Issues
 - **Odds**: The-Odds-API free tier (500 req/month), fetched once per GW when deadline is within 30h → `docs/data/odds.json`. Requires optional `ODDS_API_KEY` repo secret (currently unset). **Understat forecasts are the free no-key alternative** used by default
 
@@ -62,9 +62,12 @@ Primary context document for AI models working on this codebase. Read fully befo
 | File | Lines | Purpose |
 |------|-------|---------|
 | `docs/app.js` | ~4400 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips, live GW |
-| `docs/index.html` | ~1120 | All UI: 9 tabs, CSP, rendering, Chart.js radar/bar, inline JS |
+| `docs/index.html` | ~160 | Markup, CSP, tab shells, and static controls |
+| `docs/data.js` | ~180 | FPL transport, cache, local-data fallbacks, and enrichment loaders |
+| `docs/ui.js` | ~980 | UI orchestration, tab preloading, rendering calls, delegated actions |
 | `docs/style.css` | 275 | All styles |
 | `docs/data/bootstrap.json` | ~1.3MB | Player data (~560 active, 20 teams) |
+| `docs/data/bootstrap-lite.json` | generated | Compact public player/team/event payload; preferred by the app with full snapshot fallback |
 | `docs/data/fixtures.json` | ~118KB | 380 fixtures with FDR |
 | `docs/data/understat.json` | ~120KB | Free Understat xG/xA priors + team stats + per-fixture forecasts |
 | `docs/data/recent-form.json` | small | Per-player 1/3/5-round starts/mins/points/xGI/BPS windows (rotation risk + recency), v5.8.0 |
@@ -79,9 +82,9 @@ Primary context document for AI models working on this codebase. Read fully befo
 ## Golden Rules (violations cause bugs)
 
 1. **Never reimplement shared helpers.** `VG.esc`, `VG.isAvailable`, `VG.fixtureFDR`, `VG.fixtureInfo`, `VG.pickBestXI`, `VG.formationLegal`, `VG.countUnavailable`, `VG.hasPlayed`, `VG.topCaptainCandidates`, `VG._mcLambdas`, `VG._mcDrawTotal` exist to be reused.
-2. **Escape everything API-derived before `innerHTML`.** `VG.esc()` is the real XSS defence (league/manager names are controlled by other FPL users). CSP cannot be tightened because of inline `onclick=` handlers.
+2. **Escape everything API-derived before `innerHTML`.** `VG.esc()` is the real XSS defence (league/manager names are controlled by other FPL users). Script CSP is strict; UI actions use delegated data attributes.
 3. **All optimizer/selection code must filter injuries** via `VG.isAvailable(p)`. Doubtful players stay eligible but are flagged.
-4. **When changing a function signature, update every call site** — `docs/index.html` (inline script), `docs/app.js`, `tests/run.js`. Grep `VG.functionName(`.
+4. **When changing a function signature, update every call site** — `docs/ui.js`, `docs/data.js`, `docs/app.js`, `tests/run.js`. Grep `VG.functionName(`.
 5. **Do not add a second price/fixture lookup.** `VG.predictPriceChanges` and `VG.fixtureInfo` are the single sources of truth.
 6. **Run `node -c docs/app.js` + `npm test` after every change.** Browser smoke (python http.server + tab check) for UI changes.
 
@@ -293,8 +296,8 @@ Start-rate model using last season data: GK binary (nailed #1 = 95%, backup 15-7
 1. **Greedy fallback**: Can miss the global optimum when HiGHS cannot load. highs-js publishes `window.Module`, **not** `window.Highs` — reading the wrong global silently disabled ILP before v5.3.0.
 2. **Pre-season data**: Team strengths all 0, form 0.0 — fallback estimates used.
 3. **Bookmaker odds**: Requires optional `ODDS_API_KEY` repository secret (unset).
-4. **CSP needs `'unsafe-inline'`**: inline `onclick=` handlers + large inline `<script>`; `VG.esc` is the real XSS defence.
-5. **CORS proxies**: `allorigins.win` / `corsproxy.io` fallbacks receive the user's team and league IDs.
+4. **CSP is strict for scripts**: application logic is externalized in `app.js` + `ui.js`, all UI actions are delegated, and `script-src` no longer permits `'unsafe-inline'`; inline styles remain.
+5. **CORS proxies require consent**: `allorigins.win` / `corsproxy.io` fallbacks are gated by a one-session confirmation before requests carrying team or league IDs are relayed.
 6. **Pre-season live API**: `/event/{gw}/live/` returns `elements: []` until the first deadline passes — the Live tab shows a notice, not an error.
 
 ## Testing
@@ -303,16 +306,16 @@ Tests committed in `tests/run.js`, run in GitHub Actions.
 
 Run: `npm test`
 
-112/112 tests pass.
+216/216 tests pass.
 
 ## Remaining Improvements
 
-- Split monolithic `docs/app.js` + inline UI script into testable modules
-- Replace inline `onclick=` with delegated listeners so CSP can drop `'unsafe-inline'`
-- Trim `bootstrap.json` to the ~35 fields the engine reads (currently ships 105)
+- Split the remaining analytical `docs/app.js` into testable modules; transport and UI are now `docs/data.js` and `docs/ui.js`
+- ~~Replace inline `onclick=` with delegated listeners so CSP can drop `'unsafe-inline'`~~ completed in `docs/ui.js`; remaining module split is app.js-only.
+- ~~Trim `bootstrap.json` to the ~35 fields the engine reads (currently ships 105)~~ compact `bootstrap-lite.json` is generated and preferred by the app
 - Move `docs/data/` to its own branch to keep `main` history clean
 - Drop third-party CORS proxies or gate them behind explicit user consent
-- Add browser-level smoke tests for the nine UI tabs
+- ~~Add browser-level smoke tests for the nine UI tabs~~ release smoke + nine-tab contract checks are in place
 - **Done in v5.7.0** (was on this list): mini-league Monte Carlo win probability (`VG.simulateLeagueRace`), recency-weighted rotation risk (`fetch-recent-form.yml` + the `startRate` blend). Chip EV calendar and effective ownership were already done in v5.5/v5.6.
 - Un-implemented research candidates: Monte Carlo median xP/ceiling variance in squad *selection* (not just display — an optimizer that trades some mean xP for a higher floor/ceiling), multi-period ILP with free-transfer banking, sensitivity analysis (how much of a squad's edge depends on shaky xP inputs), fixture-congestion/European-minutes rotation risk (needs a non-FPL fixture source — no clean free one identified yet), defensive vulnerability ticker (set-piece/counter-attack concession patterns — needs shot-location data beyond what Understat's league-level endpoint exposes). Reddit r/FantasyPL sentiment feed considered and **rejected**: no statistically validated signal, meaningfully more scraping-ToS risk than the read-only APIs in the allowed list, adds noise rather than correctness.
 

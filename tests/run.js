@@ -3,9 +3,12 @@ const path = require("path");
 
 const root = path.resolve(__dirname, "..");
 const appPath = path.join(root, "docs", "app.js");
+const dataPath = path.join(root, "docs", "data.js");
 const indexPath = path.join(root, "docs", "index.html");
+const uiPath = path.join(root, "docs", "ui.js");
 const oddsWorkflowPath = path.join(root, ".github", "workflows", "fetch-odds.yml");
 const dataWorkflowPath = path.join(root, ".github", "workflows", "fetch-data.yml");
+const dataWorkflowSource = fs.readFileSync(dataWorkflowPath, "utf8");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const bootstrap = JSON.parse(fs.readFileSync(path.join(root, "docs", "data", "bootstrap.json"), "utf8"));
 const fixtures = JSON.parse(fs.readFileSync(path.join(root, "docs", "data", "fixtures.json"), "utf8"));
@@ -22,6 +25,7 @@ global.VG = {};
 
 const source = fs.readFileSync(appPath, "utf8").replace("const VG = {};", "// VG supplied by test harness");
 new Function(source)();
+new Function(fs.readFileSync(dataPath, "utf8"))();
 
 let passed = 0;
 let failed = 0;
@@ -220,15 +224,18 @@ const captainReason = VG.getCaptainReasoning({
 }, fixtures, 1);
 check("Doubtful captain warning is shown", captainReason.details.some(detail => detail.includes("Doubtful")));
 
-const indexSource = fs.readFileSync(indexPath, "utf8");
+const indexMarkup = fs.readFileSync(indexPath, "utf8");
+const uiSource = fs.readFileSync(uiPath, "utf8");
+const indexSource = indexMarkup + "\n" + uiSource;
 check("Premium/value dropdown routes through strategy optimizer", indexSource.includes('VG.optimizeStrategies(allXP, 100, VG.allFixtures, gw, horizon)[strategy]'));
 check("Tab preloader defines its DOM helper", /VG\.preloadTabs = async \(gw\) => \{\r?\n  const el = id => document\.getElementById\(id\);/.test(indexSource));
 check(
   `Release assets are cache-busted to package version ${pkg.version}`,
-  indexSource.includes(`app.js?v=${pkg.version}`) && indexSource.includes(`style.css?v=${pkg.version}`)
+  indexMarkup.includes(`app.js?v=${pkg.version}`) && indexMarkup.includes(`data.js?v=${pkg.version}`) && indexMarkup.includes(`ui.js?v=${pkg.version}`) && indexMarkup.includes(`style.css?v=${pkg.version}`)
 );
 
 const appSource = fs.readFileSync(appPath, "utf8");
+const dataSource = fs.readFileSync(dataPath, "utf8");
 // Scope the "no randomness" determinism check to the greedy optimizer body only —
 // the Monte Carlo simulator legitimately uses Math.random() elsewhere.
 const optStart = appSource.indexOf("VG.optimizeDraft =");
@@ -266,18 +273,24 @@ check("Transfer mode honours the xP horizon", indexSource.includes("g >= gw && g
 check("HiGHS loading flag is cleared on success", /VG\._highsReady = highs;\s*\n\s*VG\._highsLoading = false;/.test(appSource));
 check("Optimize does not refetch bootstrap when already loaded", indexSource.includes("if (!VG.bootstrapData || !VG.players)"));
 check("HiGHS is read from the global it actually publishes", appSource.includes("window.Module || window.Highs"));
-check("CSP permits WebAssembly without allowing eval", indexSource.includes("'wasm-unsafe-eval'") && !indexSource.includes("'unsafe-eval' "));
+check("CSP permits WebAssembly without allowing eval", indexMarkup.includes("'wasm-unsafe-eval'") && !indexMarkup.includes("'unsafe-eval' ") && !indexMarkup.includes("script-src 'self' 'unsafe-inline'"));
+check("UI logic is externalized and inline handlers are removed", indexMarkup.includes(`ui.js?v=${pkg.version}`) && !indexMarkup.includes("onclick=") && !uiSource.includes("onclick="));
+check("data transport is externalized into its own module", indexMarkup.includes(`data.js?v=${pkg.version}`) && fs.readFileSync(dataPath, "utf8").includes("VG.loadBootstrap"));
+check("public modules load in dependency order", indexMarkup.indexOf("app.js?v=") < indexMarkup.indexOf("data.js?v=") && indexMarkup.indexOf("data.js?v=") < indexMarkup.indexOf("ui.js?v="));
+check("CORS proxy fallback requires explicit user consent", dataSource.includes("window.confirm(\"The FPL API is not reachable directly") && dataSource.includes("VG.proxyConsent = false"));
 
 const dataWorkflow = fs.readFileSync(dataWorkflowPath, "utf8");
 check("Data fetch fails fast on HTTP errors so fallbacks fire", dataWorkflow.includes("curl -sfL"));
 check("Data fetch is deadline-aware, not a flat 15-minute cron", !dataWorkflow.includes("'*/15 * * * *'"));
 
 check("Python implementation is gone", !fs.existsSync(path.join(root, "app.py")) && !fs.existsSync(path.join(root, "optimizer.py")));
-check("Free history-prior automation is configured", fs.existsSync(path.join(root, ".github", "workflows", "fetch-history-priors.yml")) && appSource.includes("VG.applyHistoryPriors"));
+check("Free history-prior automation is configured", fs.existsSync(path.join(root, ".github", "workflows", "fetch-history-priors.yml")) && dataSource.includes("VG.applyHistoryPriors"));
+check("compact bootstrap is generated and consumed with a full-data fallback", dataSource.includes('data/bootstrap-lite.json') && dataWorkflowSource.includes("bootstrap-lite.json") && dataWorkflowSource.includes("player_fields"));
 
 section("v5.3.0 live + smart captaincy");
 
-check("Live tab is present in the tab bar", indexSource.includes("VG.switchTab('live')") && indexSource.includes('id="tab-live"'));
+check("Live tab is present in the tab bar", indexMarkup.includes('data-tab="live"') && indexMarkup.includes('id="tab-live"'));
+check("all nine public tabs have matching controls and panels", ["squad", "live", "compare", "prices", "fixtures", "diffs", "plan", "league", "tips"].every(tab => indexMarkup.includes(`data-tab="${tab}"`) && indexMarkup.includes(`id="tab-${tab}"`)));
 check("Live tab is preloaded on run", indexSource.includes("VG.renderLive(liveGW, liveTeam)"));
 
 // computeLivePoints sums the authoritative explain blocks
@@ -728,6 +741,9 @@ check("season planner is safe on empty fixtures", typeof VG.render.seasonPlanner
   // defined" on every real click — silently, since the onclick has no .catch().
   // Guard against that class of bug reappearing.
   check("runWhatIf resolves its own DOM lookups, not a borrowed `el` closure", !/VG\.runWhatIf = async[\s\S]*?\bel\(/.test(indexSource.slice(indexSource.indexOf("VG.runWhatIf"), indexSource.indexOf("VG.runWhatIf") + 1500)));
+  check("watchlist handlers resolve gameweek from the document", !appSource.includes("parseInt(el('gameweek').value)"));
+  check("watchlist player labels escape team names", !appSource.includes("${p.teamName} £${p.price"));
+  check("league what-if player labels escape team names", !indexSource.includes("${p.teamName} £${p.price"));
 
   section("Summary");
   console.log(`${passed} passed, ${failed} failed`);

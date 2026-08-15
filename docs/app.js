@@ -1,4 +1,4 @@
-// VibeGaffer v5.6.1 — pure static FPL analytics (GitHub Pages, no backend)
+// VibeGaffer v5.11.0 — pure static FPL analytics (GitHub Pages, no backend)
 // Docs: README.md / AGENTS.md · Data: docs/data/*.json via GitHub Actions
 const VG = {};
 
@@ -159,169 +159,6 @@ VG.teamColor = (teamRef) => {
   if (!teamRef) return "#38bdf8";
   const short = typeof teamRef === "string" ? teamRef : (VG.teams[teamRef] || {}).short_name;
   return (VG.TEAM_COLORS[short] && VG.TEAM_COLORS[short].home) || "#38bdf8";
-};
-
-VG.cache = {
-  get(k) {
-    try { const v = JSON.parse(localStorage.getItem("vg_" + k)); if (v && Date.now() - v.t < VG.CACHE_TTL) return v.d; } catch {}
-    return null;
-  },
-  set(k, d) { try { localStorage.setItem("vg_" + k, JSON.stringify({ d, t: Date.now() })); } catch {} }
-};
-
-VG.PROXIES = [
-  { fn: (url) => url, name: "direct" },
-  { fn: (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url), name: "allorigins" },
-  { fn: (url) => "https://corsproxy.io/?" + encodeURIComponent(url), name: "corsproxy" },
-];
-
-VG.fetch = async (url, label) => {
-  const c = VG.cache.get(url);
-  if (c) return c;
-  const setStatus = (t) => { const el = document.getElementById("status"); if (el) el.innerHTML = t; };
-  setStatus('<span class="status-dot warning"></span> Fetching ' + (label || "data") + '...');
-  let lastErr = null;
-  for (const proxy of VG.PROXIES) {
-    try {
-      setStatus('<span class="status-dot warning"></span> Trying ' + proxy.name + '...');
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 15000);
-      const r = await fetch(proxy.fn(url), { signal: ctrl.signal, cache: "no-cache" });
-      clearTimeout(timer);
-      if (!r.ok) { lastErr = new Error(proxy.name + " " + r.status); continue; }
-      const j = await r.json();
-      VG.cache.set(url, j);
-      return j;
-    } catch (e) { lastErr = e; }
-  }
-  setStatus('<span class="status-dot error"></span> ' + label + ' failed');
-  throw new Error(label + ": " + (lastErr?.message || "all routes failed"));
-};
-
-VG.loadBootstrap = async () => {
-  try {
-    const r = await fetch("data/bootstrap.json", { cache: "no-cache" });
-    if (r.ok) {
-      const j = await r.json();
-      if (j && j.elements) return j;
-    }
-    console.warn("[VG] Local bootstrap returned", r.status);
-  } catch (e) { console.warn("[VG] Local bootstrap failed:", e.message); }
-  return VG.fetch(VG.FPL + "/bootstrap-static/", "bootstrap");
-};
-
-VG.loadFixtures = async () => {
-  try {
-    const r = await fetch("data/fixtures.json", { cache: "no-cache" });
-    if (r.ok) {
-      const j = await r.json();
-      if (Array.isArray(j) && j.length > 0) return j;
-    }
-    console.warn("[VG] Local fixtures returned", r.status);
-  } catch (e) { console.warn("[VG] Local fixtures failed:", e.message); }
-  return VG.fetch(VG.FPL + "/fixtures/", "fixtures");
-};
-
-VG.loadOdds = async () => {
-  try {
-    const r = await fetch("data/odds.json", { cache: "no-cache" });
-    if (r.ok) {
-      const j = await r.json();
-      if (Array.isArray(j) && j.length > 0) {
-        VG.oddsData = j;
-        return j;
-      }
-    }
-  } catch (e) { console.warn("[VG] Odds data unavailable (optional):", e.message); }
-  return [];
-};
-
-// Optional free historical FPL data, generated weekly by GitHub Actions.
-VG.loadHistoryPriors = async () => {
-  try {
-    const r = await fetch("data/history-priors.json", { cache: "no-cache" });
-    const j = r.ok ? await r.json() : null;
-    return j?.players || {};
-  } catch (e) { return {}; }
-};
-
-// Free Understat data (GitHub Actions): player xG/xA priors, team pressing
-// stats, and per-fixture win/draw/loss forecasts. Optional enrichment.
-VG.loadUnderstat = async () => {
-  VG.understatLoaded = true;
-  try {
-    const r = await fetch("data/understat.json", { cache: "no-cache" });
-    const j = r.ok ? await r.json() : null;
-    if (j && j.players && j.teams) {
-      VG.understat = j;
-      Object.keys(j.players).forEach(pid => {
-        const el = VG.players[pid];
-        if (el) el.understat = j.players[pid];
-      });
-      return j;
-    }
-  } catch (e) { console.warn("[VG] Understat data unavailable (optional):", e.message); }
-  VG.understat = null;
-  return null;
-};
-
-// Load the bundled seasonal set-piece takers (optional — boosts xP when present).
-VG.loadSetPieceData = async () => {
-  try {
-    const r = await fetch("data/setpieces.json", { cache: "no-cache" });
-    if (r.ok) { const j = await r.json(); VG.loadSetPieces(j); return j; }
-  } catch (e) { console.warn("[VG] set-piece data unavailable (optional):", e.message); }
-  return null;
-};
-
-// Free per-player recent-form data (GitHub Actions, daily): last-5-GW starts
-// and minutes, reduced from FPL's own element-summary endpoint. Season-total
-// starts/minutes can't tell "nailed on for the last 5 GWs" apart from
-// "started well in September, benched since" — this closes that gap.
-// Empty (or entirely absent, e.g. pre-season before GW1) is a normal state:
-// VG.computeFixtureXP falls back to the season-aggregate model untouched.
-VG.loadRecentForm = async () => {
-  VG.recentFormLoaded = true;
-  try {
-    const r = await fetch("data/recent-form.json", { cache: "no-cache" });
-    const j = r.ok ? await r.json() : null;
-    if (j && j.players) {
-      VG.recentForm = j;
-      Object.keys(j.players).forEach(pid => {
-        const el = VG.players[pid];
-        if (el) el.recentForm = j.players[pid];
-      });
-      // Flag how many rounds of recency data are actually available this
-      // season (used by the recency-weighted projection blend to confidence-
-      // scale its weight, and by the UI to label the signal).
-      VG.recentFormMaxRounds = 0;
-      Object.values(j.players).forEach(pf => { VG.recentFormMaxRounds = Math.max(VG.recentFormMaxRounds, pf.n || 0); });
-      return j;
-    }
-  } catch (e) { console.warn("[VG] Recent-form data unavailable (optional):", e.message); }
-  VG.recentForm = null;
-  return null;
-};
-
-VG.applyHistoryPriors = (bootstrap, priors) => {
-  if (!bootstrap?.elements || !priors) return bootstrap;
-  bootstrap.elements.forEach(p => {
-    if (Number(p.minutes || 0) > 0 || Number(p.starts || 0) > 0) return;
-    const prior = priors[String(p.code)];
-    if (!prior || Number(prior.minutes || 0) < 90) return;
-    Object.entries(prior).forEach(([key, value]) => {
-      if (p[key] === undefined || Number(p[key] || 0) === 0) p[key] = value;
-    });
-  });
-  return bootstrap;
-};
-
-VG.loadSquad = async (tid, gw) => {
-  const [info, picks] = await Promise.all([
-    VG.fetch(VG.FPL + "/entry/" + tid + "/", "team"),
-    VG.fetch(VG.FPL + "/entry/" + tid + "/event/" + gw + "/picks/", "picks")
-  ]);
-  return { info, picks };
 };
 
 VG.buildMaps = (data) => {
@@ -1069,7 +906,7 @@ VG.marketBadge = (tag) => {
 
 // ── Watchlist (v5.8, FFix/FPL Review idea) ────────────────────────────
 // localStorage-backed list of player IDs the user is monitoring. Never
-// touches the network; the toggle is used by inline onclick handlers in the
+// touches the network; the toggle is used by delegated UI handlers in the
 // Compare/Differentials tables and the Strategy-tab watchlist panel.
 VG.watchlist = () => {
   if (!VG._watchlist) {
@@ -1092,7 +929,7 @@ VG.watchToggle = (p) => {
   const w = VG.isWatched(p.id);
   const label = w ? '★' : '☆';
   const color = w ? '#fbbf24' : '#475569';
-  return `<span onclick="VG.toggleWatch(${p.id});VG.renderComparison();" title="${w ? 'Remove from watchlist' : 'Add to watchlist'}" style="cursor:pointer;color:${color};font-size:0.9rem;">${label}</span>`;
+  return `<span data-action="watch-toggle" data-player-id="${p.id}" title="${w ? 'Remove from watchlist' : 'Add to watchlist'}" style="cursor:pointer;color:${color};font-size:0.9rem;">${label}</span>`;
 };
 
 // ── Monte Carlo Gameweek distribution (v5.5) ──────────────────────────
@@ -3022,13 +2859,13 @@ VG.render.watchlist = (allXP) => {
   const quickAdd = allXP
     .filter(p => !ids.has(p.id) && p.position !== "GK")
     .slice(0, 400)
-    .map(p => `<option value="${p.id}">${VG.esc(p.name)} · ${p.teamName} £${p.price.toFixed(1)}m (${p.totalXP.toFixed(1)} xP)</option>`)
+    .map(p => `<option value="${p.id}">${VG.esc(p.name)} · ${VG.esc(p.teamName)} £${p.price.toFixed(1)}m (${p.totalXP.toFixed(1)} xP)</option>`)
     .join("");
   let html = `<div class="tips-section"><div class="tips-section-header">👀 Watchlist <span style="font-weight:400;color:#475569;font-size:0.65rem;">(${list.length} players, monitors value changes each refresh)</span></div>`;
   if (quickAdd) {
     html += `<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">`;
     html += `<select id="watchAdd" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:6px 8px;font-size:0.68rem;flex:1;max-width:420px;"><option value="">+ add a player to watch…</option>${quickAdd}</select>`;
-    html += `<button onclick="var s=document.getElementById('watchAdd');if(s.value){VG.toggleWatch(+s.value);s.value='';document.getElementById('tipsContent').innerHTML=VG.render.tips(VG.currentResult,VG.allXP,VG.allFixtures,parseInt(el('gameweek').value));}" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:0.68rem;cursor:pointer;">Add</button>`;
+    html += `<button data-action="watch-add" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:0.68rem;cursor:pointer;">Add</button>`;
     html += `</div>`;
   }
   if (watched.length === 0) {
@@ -3038,7 +2875,7 @@ VG.render.watchlist = (allXP) => {
     watched.forEach(p => {
       const market = VG.marketBadge(VG.getMarketTag(p));
       const rec = p.recency ? `${p.recency.xgi90.toFixed(2)} xGI/90` : '-';
-      html += `<tr><td>${VG.watchToggle(p)}</td><td style="color:#e2e8f0;font-weight:600;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.xMins || 0).toFixed(0)}</td><td style="color:#a78bfa;">${rec}</td><td>${VG.regressionBadge(p.regression)}</td><td>${market || '-'}</td><td><span onclick="VG.toggleWatch(${p.id});document.getElementById('tipsContent').innerHTML=VG.render.tips(VG.currentResult,VG.allXP,VG.allFixtures,parseInt(el('gameweek').value));" title="Remove" style="cursor:pointer;color:#ef4444;font-size:0.85rem;">✕</span></td></tr>`;
+      html += `<tr><td>${VG.watchToggle(p)}</td><td style="color:#e2e8f0;font-weight:600;">${VG.esc(p.name)}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.xMins || 0).toFixed(0)}</td><td style="color:#a78bfa;">${rec}</td><td>${VG.regressionBadge(p.regression)}</td><td>${market || '-'}</td><td><span data-action="watch-remove" data-player-id="${p.id}" title="Remove" style="cursor:pointer;color:#ef4444;font-size:0.85rem;">✕</span></td></tr>`;
     });
     html += `</table>`;
   }

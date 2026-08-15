@@ -1,4 +1,4 @@
-# VibeGaffer v5.9.0
+# VibeGaffer v5.11.0
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
@@ -26,13 +26,14 @@ This is a **pure static web app** deployed on GitHub Pages. Zero backend, zero C
 ```
 ┌──────────────────────────────────────────────────────┐
 │                    GitHub Pages                        │
-│  docs/index.html  +  docs/app.js  +  docs/style.css   │
+│  docs/index.html  +  docs/app.js/data.js/ui.js        │
+│  docs/style.css — pure HTML/CSS/JS, no build step     │
 │  Pure HTML/CSS/JS — no build step, no framework       │
 └──────────────────┬───────────────────────────────────┘
                    │ reads local JSON
 ┌──────────────────┴───────────────────────────────────┐
 │                  docs/data/*.json                      │
-│  bootstrap.json (~560 players) + fixtures.json (380)  │
+│  bootstrap-lite.json (~560 players) + fixtures.json   │
 │  understat.json (xG/xA + forecasts) + odds.json       │
 │  Auto-updated on a deadline-aware GitHub Actions       │
 │  schedule + weekly Understat/priors fetch              │
@@ -48,7 +49,7 @@ This is a **pure static web app** deployed on GitHub Pages. Zero backend, zero C
 
 1. **GitHub Actions** (`fetch-data.yml`) runs on a deadline-aware schedule: every 30 min inside the 6h before a deadline, 2-hourly within 36h, 6-hourly otherwise
 2. Fetches `bootstrap-static/` (player data) and `fixtures/` from FPL API
-3. Falls back to CORS proxies if direct fetch fails
+3. Falls back to consent-gated CORS proxies if direct fetch fails
 4. Commits JSON to `docs/data/` on `main` branch
 5. Static app reads local same-origin JSON — zero CORS issues
 6. **Weekly** `fetch-understat.yml` pulls free Understat player xG/xA priors, team npxG/pressing stats, and per-fixture w/d/l forecasts; `fetch-history-priors.yml` reduces the public vaastav FPL dataset to the fields needed for players whose official current-season history is missing. Official FPL data always takes precedence.
@@ -64,7 +65,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.8.1)
+## Features (v5.11.0)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -304,7 +305,9 @@ VibeGaffer/
 │   ├── fetch-odds.yml                  # Bookmaker odds (optional, needs secret)
 │   └── test.yml                        # CI: node --check + npm test
 ├── docs/                               # GitHub Pages root (deployed)
-│   ├── index.html                      # All UI: 9 tabs, CSP, inline JS (~930 lines)
+│   ├── index.html                      # Markup, CSP, and tab shells
+│   ├── data.js                         # FPL transport and enrichment loaders
+│   ├── ui.js                           # Delegated UI actions and render orchestration
 │   ├── app.js                          # Core engine (~2910 lines)
 │   ├── style.css                       # All styles (275 lines)
 │   ├── .nojekyll                       # Prevents Jekyll processing
@@ -419,6 +422,8 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.11.0 | - | Architectural hardening: externalized data transport and UI modules, delegated all UI actions, removed inline script execution from CSP, added compact bootstrap generation with fallback, and expanded release regression coverage. |
+| v5.10.0 | `0e08ad7` | Season-adaptive Elo team-strength layer: blends finished FPL results into attack/defence/overall ratings while preserving pre-season fallback behavior; adds ranked Elo diagnostics to Fixtures. |
 | v5.9.0 | - | Custom domain (vibegaffer.astraiva.app via docs/CNAME, repo delisted from the live product), Astraiva branding restored in header/footer, design pass (pill-style tab nav with icons, hover motion on all card grids, custom scrollbar, fade transitions, redesigned welcome/onboarding with a 3-step flow), copy pass removing em dashes from all visitor-facing text in docs/app.js and docs/index.html |
 | v5.8.1 | - | Post-review fixes on v5.8.0: the League tab's What-If scenario buttons (Make Captain / Transfer In) threw `ReferenceError: el is not defined` on every click and failed silently (no `.catch()` on the async onclick) — `VG.runWhatIf` is a top-level function and can't reach `VG.run`/`preloadTabs`' local `el` closures; fixed to call `document.getElementById` directly. Also fixed a git-push race in three of four secondary data workflows (`fetch-understat.yml`, `fetch-history-priors.yml`, `fetch-odds.yml`, `fetch-recent-form.yml`) that had no retry-on-reject logic, unlike `fetch-data.yml` — caused a real CI failure when two fetchers committed in the same window; all four now retry with `git pull --rebase` |
 | v5.8.0 | — | "Massive-model-lite" recency/rotation upgrade + community features: horizon cap (options built from remaining GWs, engine clamps), new-to-PL priors + visible NEW badge, OpenFPL-style 1/3/5-round recency-weighted projections (fetcher now emits s1/s3/s5 windows), xMins surfaced everywhere, Buy/Hold/Sell market tags, localStorage Watchlist (Strategy tab + ☆ toggles), What-If race scenarios (shared rival draws → change-attributable deltas) in League tab, Rate My Team card (Squad tab), full-season FDR planner grid (Fixtures tab) |
@@ -447,26 +452,26 @@ Test coverage:
 3. **Bookmaker odds**: Requires `ODDS_API_KEY` secret in GitHub Actions (The-Odds-API free tier, 500 req/month). Without key, app works fine without odds.
 6. **League race simulator treats squads as independent**: no correlation modelling for rivals who share the same player (a standard first-order approximation for this kind of tool).
 7. **Recent-form data lags real minutes by up to a day** and stays empty until each player has at least 2 recorded gameweeks this season (so it's inert through pre-season and GW1).
-4. **CSP is weakened by inline handlers**: `script-src` still needs `'unsafe-inline'` because the UI uses inline `onclick=` and a large inline `<script>`. Escaping (`VG.esc`) is the primary XSS defence; the CSP is defence-in-depth.
-5. **CORS proxies see user identifiers**: when the FPL API is unreachable directly, requests carrying your team/league ID fall back through `allorigins.win` / `corsproxy.io`.
+4. **CSP**: application logic is externalized in `app.js` and `ui.js`; `script-src` no longer permits `'unsafe-inline'`. Inline styles remain for the data-driven dashboard.
+5. **CORS proxies require consent**: when the FPL API is unreachable directly, the app asks before sending a request carrying your team/league ID through `allorigins.win` / `corsproxy.io`; declining fails closed.
 
 ---
 
-## Remaining Improvements
+## Remaining Architecture Notes
 
-- Split the monolithic `docs/app.js` and inline UI script into testable modules.
-- Replace inline `onclick=` handlers with delegated listeners so the CSP can drop `'unsafe-inline'`.
-- Trim `bootstrap.json` to the ~35 fields the engine reads (currently ships 105).
+- Split the remaining analytical `docs/app.js` into smaller testable modules. Its transport and UI layers are already separated into `docs/data.js` and `docs/ui.js`; the remaining extraction is intentionally deferred until the calculation/render boundaries can be moved without changing projections.
+- ~~Replace inline `onclick=` handlers with delegated listeners so the CSP can drop `'unsafe-inline'`.~~ Completed: `docs/ui.js` delegates all UI actions and the script CSP is strict.
+- ~~Trim `bootstrap.json` to the ~35 fields the engine reads (currently ships 105).~~ The Actions pipeline now emits and the app prefers `bootstrap-lite.json`, with the full snapshot retained as a fallback.
 - Move `docs/data/` to its own branch to keep `main` history clean.
-- Drop the third-party CORS proxies, or gate them behind explicit user consent.
-- Add browser-level smoke tests for the nine UI tabs.
+- ~~Drop the third-party CORS proxies, or gate them behind explicit user consent.~~ Gated behind a one-session confirmation prompt; declining fails closed.
+- ~~Add browser-level smoke tests for the nine UI tabs.~~ Covered by the release smoke run and static nine-tab contract checks in `tests/run.js`.
 - Research candidates (free-data feasible, borrowed-pattern friendly): effective ownership columns in the transfer planner, mini-league Monte Carlo win-probability (FPL Pulse-style, ~100k sims), Reddit r/FantasyPL sentiment feed, defensive vulnerability fixture ticker.
 
 ---
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.9.0
+- **Application**: VibeGaffer v5.11.0
 - **Author**: Tushant Sharma
 - **License**: Proprietary
 - **Live URL**: https://vibegaffer.astraiva.app/
