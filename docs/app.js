@@ -161,13 +161,71 @@ VG.teamColor = (teamRef) => {
   return (VG.TEAM_COLORS[short] && VG.TEAM_COLORS[short].home) || "#38bdf8";
 };
 
+// ── Transfer / new-club detection (v5.13) ──────────────────────────────
+// A player whose previous-season club (priorTeamCode, attached from the free
+// vaastav history-priors feed by applyHistoryPriors) differs from their current
+// team_code changed clubs over the summer. Their old-club per-90 output was
+// earned in a different attacking context, so the xP engine adjusts their
+// projection toward the new club's attacking strength (see computeFixtureXP).
+// Returns a null-safe object; missing priors (e.g. pre-season before the feed
+// lands, or players not in the league last season) simply read as no move.
+VG.transferInfo = (p) => {
+  const none = { transferred: false, fromTeam: null, toTeam: null, fromCode: null, toCode: null, foreignLeague: "" };
+  if (!p) return none;
+  const cur = VG.teams[p.team];
+  const toCode = cur ? String(cur.code) : "";
+  const priorCode = p.priorTeamCode != null && p.priorTeamCode !== "" ? String(p.priorTeamCode) : "";
+  const us = p.understat;
+  const foreignLeague = us && us.league && us.league !== "EPL" ? us.league : "";
+  if (!priorCode) {
+    // No prior feed for this player — a foreign-signing label from understat
+    // still counts as a meaningful "new to the league" signal, but it's NOT a
+    // club change.
+    return { transferred: false, fromTeam: null, toTeam: cur || null, fromCode: null, toCode, foreignLeague };
+  }
+  const fromTeam = VG.teamByCode[priorCode] || null;
+  const transferred = !!fromTeam && fromTeam.id !== p.team;
+  return {
+    transferred,
+    fromTeam: transferred ? fromTeam : null,
+    toTeam: cur || null,
+    fromCode: priorCode,
+    toCode,
+    foreignLeague
+  };
+};
+
+// HTML chip for a transfer, e.g. "NEW CLUB · MCI → ARS". Empty when the player
+// did not change clubs. Used in Compare, Differentials, Player Profile and the
+// briefing's market watch.
+VG.transferBadge = (t) => {
+  if (!t || !t.transferred) return "";
+  const fromShort = (t.fromTeam && t.fromTeam.short_name) || "?";
+  const toShort = (t.toTeam && t.toTeam.short_name) || "?";
+  return `<span style="background:rgba(251,191,36,0.12);color:#fbbf24;padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;">NEW CLUB · ${VG.esc(fromShort)} → ${VG.esc(toShort)}</span>`;
+};
+
+// Label for a foreign-league prior ("LA LIGA PRIOR" etc). Empty for EPL priors.
+VG.foreignLeagueLabel = (league) => {
+  if (!league) return "";
+  const names = { La_liga: "LA LIGA", Bundesliga: "BUNDESLIGA", Serie_A: "SERIE A", Ligue_1: "LIGUE 1" };
+  return names[league] || String(league).toUpperCase();
+};
+
 VG.buildMaps = (data) => {
   VG.players = {};
   VG.teams = {};
+  VG.teamByCode = {};
   data.elements.forEach(p => {
     VG.players[p.id] = p;
   });
   data.teams.forEach(t => { VG.teams[t.id] = t; });
+
+  // Stable franchise-code -> team map (v5.13). FPL's element `team_code` and
+  // team `code` are the same stable club code across seasons, so this powers
+  // transfer detection: a player whose priorTeamCode (last season's club code,
+  // from history-priors) differs from their current team_code changed clubs.
+  data.teams.forEach(t => { VG.teamByCode[String(t.code)] = t; });
 
   // Pre-season FPL clears detailed strengths. Build a season-agnostic prior
   // from the API's own 1-5 team rating, including promoted clubs.
@@ -463,6 +521,12 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const p = VG.players[pid];
   if (!p) return { xp: 0, mins: 0, cs: 0, goal: 0, assist: 0, bonus: 0 };
 
+  // Transfer / new-club context (v5.13): a player who changed clubs this
+  // summer carries last season's per-90 output, but their role, service and
+  // attacking environment all moved with them. Detected from the prior-season
+  // club code attached by applyHistoryPriors (free vaastav feed).
+  const transfer = VG.transferInfo(p);
+
   const pos = p.element_type;
   const mins = parseInt(p.minutes || "0");
   const starts = parseInt(p.starts || "0");
@@ -662,9 +726,32 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
     oppAttStr = Math.min(Math.max(0.70 + 0.30 * ((oppAttAvg - 1000) / 200), 0.5), 1.3);
   }
 
+  // ── New-club attacking context (v5.13) ──
+  // A transferred player's per-90 output was produced at their OLD club. When
+  // the new club attacks significantly stronger (weaker) than the old one,
+  // nudge the projection toward the new environment. Uses the same 1000-scale
+  // attack strength the engine already trusts; a +170 swing ≈ +10% output.
+  // Falls back to the league average (1000) when the old club is no longer in
+  // the league (relegated) or the prior club is unknown (foreign signing).
+  let newClubMult = 1.0;
+  if (transfer.transferred) {
+    const avgAtt = (t) => t
+      ? ((Number(t.strength_attack_home) || 0) + (Number(t.strength_attack_away) || 0)) / 2
+      : 1000;
+    const newAtt = avgAtt(team);
+    const oldAtt = transfer.fromTeam ? avgAtt(VG.teams[transfer.fromTeam.id]) : 1000;
+    if (newAtt > 0 && oldAtt > 0) {
+      newClubMult = Math.min(Math.max(1 + (newAtt - oldAtt) / 1700, 0.80), 1.20);
+    }
+  }
+
   // ── Projected rates ──
-  const projGoalsPer90 = projGoalsPer90Raw * attMult * attStrMult * trendMult * confidenceMult + 0.05 * (1 - confidenceMult);
-  const projAssistsPer90 = projAssistsPer90Raw * attMult * attStrMult * trendMult * confidenceMult + 0.03 * (1 - confidenceMult);
+  // Transferred players get the new-club context multiplier plus a small
+  // confidence dampen: last season's per-90 rates were earned in a different
+  // system/role, so they are a weaker signal for the new environment.
+  const transferConf = transfer.transferred ? 0.92 : 1.0;
+  const projGoalsPer90 = projGoalsPer90Raw * attMult * attStrMult * trendMult * confidenceMult * newClubMult * transferConf + 0.05 * (1 - confidenceMult);
+  const projAssistsPer90 = projAssistsPer90Raw * attMult * attStrMult * trendMult * confidenceMult * newClubMult * transferConf + 0.03 * (1 - confidenceMult);
 
   // ── Clean sheet: use opponent defence strength + API cs_per_90 + xGC ──
   const baseCSPos = { 1: 0.35, 2: 0.30, 3: 0.08, 4: 0 };
@@ -773,6 +860,14 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
     minsProb,
     isNew: noPremierLeagueHistory,
     priorSignal: noPremierLeagueHistory ? (newSigningPrior > 0 ? "ep_next" : "understat") : "",
+    // v5.13: transfer / new-club context for this fixture. A transferred player
+    // is flagged so the UI can label them (NEW CLUB badge) and so multi-GW
+    // aggregation can report the move. foreignLeague carries the source league
+    // of an understat prior when it is NOT the EPL (foreign signing).
+    transferred: transfer.transferred,
+    fromTeam: transfer.fromTeam ? transfer.fromTeam.short_name : null,
+    toTeam: transfer.toTeam ? transfer.toTeam.short_name : null,
+    foreignLeague: transfer.foreignLeague,
     csProb: projCS,
     goalProb: projGoals,
     assistProb: projAssists,
@@ -1357,6 +1452,11 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
       // understat). Surfaces debutants/promoted players in the UI.
       isNew: gwDetails.some(d => d.isNew),
       priorSignal: (gwDetails.find(d => d.priorSignal) || {}).priorSignal || "",
+      // v5.13: transfer context (NEW CLUB badge) + foreign-league prior label.
+      transferred: gwDetails.some(d => d.transferred),
+      fromTeam: (gwDetails.find(d => d.transferred) || {}).fromTeam || null,
+      toTeam: (gwDetails.find(d => d.transferred) || {}).toTeam || null,
+      foreignLeague: (gwDetails.find(d => d.foreignLeague) || {}).foreignLeague || "",
       recency: recency ? { rounds: recency.rounds, xgi90: +recency.xgi90.toFixed(2), pts90: +recency.pts90.toFixed(2) } : null
     }
   };
@@ -3151,8 +3251,9 @@ VG.playerProfileHTML = (p, fixtures, gw) => {
   const trend = p.form != null && p.ppg ? (p.form / p.ppg).toFixed(2) : "-";
   const market = VG.marketBadge(VG.getMarketTag(p));
   const newBadge = p.isNew
-    ? `<span style="background:rgba(96,165,250,0.12);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.62rem;white-space:nowrap;">NEW TO PL · ${p.priorSignal === 'ep_next' ? 'FPL PRIOR' : 'UNDERSTAT PRIOR'}</span>`
+    ? `<span style="background:rgba(96,165,250,0.12);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.62rem;white-space:nowrap;">NEW TO PL · ${p.priorSignal === 'ep_next' ? 'FPL PRIOR' : (p.foreignLeague ? VG.foreignLeagueLabel(p.foreignLeague) + ' PRIOR' : 'UNDERSTAT PRIOR')}</span>`
     : '';
+  const transferBadge = p.transferred ? VG.transferBadge({ transferred: true, fromTeam: p.fromTeam ? { short_name: p.fromTeam } : null, toTeam: p.toTeam ? { short_name: p.toTeam } : null }) : '';
   const recLine = p.recency
     ? `<div style="margin-top:4px;">Recency (last ${p.recency.rounds} GWs): <b style="color:#a78bfa;">${p.recency.xgi90.toFixed(2)} xGI/90</b> · <b style="color:#00ff87;">${p.recency.pts90.toFixed(2)} pts/90</b></div>`
     : '';
@@ -3168,6 +3269,7 @@ VG.playerProfileHTML = (p, fixtures, gw) => {
     + `<div>Market: ${market || '<span style="color:#475569;">Hold</span>'}</div>`
     + `</div>`
     + (newBadge ? `<div style="margin-top:6px;">${newBadge}</div>` : '')
+    + (transferBadge ? `<div style="margin-top:4px;">${transferBadge}</div>` : '')
     + recLine
     + `<div style="margin-top:6px;">Next 5 fixtures: <span style="color:#64748b;">${run}</span></div>`
     + `<div style="margin-top:4px;">Run quality: ${easy} easy · ${hard} hard ${hard >= 3 ? '<span style="color:#ef4444;">sell/hold risk</span>' : easy >= 3 ? '<span style="color:#00ff87;">strong window</span>' : ''}</div>`
@@ -4118,12 +4220,13 @@ VG.buildBriefing = (result, allXP, fixtures, gw) => {
     if (rec) chipHint = { label: rec.label || rec.chip || "", advice: rec.advice || rec.reason || rec.text || "" };
   }
 
-  // 5) Market / price-risk flags for the squad.
+  // 5) Market / price-risk flags for the squad, plus any summer-transfer/new-
+  //    club context (v5.13) so a signing's new-environment upside is visible.
   const market = squad.map(p => {
     const e = byId[p.id];
     if (!e) return null;
     const tag = VG.getMarketTag(e);
-    return { id: e.id, name: e.name || VG.playerName(e), tag, badge: VG.marketBadge(tag) || null };
+    return { id: e.id, name: e.name || VG.playerName(e), tag, badge: VG.marketBadge(tag) || null, transferBadge: VG.transferBadge({ transferred: e.transferred, fromTeam: e.fromTeam ? { short_name: e.fromTeam } : null, toTeam: e.toTeam ? { short_name: e.toTeam } : null }), foreignLabel: e.foreignLeague ? VG.foreignLeagueLabel(e.foreignLeague) : "" };
   }).filter(Boolean);
 
   // 6) Injury / availability watch (raw player fields).
@@ -4205,7 +4308,7 @@ VG.render.briefing = (b) => {
   // Market flags
   if (b.market && b.market.length) {
     html += '<div class="briefing-card"><div class="section-title">Price risk</div><div class="briefing-tags">';
-    b.market.forEach(m => html += `<span class="chip">${VG.esc(m.name)} ${m.badge || ""}</span>`);
+    b.market.forEach(m => html += `<span class="chip">${VG.esc(m.name)} ${m.badge || ""} ${m.transferBadge || ""}${m.foreignLabel ? '<span style="color:#60a5fa;font-size:0.6rem;"> ' + VG.esc(m.foreignLabel) + '</span>' : ''}</span>`);
     html += '</div></div>';
   }
 

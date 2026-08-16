@@ -4,7 +4,16 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 ## Handover Status
 
-- **Current version**: v5.12.0 (one-stop-shop intelligence layer on top of v5.11.0)
+- **Current version**: v5.13.0 (transfer & foreign-signing awareness on top of v5.12.0)
+- **v5.13.0 shipped** — transfer detection, new-club context, and foreign-league priors:
+  1. **Summer-transfer detection** — `VG.transferInfo(p)` compares `p.priorTeamCode` (previous season's club code, attached by `VG.applyHistoryPriors` from the free vaastav feed) against the element's current club code. **The key is `team_code`, NOT the FPL team id**: FPL team ids change across seasons (2025-26 vs 2026-27 differ), but the franchise code (ARS=3 etc.) is stable, and `bootstrap-lite` elements + `teams.code` both carry it. `VG.buildMaps` now builds `VG.teamByCode` (code → team). Validated live: 33 real 2025-26→2026-27 moves detected (Meslier LEE→ARS, Bruno G. NEW→ARS, Tonali NEW→TOT, Robertson LIV→TOT, Garnacho CHE→AVL…). **Gotcha that bit us twice**: `VG.applyHistoryPriors(bootstrap, priors)` takes TWO args (`priors` is the `players` map, not the whole file) — a probe that passed only the file silently attached nothing; and the test restore step must set strengths back BY VALUE, not `delete` (undefined strengths → NaN → every later projection for that club goes NaN).
+  2. **New-club context multiplier** — `computeFixtureXP` applies `newClubMult = clamp(1 + (newAtt − oldAtt)/1700, 0.80, 1.20)` to projGoals/projAssists for transferred players (old club's attack strength from the same 1000-scale fallback; unknown old club → 1000) plus a `transferConf = 0.92` confidence dampen. Surface: `transferred`/`fromTeam`/`toTeam` on the fixture return and `computeMultiGWXP.info`.
+  3. **Foreign-league priors** — `fetch-understat.yml` now downloads `La_liga`/`Bundesliga`/`Serie_A`/`Ligue_1` (2025) alongside EPL; the Python builder stores `{league, prevClub, xG, xA, npxG, xGChain, xGBuildup, games, time}` via a `store_prior` helper, and a foreign pass matches **new-to-PL ids (0 mins AND 0 starts) by exact full normalized name only** (never surname — common-name false positives), requiring a unique FPL candidate, choosing the league with most minutes. Output also gains `foreignLeagues` metadata. 36 foreign priors landed on the current data. UI label: `LA LIGA PRIOR` / `BUNDESLIGA PRIOR` / `SERIE A PRIOR` / `LIGUE 1 PRIOR` via `VG.foreignLeagueLabel`.
+  4. **UI badges** — `VG.transferBadge(t)` renders `NEW CLUB · OLD → NEW` (escaped) and is wired into Compare + Differentials tables, Player Profile (`playerProfileHTML`), and the Briefing's price-risk market chips.
+  5. Regenerated `docs/data/history-priors.json` (now includes `team_code` per player — the OLD file predated the field and silently attached no codes) and `docs/data/understat.json` (foreign priors + `foreignLeagues`).
+  - Tests: 246 → 274 (28 new: teamByCode map, transferInfo null-safety + same-club + cross-club + unknown-prior + foreign-league signals, foreignLeagueLabel, transferBadge rendering/escaping, context multiplier direction + model-exact ratio + ±20% clamp + by-value restore, multi-GW info propagation, foreign-signing projection via real xG/xA, regenerated data-shape guards, workflow static guards). Pre-season caveat: all team strengths are equal (1015 post-fallback), so the multiplier tests install distinct synthetic strengths temporarily and restore by value.
+  - Verified headless (real data through the full app + ui render paths): allXP surfaces 31 transferred entries, Compare table renders the NEW CLUB badge, briefing + profile render it, no console errors. No Playwright available in this environment; CI `test.yml` (node --check + npm test) covers the rest.
+- **Previous**: v5.12.0 (one-stop-shop intelligence layer)
 - **v5.12.0 shipped** — "one-stop-shop" feature drop, scoped against LiveFPL/FPL Review/FFix/fpl.team patterns:
   1. **GW Briefing tab** (new 2nd tab, `📋 Briefing`, between Squad and Live): one pre-deadline screen pulling outlook (avg FDR + easy/hard/blanks/doubles across likely starters), captain + VC verdicts (via `getCaptainReasoning` with fresh per-GW projections), the best single transfer with a **roll-vs-spend** call, chip hint, market/price-risk flags, injury watch, and a bench concern check. Driven by `VG.buildBriefing(result, allXP, fixtures, gw)` + `VG.render.briefing()`; rendered in `VG.run` from the draft/team result. **Gotcha that bit us**: `getCaptainReasoning` reads `cap.isHome` (letter `'H'`/`'A'`/`'H/A'`), so briefing's projected players must merge `isHome: g.venue` onto the cap object or the summary reads "without a scheduled fixture" even when the player has one. Fixed + regression-safe (briefing tests assert the blank-risk line, not the venue phrase; the browser smoke caught it).
   2. **Roll-vs-spend / banking** — `VG.rollValue(squad, allXP, fixtures, gw, horizon, bank)`: projects `rollXP` (keep squad, bank the FT) vs `spendXP` (cheapest→best affordable unowned swap), returns `{rollXP, spendXP, gain, transfer, call}`. Spends only if gain > 4 xP ("worth spending"), else banks ("roll the transfer and bank it"). Null-safe on empty input.
@@ -64,7 +73,7 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 - **Architecture**: Pure static HTML/CSS/JS on GitHub Pages (no backend)
 - **Live URL**: https://vibegaffer.astraiva.app/ (custom domain, CNAME'd to jadax.github.io — repo is not linked from the live product; keep it that way)
-- **Data**: Auto-fetched on a deadline-aware GitHub Actions schedule → `docs/data/*.json` (30 min inside 6h of a deadline, 2-hourly within 36h, 6-hourly otherwise). The workflow now emits a compact `docs/data/bootstrap-lite.json` for the public app and retains `bootstrap.json` as a fallback/debug snapshot. **Understat** free xG/forecast data fetched weekly → `docs/data/understat.json`. **Recent-form** (1/3/5-round starts/mins/points/xGI/BPS, rotation-risk + recency) fetched daily → `docs/data/recent-form.json` (v5.8.0 shape `{n, s1, s3, s5}` + back-compat; inert until players have 2+ recorded GWs this season)
+- **Data**: Auto-fetched on a deadline-aware GitHub Actions schedule → `docs/data/*.json` (30 min inside 6h of a deadline, 2-hourly within 36h, 6-hourly otherwise). The workflow now emits a compact `docs/data/bootstrap-lite.json` for the public app and retains `bootstrap.json` as a fallback/debug snapshot. **Understat** free xG/forecast data fetched weekly → `docs/data/understat.json` (EPL + La Liga/Bundesliga/Serie A/Ligue 1 foreign priors since v5.13.0). **Recent-form** (1/3/5-round starts/mins/points/xGI/BPS, rotation-risk + recency) fetched daily → `docs/data/recent-form.json` (v5.8.0 shape `{n, s1, s3, s5}` + back-compat; inert until players have 2+ recorded GWs this season). **History-priors** (previous season's stats + `team_code`, the transfer-detection key) fetched weekly → `docs/data/history-priors.json`
 - **ILP Solver**: highs-js (HiGHS WASM) loaded from CDN, falls back to greedy. highs-js publishes `window.Module`, **not** `window.Highs` — see Known Issues
 - **Odds**: The-Odds-API free tier (500 req/month), fetched once per GW when deadline is within 30h → `docs/data/odds.json`. Requires optional `ODDS_API_KEY` repo secret (currently unset). **Understat forecasts are the free no-key alternative** used by default
 
@@ -80,19 +89,20 @@ Primary context document for AI models working on this codebase. Read fully befo
 | `docs/data/bootstrap.json` | ~1.3MB | Player data (~560 active, 20 teams) |
 | `docs/data/bootstrap-lite.json` | generated | Compact public player/team/event payload; preferred by the app with full snapshot fallback |
 | `docs/data/fixtures.json` | ~118KB | 380 fixtures with FDR |
-| `docs/data/understat.json` | ~120KB | Free Understat xG/xA priors + team stats + per-fixture forecasts |
+| `docs/data/understat.json` | ~120KB | Free Understat xG/xA priors + team stats + per-fixture forecasts + foreign-league priors (v5.13.0) |
 | `docs/data/recent-form.json` | small | Per-player 1/3/5-round starts/mins/points/xGI/BPS windows (rotation risk + recency), v5.8.0 |
+| `docs/data/history-priors.json` | ~250KB | Previous-season vaastav stats per player code + `team_code` (transfer key, v5.13.0) |
 | `.github/workflows/fetch-data.yml` | ~125 | Deadline-aware FPL data fetch |
-| `.github/workflows/fetch-understat.yml` | ~230 | Weekly Understat xG/forecast fetch |
-| `.github/workflows/fetch-history-priors.yml` | ~55 | Weekly vaastav historical priors |
+| `.github/workflows/fetch-understat.yml` | ~235 | Weekly Understat xG/forecast fetch (EPL + 4 foreign leagues for priors) |
+| `.github/workflows/fetch-history-priors.yml` | ~55 | Weekly vaastav historical priors (captures `team_code`) |
 | `.github/workflows/fetch-recent-form.yml` | ~90 | Daily last-5-GW rotation-risk fetch (v5.7.0) |
 | `.github/workflows/fetch-odds.yml` | ~55 | Optional bookmaker odds (needs `ODDS_API_KEY`) |
 | `.github/workflows/test.yml` | ~30 | CI: `node --check` + `npm test` |
-| `tests/run.js` | ~590 | Regression suite (153 checks) |
+| `tests/run.js` | ~800 | Regression suite (274 checks) |
 
 ## Golden Rules (violations cause bugs)
 
-1. **Never reimplement shared helpers.** `VG.esc`, `VG.isAvailable`, `VG.fixtureFDR`, `VG.fixtureInfo`, `VG.pickBestXI`, `VG.formationLegal`, `VG.countUnavailable`, `VG.hasPlayed`, `VG.topCaptainCandidates`, `VG._mcLambdas`, `VG._mcDrawTotal` exist to be reused.
+1. **Never reimplement shared helpers.** `VG.esc`, `VG.isAvailable`, `VG.fixtureFDR`, `VG.fixtureInfo`, `VG.pickBestXI`, `VG.formationLegal`, `VG.countUnavailable`, `VG.hasPlayed`, `VG.topCaptainCandidates`, `VG._mcLambdas`, `VG._mcDrawTotal`, `VG.transferInfo`, `VG.transferBadge`, `VG.foreignLeagueLabel` exist to be reused.
 2. **Escape everything API-derived before `innerHTML`.** `VG.esc()` is the real XSS defence (league/manager names are controlled by other FPL users). Script CSP is strict; UI actions use delegated data attributes.
 3. **All optimizer/selection code must filter injuries** via `VG.isAvailable(p)`. Doubtful players stay eligible but are flagged.
 4. **When changing a function signature, update every call site** — `docs/ui.js`, `docs/data.js`, `docs/app.js`, `tests/run.js`. Grep `VG.functionName(`.
@@ -278,6 +288,12 @@ Start-rate model using last season data: GK binary (nailed #1 = 95%, backup 15-7
 - `VG.rateMyTeam(result, allXP, fixtures, gw)` / `VG.render.rateMyTeam(...)` — transparent component-scored team rating (Squad tab)
 - `VG.render.seasonPlanner(fixtures, fromGW, nGWs, teamId)` — full-season FDR grid, consumes the previously-dead `VG.teamSeasonRow`/`VG.buildSeasonPlanner` (Fixtures tab)
 
+### v5.13.0 features (transfer & foreign-signing awareness)
+- `VG.transferInfo(p)` → `{transferred, fromTeam, toTeam, fromCode, toCode, foreignLeague}` by comparing `p.priorTeamCode` (previous-season club code from history-priors) vs the current club's `code` via `VG.teamByCode`. `foreignLeague` is `p.understat.league` when it is not `EPL`. Null-safe.
+- `VG.transferBadge(t)` → `NEW CLUB · OLD → NEW` HTML chip (escaped), empty when no move; wired into Compare + Differentials tables, `playerProfileHTML`, and the Briefing market chips.
+- `VG.foreignLeagueLabel(league)` → `LA LIGA` / `BUNDESLIGA` / `SERIE A` / `LIGUE 1` (empty for EPL).
+- New-club context in `computeFixtureXP`: `newClubMult = clamp(1 + (newAtt − oldAtt)/1700, 0.80, 1.20)` × `transferConf = 0.92` applied to projGoals/projAssists for transferred players; the fixture return and `computeMultiGWXP.info` gain `transferred`/`fromTeam`/`toTeam`/`foreignLeague` (see Handover note 2).
+
 ### Rendering
 - `VG.render.metrics(result)` → metric cards (xP, cost, formation)
 - `VG.render.chipCard(label, color, advice)` → individual chip card
@@ -290,17 +306,18 @@ Start-rate model using last season data: GK binary (nailed #1 = 95%, backup 15-7
 - `VG.POS_TARGET` → `{ 1: 2, 2: 5, 3: 5, 4: 3 }` (target squad composition)
 - `VG.STRATEGIES` → balanced/premium/value descriptions
 
-## UI Tabs (9 total)
+## UI Tabs (10 total)
 
 1. **Squad** — Pitch view, metrics, captaincy, transfer grid
-2. **Live** — In-progress GW tracking: live points, bonus projections, auto-subs, price velocity (v5.3)
-3. **Compare** — Radar chart, xP component stacked bar, stat table, Real xG/90 columns (v5.4)
-4. **Prices** — Price change predictor (risers/fallers)
-5. **Fixtures** — Team Strength Ratings (Understat xG), fixture ticker with swing analysis
-6. **Differentials** — Low ownership, high xP picks + 4-zone differential matrix + Real xG/90 (v5.4)
-7. **Transfer Plan** — Week-by-week transfer schedule with hit optimization
-8. **League** — Mini-league comparison, ownership analysis, differentials, 🏁 Race to the Top Monte Carlo win probability (v5.7.0)
-9. **Strategy** — Dynamic tips + static championship wisdom + Injury & Availability Watch (v5.4)
+2. **Briefing** — One pre-deadline screen: outlook, captain + VC, roll-vs-spend transfer, chip hint, market/price-risk, injury watch, bench concern (v5.12)
+3. **Live** — In-progress GW tracking: live points, bonus projections, auto-subs, price velocity (v5.3)
+4. **Compare** — Radar chart, xP component stacked bar, stat table, Real xG/90 columns (v5.4)
+5. **Prices** — Price change predictor (risers/fallers)
+6. **Fixtures** — Team Strength Ratings (Understat xG), fixture ticker with swing analysis
+7. **Differentials** — Low ownership, high xP picks + 4-zone differential matrix + Real xG/90 (v5.4)
+8. **Transfer Plan** — Week-by-week transfer schedule with hit optimization
+9. **League** — Mini-league comparison, ownership analysis, differentials, 🏁 Race to the Top Monte Carlo win probability (v5.7.0)
+10. **Strategy** — Dynamic tips + static championship wisdom + Injury & Availability Watch (v5.4)
 
 ## Known Issues
 
@@ -317,7 +334,7 @@ Tests committed in `tests/run.js`, run in GitHub Actions.
 
 Run: `npm test`
 
-216/216 tests pass.
+274/274 tests pass.
 
 ## Remaining Improvements
 

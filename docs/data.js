@@ -159,10 +159,20 @@ VG.loadRecentForm = async () => {
 VG.applyHistoryPriors = (bootstrap, priors) => {
   if (!bootstrap?.elements || !priors) return bootstrap;
   bootstrap.elements.forEach(p => {
-    if (Number(p.minutes || 0) > 0 || Number(p.starts || 0) > 0) return;
     const prior = priors[String(p.code)];
-    if (!prior || Number(prior.minutes || 0) < 90) return;
+    if (!prior) return;
+    // Transfer detection (v5.13): every player who was in the league last
+    // season carries their previous club's franchise code. Attached to ALL
+    // elements (not just debutants) so a summer move is visible regardless of
+    // whether the player has PL minutes. VG.transferInfo compares this against
+    // the element's current team_code.
+    if (prior.team_code !== undefined && prior.team_code !== "") {
+      p.priorTeamCode = String(prior.team_code);
+    }
+    if (Number(p.minutes || 0) > 0 || Number(p.starts || 0) > 0) return;
+    if (Number(prior.minutes || 0) < 90) return;
     Object.entries(prior).forEach(([key, value]) => {
+      if (key === "team_code") return;
       if (p[key] === undefined || Number(p[key] || 0) === 0) p[key] = value;
     });
   });

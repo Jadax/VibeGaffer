@@ -28,6 +28,12 @@ jobs:
       # with explicit headers. Fetch BOTH the current season (start year of GW1
       # deadline) and the previous one: preseason the new season is empty and
       # the previous season provides the player/team priors.
+      #
+      # Foreign top-5 leagues (La Liga / Bundesliga / Serie A / Ligue 1) are
+      # also fetched for the PREVIOUS season only: players new to the Premier
+      # League this season (0 PL minutes) have no EPL understat record, and
+      # their previous-league xG/xA is the best prior available (v5.13). This
+      # is read-only public data from the same endpoint the EPL data uses.
       - name: Download Understat seasons
         run: |
           mkdir -p /tmp/understat
@@ -37,6 +43,13 @@ jobs:
               -H "User-Agent: Mozilla/5.0 (compatible; VibeGaffer/1.0)" \
               -H "X-Requested-With: XMLHttpRequest" \
               "https://understat.com/getLeagueData/EPL/$Y" || echo "FETCH_FAIL $Y"
+          done
+          for LG in La_liga Bundesliga Serie_A Ligue_1; do
+            curl -sfL --compressed --retry 3 -o /tmp/understat/fk_$LG.json \
+              -H "Referer: https://understat.com/league/$LG" \
+              -H "User-Agent: Mozilla/5.0 (compatible; VibeGaffer/1.0)" \
+              -H "X-Requested-With: XMLHttpRequest" \
+              "https://understat.com/getLeagueData/$LG/2025" || echo "FETCH_FAIL fk_$LG"
           done
           ls -la /tmp/understat
 
@@ -113,6 +126,23 @@ jobs:
                       by_full.setdefault(k, []).append(el)
 
           players = {}
+          def store_prior(pid, p, league):
+              # First match wins: EPL priors are preferred, then foreign.
+              if pid in players:
+                  return
+              players[pid] = {
+                  'name': p['player_name'],
+                  'league': league,
+                  'prevClub': p.get('team_title') or '',
+                  'xG': round(float(p.get('xG') or 0), 2),
+                  'xA': round(float(p.get('xA') or 0), 2),
+                  'npxG': round(float(p.get('npxG') or 0), 2),
+                  'xGChain': round(float(p.get('xGChain') or 0), 2),
+                  'xGBuildup': round(float(p.get('xGBuildup') or 0), 2),
+                  'games': int(float(p.get('games') or 0)),
+                  'time': int(float(p.get('time') or 0))
+              }
+
           for p in priors_season.get('players', []):
               nm = norm(p['player_name'])
               tokens = nm.split()
@@ -133,17 +163,45 @@ jobs:
                       for el in cands:
                           if fpl_short_by_id[el['team']] in tts:
                               found = el; break
-              if found and found['id'] not in players:
-                  players[found['id']] = {
-                      'name': p['player_name'],
-                      'xG': round(float(p.get('xG') or 0), 2),
-                      'xA': round(float(p.get('xA') or 0), 2),
-                      'npxG': round(float(p.get('npxG') or 0), 2),
-                      'xGChain': round(float(p.get('xGChain') or 0), 2),
-                      'xGBuildup': round(float(p.get('xGBuildup') or 0), 2),
-                      'games': int(float(p.get('games') or 0)),
-                      'time': int(float(p.get('time') or 0))
-                  }
+              if found:
+                  store_prior(found['id'], p, 'EPL')
+
+          # ── Foreign-league priors (v5.13) ──
+          # Players with zero Premier League minutes (new signings / imports)
+          # have no EPL understat record. Their previous top-5-league xG/xA
+          # (La Liga / Bundesliga / Serie A / Ligue 1, previous season) is the
+          # best prior available. Match on the full normalized name only (never
+          # the surname fallback, to avoid common-name false positives), require
+          # exactly one FPL element candidate, and only for elements that are
+          # genuinely new to the PL. If a name spans leagues, keep the one with
+          # the most minutes played.
+          new_to_pl_ids = {str(el['id']) for el in fpl_elements
+                           if int(el.get('minutes') or 0) == 0 and int(el.get('starts') or 0) == 0}
+          foreign_pool = {}
+          for lg in ('La_liga', 'Bundesliga', 'Serie_A', 'Ligue_1'):
+              fpath = os.path.join(raw_dir, 'fk_' + lg + '.json')
+              if not os.path.exists(fpath):
+                  continue
+              try:
+                  with open(fpath, encoding='utf-8') as f:
+                      fdata = json.load(f)
+              except Exception:
+                  continue
+              for p in (fdata.get('players') or []):
+                  nm = norm(p['player_name'])
+                  if nm:
+                      foreign_pool.setdefault(nm, []).append((lg, p))
+          for nm, candidates in foreign_pool.items():
+              if str(nm) not in by_full:
+                  continue
+              elcands = by_full[nm]
+              if len(elcands) != 1:
+                  continue
+              el = elcands[0]
+              if str(el['id']) not in new_to_pl_ids:
+                  continue
+              best = max(candidates, key=lambda c: int(float(c[1].get('time') or 0)))
+              store_prior(el['id'], best[1], best[0])
 
           # ── Team priors: rolling npxG/xGA/pressing from match history ──
           teams = {}
@@ -214,13 +272,15 @@ jobs:
               'priorsSeason': priors_year + '-' + str(int(priors_year) + 1),
               'forecastSeason': CUR_YEAR + '-' + str(int(CUR_YEAR) + 1),
               'fetchedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'foreignLeagues': ['La_liga', 'Bundesliga', 'Serie_A', 'Ligue_1'],
               'players': players,
               'teams': teams,
               'fixtures': fixtures_out
           }
           with open('docs/data/understat.json', 'w', encoding='utf-8') as target:
               json.dump(out, target, separators=(',', ':'))
-          print(f"players: {len(players)} | teams: {len(teams)} | forecast fixtures: {len(fixtures_out)} (season {out['forecastSeason']}, priors {out['priorsSeason']})")
+          foreign = sum(1 for p in players.values() if p.get('league') != 'EPL')
+          print(f"players: {len(players)} ({foreign} foreign) | teams: {len(teams)} | forecast fixtures: {len(fixtures_out)} (season {out['forecastSeason']}, priors {out['priorsSeason']})")
           PY
 
       - name: Commit if changed

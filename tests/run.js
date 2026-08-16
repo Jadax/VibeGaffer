@@ -643,6 +643,140 @@ if (newCand) {
   }
 }
 
+// ── v5.13: transfer / new-club detection + foreign-league priors ────────
+section("v5.13 Transfer detection + new-club context + foreign priors");
+
+// teamByCode maps the stable franchise code (team.code) that history-priors
+// and the current bootstrap both use — the key that makes cross-season club
+// comparison meaningful (FPL team ids are NOT stable across seasons).
+const arsTeam = Object.values(VG.teams).find(t => t.short_name === "ARS");
+const mciTeam = Object.values(VG.teams).find(t => t.short_name === "MCI");
+check("teamByCode maps the ARS franchise code", arsTeam && VG.teamByCode[String(arsTeam.code)] === arsTeam);
+check("teamByCode maps the MCI franchise code", mciTeam && VG.teamByCode[String(mciTeam.code)] === mciTeam);
+
+// transferInfo decisions are null-safe and priors-driven.
+check("transferInfo is null-safe", VG.transferInfo(null).transferred === false);
+check("transferInfo without a prior reports no move", (() => {
+  const t = VG.transferInfo({ id: 1, team: arsTeam.id });
+  return t.transferred === false && t.toTeam === arsTeam;
+})());
+check("transferInfo ignores an unchanged club code", VG.transferInfo({ id: 2, team: arsTeam.id, priorTeamCode: String(arsTeam.code) }).transferred === false);
+check("transferInfo detects a cross-club move", (() => {
+  const t = VG.transferInfo({ id: 3, team: arsTeam.id, priorTeamCode: String(mciTeam.code) });
+  return t.transferred === true && t.fromTeam.short_name === "MCI" && t.toTeam.short_name === "ARS";
+})());
+check("transferInfo treats an unknown prior club (relegated/foreign) as no move", VG.transferInfo({ id: 4, team: arsTeam.id, priorTeamCode: "9999" }).transferred === false);
+check("transferInfo surfaces a foreign-league prior", VG.transferInfo({ id: 5, team: arsTeam.id, understat: { league: "La_liga" } }).foreignLeague === "La_liga");
+check("transferInfo ignores an EPL prior league", VG.transferInfo({ id: 6, team: arsTeam.id, understat: { league: "EPL" } }).foreignLeague === "");
+check("foreignLeagueLabel maps league slugs", VG.foreignLeagueLabel("La_liga") === "LA LIGA" && VG.foreignLeagueLabel("Bundesliga") === "BUNDESLIGA" && VG.foreignLeagueLabel("") === "");
+check("transferBadge renders a move", (() => {
+  const b = VG.transferBadge({ transferred: true, fromTeam: { short_name: "MCI" }, toTeam: { short_name: "ARS" } });
+  return b.includes("MCI") && b.includes("ARS") && b.includes("NEW CLUB");
+})());
+check("transferBadge is empty when no move", VG.transferBadge({ transferred: false }) === "" && VG.transferBadge(null) === "");
+
+// New-club attacking-context multiplier: hold the player + current club fixed
+// and vary only the OLD club's attack strength. A move from a weak club to a
+// strong one must boost the projection; the reverse must dampen it; the swing
+// must be clamped (±20%) so one transfer can't dominate the model. Pre-season
+// strength fallbacks are all equal, so temporarily install distinct strengths.
+const ctxPlayer = Object.values(VG.players).find(p =>
+  p.element_type !== 1 && (p.minutes || 0) > 0 && (p.starts || 0) > 0
+);
+if (ctxPlayer) {
+  const ctxFixture = fixtures.find(f => f.event === 1 && (f.team_h === ctxPlayer.team || f.team_a === ctxPlayer.team));
+  const ctxTeam = VG.teams[ctxPlayer.team];
+  const strongClub = Object.values(VG.teams).find(t => t.id !== ctxPlayer.team && t.id !== (ctxFixture ? (ctxFixture.team_h === ctxPlayer.team ? ctxFixture.team_a : ctxFixture.team_h) : -1));
+  const weakClub = Object.values(VG.teams).find(t => t.id !== ctxPlayer.team && t.id !== strongClub.id);
+  const ctxClubs = [ctxTeam, strongClub, weakClub].filter(Boolean);
+  const savedCtx = { clubs: ctxClubs.map(t => ({ t, home: t.strength_attack_home, away: t.strength_attack_away })), prior: ctxPlayer.priorTeamCode };
+  if (ctxFixture && strongClub && weakClub) {
+    const ctxHome = ctxFixture.team_h === ctxPlayer.team;
+    const ctxOpp = ctxHome ? ctxFixture.team_a : ctxFixture.team_h;
+    const ctxFdr = ctxHome ? (ctxFixture.team_h_difficulty || 3) : (ctxFixture.team_a_difficulty || 3);
+
+    // Baseline at the ORIGINAL (real) strengths — the restore must land exactly
+    // here. Note the pre-season fallback gives each club distinct home/away
+    // attack values, so the uniform 1015 below is only a test scaffold.
+    const originalGoal = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr).goalProb;
+
+    ctxClubs.forEach(t => { t.strength_attack_home = 1015; t.strength_attack_away = 1015; });
+    strongClub.strength_attack_home = 1150; strongClub.strength_attack_away = 1150;
+    weakClub.strength_attack_home = 900; weakClub.strength_attack_away = 900;
+    const baselineGoal = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr).goalProb;
+    ctxPlayer.priorTeamCode = String(strongClub.code);
+    const fromStrong = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr);
+    ctxPlayer.priorTeamCode = String(weakClub.code);
+    const fromWeak = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr);
+    check("fixture XP flags the move and the club", fromStrong.transferred === true && fromStrong.fromTeam === strongClub.short_name && fromStrong.toTeam === ctxTeam.short_name);
+    check("moving from a weaker club boosts the projection", fromWeak.goalProb > fromStrong.goalProb);
+    check("moving from a stronger club dampens the projection", fromStrong.goalProb < baselineGoal);
+    // Both scenarios share every other term, so the goal-prob ratio equals the
+    // club-strength multiplier ratio exactly: +115 vs -135 on the 1700 scale.
+    const multRatio = (1 + (1015 - 900) / 1700) / (1 + (1015 - 1150) / 1700);
+    check("context swing follows the attack-strength model", Math.abs(fromWeak.goalProb / fromStrong.goalProb - multRatio) < 1e-6);
+
+    // Clamp: an extreme downgrade/upgrade must cap at ±20%. The baseline has
+    // no move (transferConf = 1.0), so the clamped scenario's ratio includes
+    // its own 0.92 confidence dampen: 1.20 * 0.92 exactly.
+    const weakClub2 = Object.values(VG.teams).find(t => t.id !== ctxPlayer.team && t.id !== strongClub.id && t.id !== weakClub.id);
+    savedCtx.clubs.push({ t: weakClub2, home: weakClub2.strength_attack_home, away: weakClub2.strength_attack_away });
+    weakClub2.strength_attack_home = 200; weakClub2.strength_attack_away = 200;
+    ctxPlayer.priorTeamCode = String(weakClub2.code);
+    const fromExtreme = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr);
+    check("context multiplier is clamped at +20%", Math.abs(fromExtreme.goalProb / baselineGoal - 1.20 * 0.92) < 1e-6);
+
+    // Restore original club strengths by value (NOT delete — undefined strengths
+    // would NaN every later projection for these clubs) and the prior code.
+    savedCtx.clubs.forEach(({ t, home, away }) => { t.strength_attack_home = home; t.strength_attack_away = away; });
+    ctxPlayer.priorTeamCode = savedCtx.prior;
+    const restoredGoal = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr).goalProb;
+    check("restoring prior + strengths restores the baseline projection", restoredGoal === originalGoal);
+
+    // computeMultiGWXP aggregates the move into .info for the UI badges.
+    ctxPlayer.priorTeamCode = String(weakClub.code);
+    const ctxMulti = VG.computeMultiGWXP(ctxPlayer.id, 1, 2, fixtures);
+    check("multi-GW info carries transfer context", ctxMulti.info.transferred === true && ctxMulti.info.toTeam === ctxTeam.short_name && ctxMulti.info.fromTeam === weakClub.short_name);
+    ctxPlayer.priorTeamCode = savedCtx.prior;
+  }
+}
+
+// A foreign signing (0 PL minutes) with a non-EPL understat prior must be
+// flagged as new, labelled with its source league, and still project via the
+// real xG/xA from its old league.
+const foreignCand = Object.values(VG.players).find(p =>
+  (p.minutes || 0) === 0 && (p.starts || 0) === 0
+);
+if (foreignCand) {
+  const ffx = fixtures.find(f => f.event === 1 && (f.team_h === foreignCand.team || f.team_a === foreignCand.team));
+  if (ffx) {
+    const fHome = ffx.team_h === foreignCand.team;
+    const fOpp = fHome ? ffx.team_a : ffx.team_h;
+    const fFdr = fHome ? (ffx.team_h_difficulty || 3) : (ffx.team_a_difficulty || 3);
+    foreignCand.understat = { xG: 8, xA: 3, time: 2400, games: 28, league: "Bundesliga", prevClub: "Hoffenheim" };
+    const fres = VG.computeFixtureXP(foreignCand.id, fOpp, fHome, fFdr);
+    check("a foreign signing is flagged as new to the PL", fres.isNew === true);
+    check("a foreign signing carries its source league", fres.foreignLeague === "Bundesliga" && fres.transferred === false);
+    check("a foreign signing still projects usable xP from real xG/xA", fres.xp > 0 && fres.goalProb > 0);
+    delete foreignCand.understat;
+  }
+}
+
+// Data files that were regenerated for this release carry the new fields.
+const historyPriorsFile = JSON.parse(fs.readFileSync(path.join(root, "docs", "data", "history-priors.json"), "utf8"));
+check("history-priors.json records prior club codes", historyPriorsFile.players && Object.values(historyPriorsFile.players).some(p => p.team_code && p.team_code !== "0"));
+const understatFile = JSON.parse(fs.readFileSync(path.join(root, "docs", "data", "understat.json"), "utf8"));
+check("understat.json carries foreign-league priors", understatFile.foreignLeagues && Object.values(understatFile.players).some(p => p.league && p.league !== "EPL"));
+
+// Workflow guards: the fetchers must keep emitting the fields the engine reads.
+const understatWorkflowSource = fs.readFileSync(path.join(root, ".github", "workflows", "fetch-understat.yml"), "utf8");
+const historyWorkflowSource = fs.readFileSync(path.join(root, ".github", "workflows", "fetch-history-priors.yml"), "utf8");
+check("Understat fetcher pulls the four foreign leagues for prior matching",
+  ["La_liga", "Bundesliga", "Serie_A", "Ligue_1"].every(lg => understatWorkflowSource.includes(lg)));
+check("Understat fetcher records league + previous club on each prior", understatWorkflowSource.includes("prevClub") && understatWorkflowSource.includes("league"));
+check("History-priors feed captures the prior club code", historyWorkflowSource.includes("team_code"));
+check("applyHistoryPriors attaches the prior club code to every element", dataSource.includes("priorTeamCode"));
+
 // Recency helper: windowed structure, legacy structure, and confidence floor.
 const recPlayer = { recentForm: {
   n: 5, starts5: 5, gws5: 5, mins5: 450,

@@ -25,10 +25,13 @@ jobs:
             https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/2025-26/players_raw.csv
           python3 - <<'PY'
           import csv, json
+          # team_code is the previous season's FPL club code (the stable
+          # franchise code FPL keeps across seasons). Comparing it to the
+          # element's current team_code lets the engine flag summer transfers.
           fields = ('minutes', 'starts', 'expected_goals', 'expected_assists',
                     'expected_goals_per_90', 'expected_assists_per_90',
                     'clean_sheets_per_90', 'defensive_contribution_per_90',
-                    'total_points', 'bonus', 'bps')
+                    'total_points', 'bonus', 'bps', 'team_code')
           priors = {}
           with open('/tmp/players_raw.csv', encoding='utf-8') as source:
               for row in csv.DictReader(source):

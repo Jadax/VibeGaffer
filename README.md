@@ -1,4 +1,4 @@
-# VibeGaffer v5.12.0
+# VibeGaffer v5.13.0
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
@@ -65,7 +65,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.12.0)
+## Features (v5.13.0)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -192,6 +192,12 @@ The xP horizon no longer hardcodes 12 GWs. Options are built from the GWs actual
 - **Form vs Fixture Difficulty scatter** — whole-pool Chart.js scatter in the Compare tab, x = next-GW FDR (blank counts as 5), y = form, coloured by position
 - **Elo idempotency fix** — `computeTeamElo` now seeds from a `_eloBase` snapshot taken by `buildMaps`, so repeated defensive-outlook recomputation is byte-identical instead of compounding drift
 
+### Transfer & Foreign-Signing Awareness (v5.13.0)
+
+- **Summer-transfer detection** — compares each player's prior-season club code (free vaastav history-priors feed) against their current club; players who changed clubs carry a `NEW CLUB · OLD → NEW` badge in Compare, Differentials, Player Profile and the Briefing
+- **New-club context multiplier** — a transferred player's per-90 output was earned at their old club, so the xP engine adjusts their goal/assist projection toward the new club's attacking strength (clamped ±20%) with a confidence dampen, because their role/system moved with them
+- **Foreign-league priors** — the Understat fetcher now also pulls La Liga, Bundesliga, Serie A and Ligue 1; players new to the PL (0 minutes/starts) are matched by exact full name (unique candidate only, league with most minutes wins) and get real previous-league xG/xA priors labelled with their source league (`LA LIGA PRIOR` etc.)
+
 ### Chip Strategy
 
 | Chip | Evaluation Logic |
@@ -275,9 +281,9 @@ VibeGaffer is deliberately enriched with free public data. These integrations ar
 
 - **FPL API** (`fantasy.premierleague.com`) — official public read-only endpoint. Primary source.
 - **The-Odds-API** — optional bookmaker odds, gated by the `ODDS_API_KEY` repo secret.
-- **Understat** (`https://understat.com/getLeagueData/EPL/{season}`) — free player xG/xA/xGChain/xGBuildup, per-match team xG/xGA/npxG/ppda/deep, and `forecast` w/d/l probabilities for every fixture (can replace/backup The-Odds-API). Requires headers: `Referer: https://understat.com/league/EPL`, `User-Agent`, `X-Requested-With: XMLHttpRequest`.
+- **Understat** (`https://understat.com/getLeagueData/{league}/{season}`) — free player xG/xA/xGChain/xGBuildup, per-match team xG/xGA/npxG/ppda/deep, and `forecast` w/d/l probabilities for every EPL fixture (can replace/backup The-Odds-API). Since v5.13.0 the fetcher also pulls La Liga, Bundesliga, Serie A and Ligue 1 to give new PL signings real previous-league priors. Requires headers: `Referer: https://understat.com/league/{league}`, `User-Agent`, `X-Requested-With: XMLHttpRequest`.
 - **FBref** — free Opta-level xG/xA/shot maps (read/aggregate only, no heavy scraping).
-- **vaastav/Fantasy-Premier-League** GitHub raw CSVs — historical per-game data consumed weekly by `fetch-history-priors.yml`.
+- **vaastav/Fantasy-Premier-League** GitHub raw CSVs — historical per-game data (including the previous season's club code, used for summer-transfer detection since v5.13.0) consumed weekly by `fetch-history-priors.yml`.
 - **LiveFPL / FPL Review / fpl.team** — read-only reference for feature ideas and thresholds (their private data is never consumed).
 
 All sources are public, read-only, and community-licensed. If a source breaks, port the functionality to a similar free source rather than deleting the feature.
@@ -325,7 +331,7 @@ VibeGaffer/
 │       ├── understat.json              # Free Understat xG/xA + forecasts
 │       ├── setpieces.json              # Set-piece takers (pen/FK/corner; seasonal)
 │       └── odds.json                   # Bookmaker odds (optional)
-├── tests/run.js                        # Regression suite (136 checks)
+├── tests/run.js                        # Regression suite (274 checks)
 └── .gitignore
 ```
 
@@ -388,7 +394,7 @@ Tests are committed in `tests/run.js` and run automatically in GitHub Actions. R
 npm test
 ```
 
-**136/136 tests pass.**
+**274/274 tests pass.**
 
 Test coverage:
 - Optimizer: squad size, formation validity, captain, budget
@@ -401,6 +407,10 @@ Test coverage:
 - v5.4: Understat blend, xG regression flags/badges, team strength ratings, shared fixture/team helpers
 - v5.5: effective ownership, Monte Carlo GW distribution, DGW/BGW planner, set-piece boost, rank-impact estimate
 - v5.6: player profiles, live rank tracker, team news feed, chip EV calendar
+- v5.7: recency-weighted rotation risk, league race Monte Carlo
+- v5.8: horizon cap, new-player priors (isNew/ep_next/understat), recency blend, xMins, market tags, watchlist, rate-my-team, what-if scenarios, full-season planner
+- v5.12: briefing builder/render, roll-vs-spend, predicted lineups, clean-sheet outlook, form/FDR scatter
+- v5.13: transfer detection (team-code cross-season), new-club context multiplier (direction + clamp + restore), foreign-league priors, priorTeamCode attach, workflow/data-shape guards
 - Dynamic tips: analysis, captain, static sections
 - xpComponents: all 8 fields, sum matches totalXP
 - Reverse maps: GK/DEF/MID/FWD mapping
@@ -430,6 +440,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.13.0 | — | Transfer & foreign-signing awareness: summer-transfer detection by cross-season club code (vaastav `team_code` vs current element code, stable franchise key, 33 real moves found), new-club attacking-context multiplier on goal/assist projections (old-club per-90 rates adjusted to the new club's strength, clamped ±20%, with a 0.92 confidence dampen), foreign-league priors (Understat fetcher now pulls La Liga/Bundesliga/Serie A/Ligue 1 and matches new-to-PL signings by exact full name, best-minute league wins), `NEW CLUB · OLD → NEW` badges in Compare/Differentials/Profile/Briefing, `priorTeamCode` attached to all elements by `applyHistoryPriors`, and regeneration of history-priors.json (team codes) + understat.json (36 foreign priors). Tests 246 → 274. |
 | v5.12.0 | `de17921` | One-stop-shop intelligence layer: new GW Briefing tab (outlook, captain + VC, roll-vs-spend transfer call, chip hint, market/price-risk, injury watch, bench concern), Predicted Lineups (xMins-weighted projected XI per team, surplus-only minimum fix-up), Clean-Sheet & xGC Outlook table (Poisson on the engine's own Elo), and a Form-vs-Fixture scatter in Compare (Chart.js). Plus an Elo idempotency fix (`computeTeamElo` seeds from a `buildMaps` `_eloBase` snapshot so recomputation no longer compounds drift). |
 | v5.11.0 | - | Architectural hardening: externalized data transport and UI modules, delegated all UI actions, removed inline script execution from CSP, added compact bootstrap generation with fallback, and expanded release regression coverage. |
 | v5.10.0 | `0e08ad7` | Season-adaptive Elo team-strength layer: blends finished FPL results into attack/defence/overall ratings while preserving pre-season fallback behavior; adds ranked Elo diagnostics to Fixtures. |
@@ -480,7 +491,7 @@ Test coverage:
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.12.0
+- **Application**: VibeGaffer v5.13.0
 - **Author**: Tushant Sharma
 - **License**: Proprietary
 - **Live URL**: https://vibegaffer.astraiva.app/

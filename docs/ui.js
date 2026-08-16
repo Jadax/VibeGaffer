@@ -737,7 +737,8 @@ VG.preloadTabs = async (gw) => {
         const spBadge = (sp.pen ? '<span style="color:#fbbf24;" title="Penalty taker">P</span>' : '') + (sp.fk ? '<span style="color:#60a5fa;" title="Free-kick taker">F</span>' : '') + (sp.cor ? '<span style="color:#a78bfa;" title="Corner/Set-piece">C</span>' : '');
         const market = VG.marketBadge(VG.getMarketTag(p));
         const isNewBadge = p.isNew ? '<span style="background:rgba(96,165,250,0.12);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;">NEW</span>' : '';
-        dh += `<tr><td style="color:#e2e8f0;">${VG.watchToggle(p)} ${rank}. ${VG.esc(p.name)} ${isNewBadge}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td><td>${VG.regressionBadge(p.regression)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}${spBadge ? ' ' + spBadge : ''}</td><td>${(p.xMins || 0).toFixed(0)}</td><td><span style="color:${zone.color};">${VG.esc(zone.label)}</span></td><td>${market || '-'}</td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
+        const transferBadge = p.transferred ? VG.transferBadge({ transferred: true, fromTeam: p.fromTeam ? { short_name: p.fromTeam } : null, toTeam: p.toTeam ? { short_name: p.toTeam } : null }) : '';
+        dh += `<tr><td style="color:#e2e8f0;">${VG.watchToggle(p)} ${rank}. ${VG.esc(p.name)} ${isNewBadge}${transferBadge}</td><td>${VG.esc(p.position)}</td><td>${VG.esc(p.teamName)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td><td>${VG.regressionBadge(p.regression)}</td><td>${(p.epNext || 0).toFixed(1)}</td><td style="color:${ownColor};">${(p.ownership || 0).toFixed(1)}%</td><td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}${spBadge ? ' ' + spBadge : ''}</td><td>${(p.xMins || 0).toFixed(0)}</td><td><span style="color:${zone.color};">${VG.esc(zone.label)}</span></td><td>${market || '-'}</td><td style="color:#fbbf24;">${(p.diffScore || 0).toFixed(1)}</td></tr>`;
       });
       dh += '</table>';
       if (diffs.length === 0) dh = '<p style="color:#475569;">No differentials found matching criteria (low ownership + high xP)</p>';
@@ -1012,8 +1013,9 @@ VG.renderComparison = () => {
     const spBadge = VG.setPieceBadge(p.setPiece || {});
     const market = VG.marketBadge(VG.getMarketTag(p));
     const isNewBadge = p.isNew ? '<span style="background:rgba(96,165,250,0.12);color:#60a5fa;padding:1px 6px;border-radius:4px;font-size:0.65rem;white-space:nowrap;">NEW</span>' : '';
+    const transferBadge = p.transferred ? VG.transferBadge({ transferred: true, fromTeam: p.fromTeam ? { short_name: p.fromTeam } : null, toTeam: p.toTeam ? { short_name: p.toTeam } : null }) : '';
     const recLine = p.recency ? `<span title="Last-3-GW xGI/90: ${p.recency.xgi90} · pts/90: ${p.recency.pts90}" style="color:#a78bfa;">${p.recency.rounds}GW</span>` : '<span style="color:#475569;">-</span>';
-    tableHtml += `<tr><td style="color:#e2e8f0;">${VG.watchToggle(p)} ${VG.esc(p.name)} ${isNewBadge}</td><td>${VG.esc(p.position)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
+    tableHtml += `<tr><td style="color:#e2e8f0;">${VG.watchToggle(p)} ${VG.esc(p.name)} ${isNewBadge}${transferBadge}</td><td>${VG.esc(p.position)}</td><td>£${p.price.toFixed(1)}m</td><td style="color:#00ff87;">${(p.totalXP || 0).toFixed(1)}</td><td>${(p.xpPerPrice || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${(p.realXG || 0).toFixed(1)}</td><td>${(p.realXG90 || 0).toFixed(2)}</td>`;
     tableHtml += `<td>${VG.regressionBadge(p.regression)}</td>`;
     tableHtml += `<td style="color:#a78bfa;">${(p.eo || 0).toFixed(1)}</td>`;
