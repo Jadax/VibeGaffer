@@ -184,6 +184,21 @@ VG.buildMaps = (data) => {
     }
   });
 
+  // Snapshot the clean strength scale BEFORE any Elo drift can mutate it, so
+  // VG.computeTeamElo always seeds from the same base. This keeps the Elo
+  // blend idempotent: repeat calls re-derive the same drift instead of
+  // compounding it onto an already-drifted seed (a real v5.10 bug once a
+  // second caller — e.g. the defensive-outlook view — recomputed Elo).
+  data.teams.forEach(t => {
+    t._eloBase = {
+      attH: Number(t.strength_attack_home) || 0,
+      attA: Number(t.strength_attack_away) || 0,
+      defH: Number(t.strength_defence_home) || 0,
+      defA: Number(t.strength_defence_away) || 0,
+      rating: Math.max(1, Math.min(5, Number(t.strength) || 3))
+    };
+  });
+
   VG.gwData = data.events;
   VG.currentGW = data.events.find(e => e.is_current)?.id || data.events.find(e => e.is_next)?.id || 1;
 };
@@ -206,17 +221,18 @@ VG.computeTeamElo = (fixtures) => {
   if (!VG.teams) return null;
 
   // Seed from the same 1000-scale the buildMaps fallback and computeFixtureXP
-  // expect. Real-season API fields (when non-zero) are the seed; otherwise use
-  // the 1-5 rating → base scale, matching the promoted-team fallback exactly.
+  // expect. The base snapshot is taken in buildMaps BEFORE drift is ever
+  // written back, so recomputation is idempotent (no compounding).
   const seed = {};
   Object.values(VG.teams).forEach(t => {
-    const rating = Math.max(1, Math.min(5, Number(t.strength) || 3));
+    const b = t._eloBase;
+    const rating = b ? b.rating : Math.max(1, Math.min(5, Number(t.strength) || 3));
     const base = 1000 + (rating - 3) * 100;
     seed[t.id] = {
-      attH: Number(t.strength_attack_home) || base + 40,
-      attA: Number(t.strength_attack_away) || base - 10,
-      defH: Number(t.strength_defence_home) || base + 30,
-      defA: Number(t.strength_defence_away) || base - 20
+      attH: (b && b.attH) || base + 40,
+      attA: (b && b.attA) || base - 10,
+      defH: (b && b.defH) || base + 30,
+      defA: (b && b.defA) || base - 20
     };
   });
 
@@ -3967,4 +3983,453 @@ VG.renderLive = async (gw, teamId) => {
   }
 
   return html;
+};
+
+// ═════════════════════════════════════════════════════════════════════════
+// v5.12 — One-stop-shop layer (borrowed patterns, per Borrowing Policy)
+//  · GW Briefing        — LazyFPL / fpl.team pre-deadline advisor
+//  · Predicted Lineups  — fpl.team / FFScout projected-XI idea
+//  · Defensive Outlook  — FFHub / FFix clean-sheet + xGC probabilities
+//  · Form-vs-Fixtures   — FFix / FFScout scatter classic
+// All pure functions of data already loaded (players, fixtures, allXP,
+// recent form), so they run instantly and stay testable in CI.
+// ═════════════════════════════════════════════════════════════════════════
+
+// ── Roll-the-transfer / banking strategy (fpl-predict idea) ─────────────
+// Projects the squad's xP over the next `horizon` GWs under two paths:
+//  spend — swap the cheapest squad player for the single best affordable
+//          upgrade this GW, then run the same auto-picked XI/captains;
+//  roll  — bank the free transfer and keep the squad as-is.
+// Both paths use computePerGWPicks per GW, so lineup + captain choices
+// auto-adapt. The difference is the clean "spend or bank" signal.
+VG.rollValue = (squad, allXP, fixtures, gw, horizon, bank) => {
+  if (!squad || !squad.length || !Array.isArray(allXP)) return null;
+  const byId = {};
+  allXP.forEach(p => { byId[p.id] = p; });
+  const own = squad.map(p => byId[p.id] || p).filter(p => p.id);
+  const ownIds = new Set(own.map(p => p.id));
+  const h = Math.max(1, Math.min(6, Math.round(horizon || 5)));
+  const gwList = [...new Set((fixtures || []).map(f => f.event).filter(g => g && g >= gw && g < gw + h))];
+  const project = (ids) => gwList.reduce((sum, g) => {
+    const picks = VG.computePerGWPicks(ids.map(id => byId[id]).filter(Boolean), g, fixtures);
+    return sum + (picks ? picks.gwTotalXP : 0);
+  }, 0);
+
+  const rollXP = project([...ownIds]);
+
+  let transfer = null;
+  let spendXP = rollXP;
+  const cheapest = own.slice().sort((a, b) => (a.price || 99) - (b.price || 99))[0];
+  if (cheapest) {
+    const spendable = (cheapest.price || 0) + (bank || 0);
+    const best = allXP
+      .filter(p => !ownIds.has(p.id) && (p.price || 99) <= spendable + 0.1 && VG.isAvailable(p))
+      .sort((a, b) => (b.totalXP || 0) - (a.totalXP || 0))[0];
+    if (best) {
+      spendXP = project([...ownIds].filter(id => id !== cheapest.id).concat([best.id]));
+      transfer = {
+        outId: cheapest.id, inId: best.id,
+        outName: cheapest.name || VG.playerName(cheapest),
+        inName: best.name || VG.playerName(best),
+        outPrice: +(cheapest.price || 0).toFixed(1),
+        inPrice: +(best.price || 0).toFixed(1),
+        inXP: +(best.totalXP || 0).toFixed(1)
+      };
+    }
+  }
+  const gain = +(spendXP - rollXP).toFixed(1);
+  return {
+    rollXP: +rollXP.toFixed(1),
+    spendXP: +spendXP.toFixed(1),
+    gain,
+    transfer,
+    call: !transfer
+      ? "no affordable upgrade in budget"
+      : gain > 4 ? "worth spending the transfer now"
+      : gain > 1 ? "marginal, either is fine"
+      : "roll the transfer and bank it"
+  };
+};
+
+// ── GW Briefing (LazyFPL / fpl.team pre-deadline advisor) ───────────────
+// One screen that pulls together everything worth checking before a
+// deadline: your likely starters' fixture outlook, captain + VC verdicts,
+// the best single transfer (with the roll-vs-spend call), a chip hint,
+// market/price-risk flags and an injury watch — all from already-computed
+// inputs, so it renders instantly and is fully unit-testable.
+VG.buildBriefing = (result, allXP, fixtures, gw) => {
+  if (!result || !result.squad || !Array.isArray(allXP)) return null;
+  const squad = result.squad;
+  const byId = {};
+  allXP.forEach(p => { byId[p.id] = p; });
+
+  const starting = (result.starting && result.starting.length >= 11 ? result.starting
+    : (result.gwPicks && result.gwPicks[0] && result.gwPicks[0].starting) || squad.slice(0, 11));
+  const bench = (result.bench && result.bench.length >= 4 ? result.bench
+    : (result.gwPicks && result.gwPicks[0] && result.gwPicks[0].bench) || squad.slice(11, 15));
+
+  const project = (p) => {
+    const g = VG.computePlayerGWProjection(p, gw, fixtures);
+    return Object.assign({}, p, { gwXP: g.gwXP, oppName: g.oppName, venue: g.venue, isHome: g.venue, fdr: g.fdr, fixtureCount: g.fixtureCount });
+  };
+
+  // 1) Next-GW outlook across likely starters.
+  const proj = starting.slice(0, 11).map(project);
+  const scheduled = proj.filter(x => x.fixtureCount > 0);
+  const avgFDR = scheduled.length ? +((scheduled.reduce((s, x) => s + (x.fdr || 0), 0)) / scheduled.length).toFixed(2) : null;
+  const outlook = {
+    avgFDR,
+    blanks: proj.filter(x => x.fixtureCount === 0).length,
+    doubles: proj.filter(x => x.fixtureCount >= 2).length,
+    easy: scheduled.filter(x => (x.fdr || 0) <= 2).length,
+    hard: scheduled.filter(x => (x.fdr || 0) >= 4).length
+  };
+
+  // 2) Captain + vice verdicts (fresh per-GW projection for reasoning).
+  const ranked = proj.filter(x => (x.positionId || 0) !== 1).sort((a, b) => (b.gwXP || 0) - (a.gwXP || 0));
+  const cap = ranked[0] || null;
+  const vice = ranked[1] || null;
+  const capReason = cap ? VG.getCaptainReasoning(cap, fixtures, gw, vice || undefined) : null;
+  const captain = cap ? {
+    name: cap.name || VG.playerName(cap),
+    gwXP: +(cap.gwXP || 0).toFixed(1),
+    summary: capReason ? capReason.summary : "",
+    details: capReason ? capReason.details : [],
+    blank: capReason ? capReason.blank : null
+  } : null;
+  const viceInfo = vice ? { name: vice.name || VG.playerName(vice), gwXP: +(vice.gwXP || 0).toFixed(1) } : null;
+
+  // 3) Transfer: optimizer output in transfer mode, else the roll-value
+  //    "single best upgrade" suggestion (draft squads have no transfers yet).
+  const optTx = result.transfersIn && result.transfersIn.length
+    ? { out: (result.transfersOut && result.transfersOut[0]) || null, in: result.transfersIn[0], source: "optimizer" }
+    : null;
+  const roll = VG.rollValue(squad, allXP, fixtures, gw, VG.currentHorizon || 5, result.budgetRemaining || 0);
+  const transfer = optTx ? optTx : (roll && roll.transfer ? {
+    out: { id: roll.transfer.outId, name: roll.transfer.outName },
+    in: { id: roll.transfer.inId, name: roll.transfer.inName, xp: roll.transfer.inXP },
+    source: "roll-value"
+  } : null);
+
+  // 4) Chip hint from the optimizer's chip advice.
+  let chipHint = null;
+  if (result.chipAdvice && Array.isArray(result.chipAdvice)) {
+    const rec = result.chipAdvice.find(c => c && /recommend|use|play/i.test((c.label || c.chip || "") + (c.advice || c.reason || ""))) || result.chipAdvice[0];
+    if (rec) chipHint = { label: rec.label || rec.chip || "", advice: rec.advice || rec.reason || rec.text || "" };
+  }
+
+  // 5) Market / price-risk flags for the squad.
+  const market = squad.map(p => {
+    const e = byId[p.id];
+    if (!e) return null;
+    const tag = VG.getMarketTag(e);
+    return { id: e.id, name: e.name || VG.playerName(e), tag, badge: VG.marketBadge(tag) || null };
+  }).filter(Boolean);
+
+  // 6) Injury / availability watch (raw player fields).
+  const injuries = squad.map(p => {
+    const pl = VG.players[p.id] || p;
+    const chance = pl.chance_of_playing_next_round;
+    const flagged = VG.hasFitnessFlag(pl) || (chance !== null && chance !== undefined && chance < 100) || /[du]/.test(pl.status || "");
+    if (!flagged) return null;
+    return {
+      name: pl.web_name || pl.second_name || pl.name || p.name || VG.playerName(p),
+      team: (VG.teams[pl.team] && VG.teams[pl.team].short_name) || (p.teamName || "?"),
+      chance: (chance === null || chance === undefined) ? null : chance,
+      news: pl.news || ""
+    };
+  }).filter(Boolean);
+
+  // 7) Bench concern: does the best bench player outscore the worst starter?
+  const startersSorted = proj.slice().sort((a, b) => (b.gwXP || 0) - (a.gwXP || 0));
+  const worstStarter = startersSorted[startersSorted.length - 1];
+  const bestBench = bench.slice(0, 4).map(project).slice().sort((a, b) => (b.gwXP || 0) - (a.gwXP || 0))[0];
+  let benchConcern = null;
+  if (worstStarter && bestBench && (bestBench.gwXP || 0) > (worstStarter.gwXP || 0) + 0.5) {
+    benchConcern = {
+      note: `${bestBench.name || VG.playerName(bestBench)} (${bestBench.gwXP.toFixed(1)} xP) outscores your weakest starter ${worstStarter.name || VG.playerName(worstStarter)} (${worstStarter.gwXP.toFixed(1)} xP).`,
+      worstStarter: worstStarter.name || VG.playerName(worstStarter),
+      bestBench: bestBench.name || VG.playerName(bestBench)
+    };
+  }
+
+  return { gw, outlook, captain, vice: viceInfo, transfer, roll, chipHint, market, injuries, benchConcern };
+};
+
+VG.render.briefing = (b) => {
+  if (!b) return "";
+  let html = '';
+  // Outlook strip
+  let fdrTone = '';
+  if (b.outlook && b.outlook.avgFDR !== null && b.outlook.avgFDR !== undefined) {
+    fdrTone = b.outlook.avgFDR <= 2.4 ? "#00ff87" : b.outlook.avgFDR <= 3.2 ? "#fbbf24" : "#ef4444";
+  }
+  html += '<div class="briefing-outlook">';
+  html += `<div class="metric"><div class="name">Avg FDR (XI)</div><div class="value" style="color:${fdrTone};">${b.outlook ? b.outlook.avgFDR : "—"}</div></div>`;
+  html += `<div class="metric"><div class="name">Easy (FDR ≤ 2)</div><div class="value">${b.outlook ? b.outlook.easy : 0}</div></div>`;
+  html += `<div class="metric"><div class="name">Tough (FDR ≥ 4)</div><div class="value">${b.outlook ? b.outlook.hard : 0}</div></div>`;
+  if (b.outlook && b.outlook.doubles > 0) html += `<div class="metric"><div class="name">DGWs</div><div class="value" style="color:#00ff87;">${b.outlook.doubles}</div></div>`;
+  if (b.outlook && b.outlook.blanks > 0) html += `<div class="metric"><div class="name">Blanks</div><div class="value" style="color:#ef4444;">${b.outlook.blanks}</div></div>`;
+  html += '</div>';
+
+  // Captain + VC
+  if (b.captain) {
+    html += '<div class="briefing-card"><div class="section-title">Captain</div>';
+    html += `<div class="briefing-row"><span style="color:#e2e8f0;font-weight:600;">${VG.esc(b.captain.name)}</span> <span style="color:#00ff87;">${b.captain.gwXP.toFixed(1)} xP</span></div>`;
+    if (b.captain.summary) html += `<div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">${VG.esc(b.captain.summary)}</div>`;
+    if (b.vice) html += `<div style="font-size:0.78rem;color:#94a3b8;margin-top:4px;">VC: ${VG.esc(b.vice.name)} (${b.vice.gwXP.toFixed(1)} xP)</div>`;
+    (b.captain.details || []).forEach(d => html += `<div style="font-size:0.75rem;color:#64748b;margin-top:2px;">· ${VG.esc(d)}</div>`);
+    html += '</div>';
+  }
+
+  // Transfer + roll/spend call
+  if (b.transfer) {
+    html += '<div class="briefing-card"><div class="section-title">Transfer' + (b.transfer.source === "optimizer" ? ' <span style="font-weight:400;color:#475569;">(optimizer)</span>' : '') + '</div>';
+    html += `<div style="color:#e2e8f0;">${VG.esc(b.transfer.out ? b.transfer.out.name : "?")} → <span style="color:#00ff87;font-weight:600;">${VG.esc(b.transfer.in.name)}</span>${b.transfer.in.xp ? ` <span style="color:#94a3b8;">(${b.transfer.in.xp} xP)</span>` : ""}</div>`;
+    if (b.roll) {
+      html += `<div style="font-size:0.75rem;color:#64748b;margin-top:4px;">Roll vs spend: roll ${b.roll.rollXP} xP · spend ${b.roll.spendXP} xP (${b.roll.gain >= 0 ? "+" : ""}${b.roll.gain}). ${VG.esc(b.roll.call)}</div>`;
+    }
+    html += '</div>';
+  } else if (b.roll && b.roll.call) {
+    html += '<div class="briefing-card"><div class="section-title">Transfer</div><div style="font-size:0.78rem;color:#64748b;">' + VG.esc(b.roll.call) + '</div></div>';
+  }
+
+  // Chip hint
+  if (b.chipHint && b.chipHint.label) {
+    html += '<div class="briefing-card"><div class="section-title">Chip</div>';
+    html += `<div style="color:#e2e8f0;">${VG.esc(b.chipHint.label)}</div>`;
+    if (b.chipHint.advice) html += `<div style="font-size:0.78rem;color:#64748b;margin-top:4px;">${VG.esc(b.chipHint.advice)}</div>`;
+    html += '</div>';
+  }
+
+  // Market flags
+  if (b.market && b.market.length) {
+    html += '<div class="briefing-card"><div class="section-title">Price risk</div><div class="briefing-tags">';
+    b.market.forEach(m => html += `<span class="chip">${VG.esc(m.name)} ${m.badge || ""}</span>`);
+    html += '</div></div>';
+  }
+
+  // Injury & availability
+  html += '<div class="briefing-card"><div class="section-title" style="color:' + (b.injuries && b.injuries.length ? '#fbbf24;' : '#00ff87;') + '">Injury & availability</div>';
+  if (b.injuries && b.injuries.length) {
+    b.injuries.forEach(i => html += `<div style="font-size:0.78rem;color:#64748b;margin-top:3px;">${VG.esc(i.name)} (${VG.esc(i.team)})${i.chance !== null ? ` · ${i.chance}% chance` : ""}${i.news ? ` · ${VG.esc(i.news)}` : ""}</div>`);
+  } else {
+    html += '<div style="font-size:0.78rem;color:#64748b;">No squad flags.</div>';
+  }
+  html += '</div>';
+
+  // Bench concern
+  if (b.benchConcern) {
+    html += '<div class="briefing-card"><div class="section-title">Bench</div><div style="font-size:0.78rem;color:#94a3b8;">' + VG.esc(b.benchConcern.note) + '</div></div>';
+  }
+
+  return html;
+};
+
+// ── Predicted lineups for all 20 teams (fpl.team / FFScout idea) ─────────
+// Uses the SAME minutes-probability signal as the xP engine (computeFixtureXP
+// xMins, which blends start rate + recency + availability + confidence) to
+// project each team's most likely XI. A small fix-up pass guarantees the
+// classic minimums (4 DEF / 3 MID / 1 FWD) while otherwise trusting xMins,
+// so a back-five team keeps 5 defenders if that is genuinely the likely
+// lineup. Pre-season (fewer than 2 recorded rounds) renders a notice.
+VG.predictedLineups = (gw, fixtures) => {
+  const dataRounds = VG.recentFormMaxRounds || 0;
+  const rows = Object.values(VG.teams).map(t => {
+    const players = Object.values(VG.players).filter(p => p.team === t.id && VG.isAvailable(p));
+    if (!players.length) return null;
+    const tfs = VG.teamFixtures(fixtures, gw, t.id);
+    const scored = players.map(p => {
+      let xm = 0;
+      if (tfs.length) {
+        const isHome = tfs[0].team_h === t.id;
+        const oppId = isHome ? tfs[0].team_a : tfs[0].team_h;
+        xm = VG.computeFixtureXP(p.id, oppId, isHome, VG.fixtureFDR(tfs[0], t.id)).xMins || 0;
+      }
+      return { p, xm };
+    }).sort((a, b) => b.xm - a.xm);
+
+    const gks = scored.filter(s => s.p.element_type === 1);
+    const outfield = scored.filter(s => s.p.element_type !== 1);
+    const gk = gks[0] || null;
+    const gk2 = gks[1] || null;
+    const gkRisk = !!(gk2 && gk2.xm >= 45 && gk.xm - gk2.xm < 45);
+
+    // Default 4-3-3; promote/demote to hit the minimums while favouring
+    // whoever actually projects to play. The XI is the projected GK plus the
+    // ten outfielders who project for the most minutes.
+    const xi = (gk ? [gk] : []).concat(outfield.slice(0, 10));
+    const count = (pos) => xi.filter(s => s.p.element_type === pos).length;
+    const promote = (pos, min) => {
+      // Only demote a position that holds surplus above its own minimum, so
+      // fixing one minimum never breaks another (e.g. adding a FWD must not
+      // drop DEF below 4).
+      const mins = { 1: 1, 2: 4, 3: 3, 4: 1 };
+      let guard = 0;
+      while (count(pos) < min && guard++ < 12) {
+        const repl = outfield.find(s => s.p.element_type === pos && !xi.includes(s));
+        if (!repl) break;
+        const weak = [...xi].sort((a, b) => a.xm - b.xm).find(s => {
+          const c = s.p.element_type;
+          return c !== 1 && count(c) > mins[c];
+        });
+        if (!weak) break;
+        xi[xi.indexOf(weak)] = repl;
+      }
+    };
+    promote(2, 4);
+    promote(3, 3);
+    promote(4, 1);
+
+    const xiIds = new Set(xi.map(s => s.p.id));
+    const bench = outfield.filter(s => !xiIds.has(s.p.id)).slice(0, 4);
+    const flagged = xi.filter(s => s.xm > 0 && s.xm < 68).map(s => s.p.id);
+    const benchPress = bench.filter(s => s.xm >= 82).map(s => s.p.id);
+
+    return {
+      teamId: t.id,
+      short: t.short_name,
+      name: t.name,
+      formation: `${count(2)}-${count(3)}-${count(4)}`,
+      xi: [...xi].sort((a, b) => a.p.element_type - b.p.element_type || b.xm - a.xm).map(s => ({
+        id: s.p.id,
+        name: s.p.web_name || s.p.second_name || s.p.first_name,
+        pos: VG.POSITIONS[s.p.element_type],
+        xm: Math.round(s.xm),
+        rotation: flagged.includes(s.p.id)
+      })),
+      bench: bench.map(s => ({
+        id: s.p.id,
+        name: s.p.web_name || s.p.second_name || s.p.first_name,
+        pos: VG.POSITIONS[s.p.element_type],
+        xm: Math.round(s.xm),
+        pressing: benchPress.includes(s.p.id)
+      })),
+      gkRisk,
+      fixture: tfs.length ? (tfs[0].team_h === t.id ? `vs ${(VG.teams[tfs[0].team_a] || {}).short_name || "?"}` : `@ ${(VG.teams[tfs[0].team_h] || {}).short_name || "?"}`) : "BLANK",
+      fixtureCount: tfs.length
+    };
+  }).filter(Boolean);
+  return { gw, dataRounds, rows };
+};
+
+VG.render.predictedLineups = (data) => {
+  if (!data) return "";
+  if (data.dataRounds < 2) {
+    return `<div style="color:#64748b;font-size:0.78rem;">Predicted lineups unlock once GW2+ results are in (they need the 1/3/5-round recency windows). Current data covers ${data.dataRounds} round${data.dataRounds === 1 ? "" : "s"}.</div>`;
+  }
+  let html = '<div class="pl-grid">';
+  data.rows.forEach(r => {
+    html += '<div class="pl-card">';
+    html += `<div class="pl-head"><span style="color:#e2e8f0;font-weight:600;">${VG.esc(r.short)}</span> <span style="color:#64748b;font-size:0.7rem;">${VG.esc(r.fixture)} · ${r.formation}${r.gkRisk ? ' <span style="color:#fbbf24;">⚠ GK rotation</span>' : ""}</span></div>`;
+    r.xi.forEach(s => {
+      const flag = s.rotation ? '<span style="color:#fbbf24;" title="Rotation risk">▲</span>' : '';
+      html += `<div class="pl-player" style="display:flex;justify-content:space-between;font-size:0.72rem;color:#94a3b8;"><span>${VG.esc(s.pos)} ${VG.esc(s.name)} ${flag}</span><span>${s.xm}′</span></div>`;
+    });
+    if (r.bench.length) {
+      html += `<div style="font-size:0.65rem;color:#475569;margin-top:6px;">Bench: ${r.bench.map(b => `${VG.esc(b.name)} (${b.xm}′${b.pressing ? " · pressing" : ""})`).join(", ")}</div>`;
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+  return html;
+};
+
+// ── Clean-sheet / xGC outlook (FFHub / FFix metric) ──────────────────────
+// A display-only Poisson model on the same 1000-scale Elo/strength numbers
+// the engine uses. For each team's next fixture: xGF and xGC for both sides,
+// P(clean sheet) = e^(-xGC conceded). Sorted by P(CS) so "who do I back to
+// keep a clean sheet" is one glance. Recomputation is safe because Elo is
+// idempotent (seeds from the buildMaps base snapshot).
+VG.teamDefensiveOutlook = (gw, fixtures) => {
+  const eloRows = VG.computeTeamElo(fixtures) || [];
+  const elo = {};
+  eloRows.forEach(r => { elo[r.id] = r; });
+  const teamRows = Object.values(VG.teams).map(t => {
+    const tfs = VG.teamFixtures(fixtures, gw, t.id);
+    if (!tfs.length) return null;
+    const f = tfs[0];
+    const isHome = f.team_h === t.id;
+    const oppId = isHome ? f.team_a : f.team_h;
+    const opp = VG.teams[oppId];
+    const me = elo[t.id] || {};
+    const them = elo[oppId] || {};
+    const meAtt = me.att || 1000, meDef = me.def || 1000;
+    const themAtt = them.att || 1000, themDef = them.def || 1000;
+    const homeAdj = isHome ? 0.22 : -0.22;
+    const xgf = Math.min(3.2, Math.max(0.25, 1.35 + (meAtt - themDef) / 300 + homeAdj));
+    const xgc = Math.min(3.2, Math.max(0.25, 1.35 + (themAtt - meDef) / 300 - homeAdj));
+    const cs = Math.exp(-xgc);
+    return {
+      teamId: t.id, short: t.short_name,
+      opp: opp ? opp.short_name : "?", venue: isHome ? "H" : "A",
+      xgf: +xgf.toFixed(2), xgc: +xgc.toFixed(2),
+      cs: +cs.toFixed(3), csPct: +(cs * 100).toFixed(1),
+      fixtureCount: tfs.length
+    };
+  }).filter(Boolean);
+  teamRows.sort((a, b) => b.cs - a.cs);
+  teamRows.forEach((r, i) => { r.rank = i + 1; });
+  return teamRows;
+};
+
+VG.render.teamDefensiveOutlook = (rows) => {
+  if (!rows || !rows.length) return "";
+  let html = '<table class="data-table" style="font-size:0.72rem;"><tr><th>#</th><th>Team</th><th>Next</th><th>xGF</th><th>xGC</th><th>P(CS)</th></tr>';
+  rows.forEach(r => {
+    const tone = r.csPct >= 40 ? "#00ff87" : r.csPct >= 25 ? "#fbbf24" : "#94a3b8";
+    html += `<tr><td>${r.rank}</td><td style="color:#e2e8f0;">${VG.esc(r.short)}</td><td>${r.venue === "H" ? "vs" : "@"} ${VG.esc(r.opp)}${r.fixtureCount > 1 ? ' <span style="color:#00ff87;">DGW</span>' : ""}</td><td>${r.xgf}</td><td>${r.xgc}</td><td style="color:${tone};font-weight:600;">${r.csPct}%</td></tr>`;
+  });
+  html += '</table>';
+  return html;
+};
+
+// ── Form vs Fixture Difficulty scatter (FFix / FFScout classic) ──────────
+// X-axis = the player's next-GW fixture difficulty (FDR 1-5; a blank counts
+// as the worst, 5). Y-axis = FPL form. Points coloured by position. The data
+// builder is pure (testable); the renderer is a thin Chart.js wrapper.
+VG.formFixturesData = (allXP, fixtures, gw) => {
+  const datasets = { GK: [], DEF: [], MID: [], FWD: [] };
+  (allXP || []).forEach(p => {
+    const label = VG.POSITIONS[p.positionId] || "MID";
+    const fx = VG.teamFixtures(fixtures, gw, p.teamId);
+    let fdr = 5;
+    if (fx.length) fdr = VG.fixtureFDR(fx[0], p.teamId);
+    const form = +parseFloat(p.form || "0").toFixed(1);
+    datasets[label].push({ x: fdr, y: form, id: p.id, name: p.name });
+  });
+  return datasets;
+};
+
+VG.render.formFixturesChart = (canvasId, allXP, fixtures, gw) => {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || typeof Chart === "undefined") return;
+  const datasets = VG.formFixturesData(allXP, fixtures, gw);
+  const colors = { GK: '#06b6d4', DEF: '#22c55e', MID: '#a78bfa', FWD: '#fbbf24' };
+  const ds = Object.keys(datasets).map(label => ({
+    label,
+    data: datasets[label],
+    backgroundColor: colors[label] + "aa",
+    borderColor: colors[label],
+    pointRadius: 3
+  }));
+  if (canvas._chart) canvas._chart.destroy();
+  canvas._chart = new Chart(canvas, {
+    type: 'scatter',
+    data: { datasets: ds },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: {
+          min: 1, max: 5, title: { display: true, text: 'Fixture difficulty (next GW)', color: '#64748b', font: { size: 10 } },
+          ticks: { stepSize: 1, color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' }
+        },
+        y: {
+          title: { display: true, text: 'Form (last 5)', color: '#64748b', font: { size: 10 } },
+          ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' }
+        }
+      },
+      plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } }
+    }
+  });
 };

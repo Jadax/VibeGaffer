@@ -17,12 +17,12 @@
     form-action 'none'">
     <title>VibeGaffer · FPL Intelligence</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-  <link rel="stylesheet" href="style.css?v=5.11.0">
+  <link rel="stylesheet" href="style.css?v=5.12.0">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
           integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="app.js?v=5.11.0"></script>
-  <script src="data.js?v=5.11.0"></script>
+  <script src="app.js?v=5.12.0"></script>
+  <script src="data.js?v=5.12.0"></script>
 </head>
 <body>
 
@@ -31,7 +31,7 @@
     <h1><span>⚽</span> VibeGaffer</h1>
     <div class="header-sub"><strong>Astraiva</strong> · FPL Intelligence Engine</div>
   </div>
-    <div><span class="badge pulse-glow">v5.11.0</span></div>
+    <div><span class="badge pulse-glow">v5.12.0</span></div>
 </div>
 
 <div class="app">
@@ -79,6 +79,7 @@
   <div id="results" style="display:none;">
     <div class="tabs">
       <button class="tab active" data-action="tab" data-tab="squad">🎯 Squad</button>
+      <button class="tab" data-action="tab" data-tab="briefing">📋 Briefing</button>
       <button class="tab" data-action="tab" data-tab="live">🔴 Live</button>
       <button class="tab" data-action="tab" data-tab="compare">⚖️ Compare</button>
       <button class="tab" data-action="tab" data-tab="prices">💷 Prices</button>
@@ -91,6 +92,12 @@
 
     <div class="tab-content active" id="tab-squad">
       <div id="squadContent"></div>
+    </div>
+
+    <div class="tab-content" id="tab-briefing">
+      <div class="section-title">Gameweek Briefing</div>
+      <p class="subtitle">Everything worth checking before the deadline, one screen: fixture outlook, captain + VC verdict, transfer (with roll-vs-spend), chip hint, price risk and injury watch.</p>
+      <div id="briefingContent"></div>
     </div>
 
     <div class="tab-content" id="tab-live">
@@ -106,6 +113,8 @@
       <div class="compare-chart-wrap"><canvas id="radarChart"></canvas></div>
       <div style="margin:16px 0 8px;color:#94a3b8;font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">xP Breakdown by Source</div>
       <div style="height:200px;margin-bottom:12px;"><canvas id="compareBarContainer"></canvas></div>
+      <div style="margin:16px 0 8px;color:#94a3b8;font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Form vs Fixture Difficulty (whole pool)</div>
+      <div style="height:260px;margin-bottom:12px;"><canvas id="formFixturesChart"></canvas></div>
       <div id="compareTable"></div>
     </div>
 
@@ -152,7 +161,7 @@
 
     <div class="footer">VibeGaffer · An Astraiva product · Built by Tushant Sharma</div>
 
-<script src="ui.js?v=5.11.0"></script>
+<script src="ui.js?v=5.12.0"></script>
 
 </body>
 </html>

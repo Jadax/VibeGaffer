@@ -305,3 +305,21 @@ a { color: #00ff87; text-decoration: none; }
 .swing-run { font-size: 0.6rem; font-weight: 600; padding: 1px 6px; border-radius: 4px; }
 .swing-run.easy { background: rgba(0,255,135,0.1); color: #00ff87; }
 .swing-run.hard { background: rgba(239,68,68,0.1); color: #ef4444; }
+
+/* ── Gameweek Briefing (v5.12) ─────────────────────────────── */
+.briefing-outlook { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 12px 0 16px; }
+.briefing-outlook .metric { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 12px; padding: 12px 14px; text-align: center; }
+.briefing-outlook .metric .name { color: #475569; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+.briefing-outlook .metric .value { font-size: 1.2rem; font-weight: 800; line-height: 1.2; margin-top: 2px; color: #e2e8f0; }
+.briefing-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+.briefing-card .section-title { margin: 0 0 8px; font-size: 0.78rem; }
+.briefing-row { display: flex; align-items: center; gap: 8px; }
+.briefing-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.briefing-tags .chip { padding: 3px 8px; font-size: 0.68rem; border-radius: 6px; }
+
+/* ── Predicted Lineups (v5.12) ─────────────────────────────── */
+.pl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 8px; }
+.pl-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 10px 12px; }
+.pl-card:hover { border-color: rgba(255,255,255,0.12); }
+.pl-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.pl-player { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }

@@ -290,7 +290,7 @@ check("compact bootstrap is generated and consumed with a full-data fallback", d
 section("v5.3.0 live + smart captaincy");
 
 check("Live tab is present in the tab bar", indexMarkup.includes('data-tab="live"') && indexMarkup.includes('id="tab-live"'));
-check("all nine public tabs have matching controls and panels", ["squad", "live", "compare", "prices", "fixtures", "diffs", "plan", "league", "tips"].every(tab => indexMarkup.includes(`data-tab="${tab}"`) && indexMarkup.includes(`id="tab-${tab}"`)));
+check("all ten public tabs have matching controls and panels", ["squad", "briefing", "live", "compare", "prices", "fixtures", "diffs", "plan", "league", "tips"].every(tab => indexMarkup.includes(`data-tab="${tab}"`) && indexMarkup.includes(`id="tab-${tab}"`)));
 check("Live tab is preloaded on run", indexSource.includes("VG.renderLive(liveGW, liveTeam)"));
 
 // computeLivePoints sums the authoritative explain blocks
@@ -729,6 +729,68 @@ const plannerHtml = VG.render.seasonPlanner(fixtures, 1, 38, null);
 check("season planner renders a full-season grid", typeof plannerHtml === "string" && plannerHtml.includes("GW38") && plannerHtml.includes("Team"));
 check("season planner renders every team", Object.keys(VG.teams).length >= 19 && (plannerHtml.match(/<tr/g) || []).length >= 21);
 check("season planner is safe on empty fixtures", typeof VG.render.seasonPlanner([], 1, 38, null) === "string");
+
+// ── v5.12: Briefing, Predicted Lineups, CS outlook, Form-vs-Fixtures ────
+section("v5.12 One-stop-shop layer (briefing, lineups, CS outlook, scatter)");
+
+// Roll-vs-spend (bank the transfer) economics.
+const roll = VG.rollValue(mcDraft.squad, allXP, fixtures, 1, 5, 0);
+check("rollValue projects both the roll and spend paths", roll && roll.rollXP > 0 && typeof roll.spendXP === "number");
+check("rollValue gain is the spend-minus-roll delta", Math.abs(roll.gain - (roll.spendXP - roll.rollXP)) < 0.11);
+check("rollValue picks an affordable unowned upgrade", !roll.transfer || (roll.transfer.inPrice <= roll.transfer.outPrice + 0.21 && roll.transfer.inId !== roll.transfer.outId));
+check("rollValue is safe on an empty squad", VG.rollValue([], allXP, fixtures, 1, 5) === null);
+
+// GW Briefing pulls outlook + captain + transfer + market + injuries.
+const briefing = VG.buildBriefing(mcDraft, allXP, fixtures, 1);
+check("briefing builds from a draft result", briefing && typeof briefing.outlook.avgFDR === "number" && briefing.outlook.avgFDR >= 1 && briefing.outlook.avgFDR <= 5);
+check("briefing counts blanks/doubles/easy/hard", briefing.outlook.blanks >= 0 && briefing.outlook.doubles >= 0 && briefing.outlook.easy + briefing.outlook.hard <= 11);
+check("briefing picks a non-GK captain with a projection", briefing.captain && briefing.captain.gwXP > 0 && briefing.vice && briefing.vice.gwXP > 0);
+check("briefing captain reasoning carries a blank-risk line", briefing.captain.summary.includes("blank"));
+check("draft-mode briefing transfer comes from roll-value, not the optimizer", briefing.transfer === null || briefing.transfer.source === "roll-value");
+check("briefing surfaces market tags and injury flags", Array.isArray(briefing.market) && Array.isArray(briefing.injuries));
+check("briefing renders an HTML panel", typeof VG.render.briefing(briefing) === "string" && VG.render.briefing(briefing).includes("Injury & availability"));
+check("briefing is null-safe on a missing result", VG.buildBriefing(null, allXP, fixtures, 1) === null);
+
+// Predicted lineups: pre-season (no recency windows) shows an unlock notice.
+VG.recentFormMaxRounds = 0;
+const plPre = VG.predictedLineups(1, fixtures);
+check("predicted lineups still enumerate every team pre-season", plPre.rows.length === 20);
+check("pre-season lineup render shows the unlock notice", VG.render.predictedLineups(plPre).includes("unlock"));
+VG.recentFormMaxRounds = 5;
+const pl = VG.predictedLineups(1, fixtures);
+check("predicted lineups build a full 11 + bench per team", pl.rows.length === 20 && pl.rows.every(r => r.xi.length === 11 && r.bench.length <= 4));
+check("every projected XI has exactly one GK and legal minimums", pl.rows.every(r =>
+  r.xi.filter(s => s.pos === "GK").length === 1 &&
+  r.xi.filter(s => s.pos === "DEF").length >= 4 &&
+  r.xi.filter(s => s.pos === "MID").length >= 3 &&
+  r.xi.filter(s => s.pos === "FWD").length >= 1));
+check("formation label matches the projected XI composition", pl.rows.every(r => {
+  const d = r.xi.filter(s => s.pos === "DEF").length, m = r.xi.filter(s => s.pos === "MID").length, f = r.xi.filter(s => s.pos === "FWD").length;
+  return r.formation === `${d}-${m}-${f}`;
+}));
+check("bench never duplicates the starting XI", pl.rows.every(r => r.bench.every(b => !r.xi.some(s => s.id === b.id))));
+check("lineup render emits a pl-grid with a bench line", typeof VG.render.predictedLineups(pl) === "string" && VG.render.predictedLineups(pl).includes("pl-grid") && VG.render.predictedLineups(pl).includes("Bench:"));
+check("lineup render escapes names", !VG.render.predictedLineups(pl).includes("<script>") && VG.render.predictedLineups(null) === "");
+VG.recentFormMaxRounds = 0;
+
+// Clean-sheet / xGC outlook (Poisson on the same Elo numbers the engine uses).
+const csRows = VG.teamDefensiveOutlook(1, fixtures);
+check("defensive outlook covers all 20 teams next GW", csRows.length === 20);
+check("CS probability is a proper e^-xGC Poisson value", csRows.every(r => r.cs > 0 && r.cs < 1 && Math.abs(r.cs - Math.exp(-r.xgc)) < 0.005));
+check("outlook is sorted by clean-sheet odds descending", csRows.every((r, i) => i === 0 || csRows[i - 1].cs >= r.cs));
+check("outlook ranks teams and bounds the xG endpoints", csRows.every(r => r.rank >= 1 && r.rank <= 20 && r.xgf >= 0.25 && r.xgc >= 0.25 && r.xgf <= 3.2));
+check("defensive outlook is idempotent across recomputation", (() => {
+  const again = VG.teamDefensiveOutlook(1, fixtures);
+  return csRows.every((r, i) => r.cs === again[i].cs && r.xgf === again[i].xgf);
+})());
+check("defensive outlook renders a table", typeof VG.render.teamDefensiveOutlook(csRows) === "string" && VG.render.teamDefensiveOutlook(csRows).includes("P(CS)") && VG.render.teamDefensiveOutlook(csRows).includes("%"));
+check("defensive outlook is empty-safe", VG.render.teamDefensiveOutlook([]) === "");
+
+// Form-vs-Fixture scatter data builder is pure and position-separated.
+const ff = VG.formFixturesData(allXP, fixtures, 1);
+check("scatter data covers all four positions", Object.keys(ff).every(k => ["GK", "DEF", "MID", "FWD"].includes(k)) && ff.MID.length > 0 && ff.FWD.length > 0);
+check("scatter FDR stays within 1-5", [].concat(...Object.values(ff)).every(pt => pt.x >= 1 && pt.x <= 5));
+check("scatter form is a finite number", [].concat(...Object.values(ff)).every(pt => typeof pt.y === "number" && isFinite(pt.y)));
 
 (async () => {
   let analyzeLeagueThrew = false;

@@ -513,6 +513,15 @@ VG.run = async () => {
 
     el("squadContent").innerHTML = html;
 
+    // Gameweek Briefing (v5.12, LazyFPL/fpl.team pre-deadline advisor): one
+    // screen pulling together outlook, captain/VC, transfer (roll-vs-spend),
+    // chip hint, price risk and injury watch.
+    const briefingEl = document.getElementById("briefingContent");
+    if (briefingEl) {
+      const briefing = VG.buildBriefing(result, allXP, VG.allFixtures, gw);
+      briefingEl.innerHTML = VG.render.briefing(briefing);
+    }
+
     // Comparison select
     const sel = el("compareSelect");
     sel.innerHTML = "";
@@ -520,6 +529,11 @@ VG.run = async () => {
       sel.innerHTML += `<option value="${p.id}">${VG.esc(p.name)} (${VG.esc(p.position)} · ${VG.esc(p.teamName)})</option>`;
     });
     sel.onchange = () => VG.renderComparison();
+    VG.renderComparison();
+
+    // Form vs Fixture Difficulty scatter (v5.12, FFix/FFScout classic): the
+    // whole pool at a glance, so "in-form with an easy fixture" pops out.
+    VG.render.formFixturesChart("formFixturesChart", allXP, VG.allFixtures, gw);
 
     VG.preloadTabs(gw);
 
@@ -589,6 +603,18 @@ VG.preloadTabs = async (gw) => {
       fixtureHTML += '<p class="subtitle" style="margin-top:0;">Attack/defence Elo re-ranked from finished fixtures. "Blend" = how much of the rating is results vs the API pre-season seed (ramps to 85%).</p>';
       fixtureHTML += eloHTML;
     }
+    // Predicted lineups (v5.12, fpl.team/FFScout idea): projected XI per team
+    // from the same xMins signal the xP engine trusts (start rate + recency +
+    // availability + confidence). Unlocks once GW2+ results feed the recency
+    // windows; renders a notice before that.
+    fixtureHTML += '<div class="section-title" style="margin-top:16px;font-size:0.8rem;">Predicted Lineups <span style="font-weight:400;color:#475569;font-size:0.68rem;">(projected XI, xMins-weighted)</span></div>';
+    fixtureHTML += VG.render.predictedLineups(VG.predictedLineups(gw, VG.allFixtures));
+    // Clean-sheet / expected-conceded outlook (v5.12, FFHub/FFix metric): a
+    // display-only Poisson model on the same 1000-scale strength the engine
+    // uses, so "who keeps a cleanie" is one glance.
+    fixtureHTML += '<div class="section-title" style="margin-top:16px;font-size:0.8rem;">Clean-Sheet & xGC Outlook <span style="font-weight:400;color:#475569;font-size:0.68rem;">(Poisson on team strength)</span></div>';
+    fixtureHTML += '<p class="subtitle" style="margin-top:0;">P(CS) = e^(−xGC conceded) · xGF/xGC from team attack/defence strength. Sorted by clean-sheet odds.</p>';
+    fixtureHTML += VG.render.teamDefensiveOutlook(VG.teamDefensiveOutlook(gw, VG.allFixtures));
     fixtureHTML += VG.render.ticker(tickerData, gw, 8);
     // Add fixture swing summary
     fixtureHTML += '<div class="section-title" style="margin-top:16px;font-size:0.8rem;">Fixture Swing Analysis</div>';
