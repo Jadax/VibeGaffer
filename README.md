@@ -1,4 +1,4 @@
-# VibeGaffer v5.11.0
+# VibeGaffer v5.12.0
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
@@ -65,7 +65,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.11.0)
+## Features (v5.12.0)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -183,6 +183,14 @@ The xP horizon no longer hardcodes 12 GWs. Options are built from the GWs actual
 - **Rate My Team** — a transparent, component-scored team rating (xP strength / rotation risk / formation / budget / captaincy) with a letter grade and actionable advice on the Squad tab
 - **What-If race scenarios** — in the League tab, test a transfer or captaincy change against your real rivals; rivals' scores are drawn once and reused, so the win-probability delta is attributable to the change alone
 - **Full-season fixture planner** — every team × every GW, colour-coded FDR cells with DGW/BGW markers, in the Fixtures tab
+
+### One-Stop-Shop Layer (v5.12.0)
+
+- **GW Briefing tab** — one pre-deadline screen: next-GW fixture outlook across likely starters (avg FDR + easy/hard/blank/double counts), captain + VC verdicts with fresh per-GW projections and blank-risk reasoning, the best single transfer with a **roll-vs-spend** call (spend only if gain > 4 xP, otherwise bank the free transfer), a chip hint, market/price-risk flags, an injury watch, and a bench-concern check
+- **Predicted Lineups** — per-team projected XI + bench in the Fixtures tab, built from the same xMins signal the xP engine trusts (start rate + recency + availability + confidence), default 4-3-3 with surplus-only promotion to meet GK/DEF/MID/FWD minimums without ever breaking one to fix another; unlocks once GW2+ results feed the recency windows
+- **Clean-Sheet & xGC Outlook** — per-team next-fixture xGF/xGC and P(CS) = e^(−xGC) on the same 1000-scale Elo/strength numbers the engine uses, sorted by clean-sheet odds, in the Fixtures tab (FFHub/FFix-style display-only model)
+- **Form vs Fixture Difficulty scatter** — whole-pool Chart.js scatter in the Compare tab, x = next-GW FDR (blank counts as 5), y = form, coloured by position
+- **Elo idempotency fix** — `computeTeamElo` now seeds from a `_eloBase` snapshot taken by `buildMaps`, so repeated defensive-outlook recomputation is byte-identical instead of compounding drift
 
 ### Chip Strategy
 
@@ -422,6 +430,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.12.0 | `2e753c1` | One-stop-shop intelligence layer: new GW Briefing tab (outlook, captain + VC, roll-vs-spend transfer call, chip hint, market/price-risk, injury watch, bench concern), Predicted Lineups (xMins-weighted projected XI per team, surplus-only minimum fix-up), Clean-Sheet & xGC Outlook table (Poisson on the engine's own Elo), and a Form-vs-Fixture scatter in Compare (Chart.js). Plus an Elo idempotency fix (`computeTeamElo` seeds from a `buildMaps` `_eloBase` snapshot so recomputation no longer compounds drift). |
 | v5.11.0 | - | Architectural hardening: externalized data transport and UI modules, delegated all UI actions, removed inline script execution from CSP, added compact bootstrap generation with fallback, and expanded release regression coverage. |
 | v5.10.0 | `0e08ad7` | Season-adaptive Elo team-strength layer: blends finished FPL results into attack/defence/overall ratings while preserving pre-season fallback behavior; adds ranked Elo diagnostics to Fixtures. |
 | v5.9.0 | - | Custom domain (vibegaffer.astraiva.app via docs/CNAME, repo delisted from the live product), Astraiva branding restored in header/footer, design pass (pill-style tab nav with icons, hover motion on all card grids, custom scrollbar, fade transitions, redesigned welcome/onboarding with a 3-step flow), copy pass removing em dashes from all visitor-facing text in docs/app.js and docs/index.html |
@@ -471,7 +480,7 @@ Test coverage:
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.11.0
+- **Application**: VibeGaffer v5.12.0
 - **Author**: Tushant Sharma
 - **License**: Proprietary
 - **Live URL**: https://vibegaffer.astraiva.app/
