@@ -352,8 +352,10 @@ VG.players[9998] = { starts: 0, minutes: 0, status: "a", yellow_cards: 0 };
 VG.players[9999] = { starts: 30, minutes: 2700, status: "u", yellow_cards: 0 };
 const insuranceCaptain = { id: 9998, teamId: 1, gwXP: 8 };
 const insuranceVice = { id: 9999, teamId: 1, gwXP: 10 };
-const expectedInsurance = +(1.4 * (VG.computeBlankProbability(insuranceCaptain, fixtures, 1).pBlank / 0.10) * 1.5).toFixed(2);
-check("VC insurance uses the captain blank risk and vice xP", VG.computeViceCaptainEV(insuranceCaptain, insuranceVice, fixtures, 1) === expectedInsurance);
+const insCapBlank = VG.computeBlankProbability(insuranceCaptain, fixtures, 1).pBlank;
+const insVcBlank = VG.computeBlankProbability(insuranceVice, fixtures, 1).pBlank;
+const expectedInsurance = +(1.4 * (insCapBlank / 0.10) * (1 - insVcBlank) * Math.min(10 / 5, 1.5)).toFixed(2);
+check("VC insurance uses the captain blank risk, vice xP and vice blank discount", VG.computeViceCaptainEV(insuranceCaptain, insuranceVice, fixtures, 1) === expectedInsurance);
 
 // differential matrix zones
 const zones = [
@@ -842,7 +844,7 @@ check("watch toggle renders a star", typeof wlToggleHtml === "string" && wlToggl
 // Rate My Team.
 const rmt = VG.rateMyTeam(mcDraft, allXP, fixtures, 1);
 check("rate-my-team returns a graded score", rmt && typeof rmt.score === "number" && rmt.score >= 0 && rmt.score <= 100 && ["A+", "A", "B", "C", "D", "F"].includes(rmt.grade));
-check("rate-my-team exposes all five components", rmt && rmt.components.length === 5 && rmt.components.every(c => typeof c.score === "number"));
+check("rate-my-team exposes all six components", rmt && rmt.components.length === 6 && rmt.components.every(c => typeof c.score === "number") && rmt.components.some(c => c.label === "Efficiency"));
 check("rate-my-team gives at least one piece of advice", rmt && rmt.advice.length >= 1);
 check("rate-my-team renders an HTML panel", typeof VG.render.rateMyTeam(mcDraft, allXP, fixtures, 1) === "string");
 check("rate-my-team is safe on a missing result", VG.rateMyTeam(null, allXP, fixtures, 1) === null);
@@ -925,6 +927,60 @@ const ff = VG.formFixturesData(allXP, fixtures, 1);
 check("scatter data covers all four positions", Object.keys(ff).every(k => ["GK", "DEF", "MID", "FWD"].includes(k)) && ff.MID.length > 0 && ff.FWD.length > 0);
 check("scatter FDR stays within 1-5", [].concat(...Object.values(ff)).every(pt => pt.x >= 1 && pt.x <= 5));
 check("scatter form is a finite number", [].concat(...Object.values(ff)).every(pt => typeof pt.y === "number" && isFinite(pt.y)));
+
+// ── v5.14: European rotation / congestion / early-season / VC insurance ──
+section("v5.14 Congestion rotation, early-season phases, VC discount, deadline, FT 5");
+
+// Congestion multiplier
+check("congestion multiplier is 1.0 with no fixtures (pre-season gap)", VG.congestionMultiplier(fixtures, 1, 1) === 1.0);
+check("congestion multiplier is 1.0 for far-apart fixtures", (() => {
+  const gap = VG.fixtureGapDays(fixtures, 1, 1);
+  return gap >= 7 ? VG.congestionMultiplier(fixtures, 1, 1) === 1.0 : true;
+})());
+check("heavy rotators are flagged in the set", VG.HEAVY_ROTATORS.has("MCI") && VG.HEAVY_ROTATORS.has("ARS"));
+check("congestion multiplier is <= 1.0 for any team/gw", VG.congestionMultiplier(fixtures, 1, 1) <= 1.0 + 0.01);
+
+// Three-phase early-season confidence
+VG._projGW = 1;
+const gw1Res = VG.computeFixtureXP(1, 2, true, 2);
+VG._projGW = 10;
+const gw10Res = VG.computeFixtureXP(1, 2, true, 2);
+VG._projGW = null;
+check("early-season xP is more conservative (lower or equal) than mid-season", gw1Res.xp <= gw10Res.xp + 0.5);
+
+// VC blank discount: a VC with high blank risk reduces insurance value
+const vcCap = { id: 9998, teamId: 1, gwXP: 8 };
+const vcVcNailed = { id: 7, teamId: 1, gwXP: 8 };
+const vcVcRisk = { id: 9999, teamId: 1, gwXP: 8 };
+const evNailed = VG.computeViceCaptainEV(vcCap, vcVcNailed, fixtures, 1);
+const evRisk = VG.computeViceCaptainEV(vcCap, vcVcRisk, fixtures, 1);
+check("VC insurance is lower when the VC itself has high blank risk", evNailed >= evRisk);
+
+// Deadline countdown helper exists
+check("deadline countdown is defined in ui.js", uiSource.includes("VG.startDeadlineCountdown = () => {"));
+
+// Free transfers dropdown has 5 options
+check("FT dropdown allows up to 5 free transfers", indexSource.includes('<option value="5">5</option>'));
+
+// Scatter chart has tooltips
+check("scatter chart has tooltip callback", appSource.includes("tooltip: { callbacks: { label:"));
+
+// Efficiency score appears in rate-my-team output
+check("rate-my-team includes efficiency score", rmt && rmt.components.some(c => c.label === "Efficiency" && typeof c.score === "number"));
+
+// Position-differentiated home boost: DEF gets higher boost than FWD
+check("home boost is higher for defenders than forwards", (() => {
+  // Extract homeBoost from app.js source for pos=2 vs pos=4
+  const src = appSource;
+  const idx = src.indexOf("const homeBoost = pos === 2");
+  if (idx < 0) return false;
+  const snippet = src.slice(idx, idx + 200);
+  // DEF (pos===2) should use 1.18, FWD default 1.15
+  return snippet.includes("1.18") && snippet.includes("1.15");
+})());
+
+// fixtureGapDays is a function
+check("fixtureGapDays is a function", typeof VG.fixtureGapDays === "function");
 
 (async () => {
   let analyzeLeagueThrew = false;

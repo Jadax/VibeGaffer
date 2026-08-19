@@ -86,6 +86,7 @@ VG.run = async () => {
       VG.bootstrapData = await VG.loadBootstrap();
       VG.buildMaps(VG.bootstrapData);
     }
+    VG.startDeadlineCountdown();
     if (!VG.allFixtures) VG.allFixtures = await VG.loadFixtures();
     if (!VG.understatLoaded) await VG.loadUnderstat();
     if (!VG.setPieces.teams || !Object.keys(VG.setPieces.teams).length) await VG.loadSetPieceData();
@@ -1036,3 +1037,29 @@ VG.renderComparison = () => {
 };
 
 VG.init();
+
+// ── Deadline countdown timer ──────────────────────────────────────────
+VG._deadlineTimer = null;
+VG.startDeadlineCountdown = () => {
+  const el = document.getElementById("deadlineCountdown");
+  if (!el || !VG.bootstrapData) return;
+  const evts = VG.bootstrapData.events || [];
+  const current = evts.find(e => e.is_current) || evts.find(e => e.is_next) || evts[VG.currentGW - 1];
+  if (!current || !current.deadline_time) { el.textContent = ""; return; }
+  const dl = new Date(current.deadline_time);
+  const gwNum = current.id || current.gameweek || "?";
+  if (VG._deadlineTimer) clearInterval(VG._deadlineTimer);
+  const tick = () => {
+    const diff = dl - Date.now();
+    if (diff <= 0) { el.textContent = "DEADLINE PASSED"; el.style.color = "#ef4444"; clearInterval(VG._deadlineTimer); return; }
+    const d = Math.floor(diff / 864e5);
+    const h = Math.floor((diff % 864e5) / 36e5);
+    const m = Math.floor((diff % 36e5) / 6e4);
+    const s = Math.floor((diff % 6e4) / 1e3);
+    const urgent = diff < 36e5;
+    el.style.color = urgent ? "#ef4444" : diff < 216e5 ? "#fbbf24" : "#94a3b8";
+    el.textContent = `GW${gwNum} deadline: ${d > 0 ? d + "d " : ""}${h}h ${m}m ${s}s`;
+  };
+  tick();
+  VG._deadlineTimer = setInterval(tick, 1000);
+};
