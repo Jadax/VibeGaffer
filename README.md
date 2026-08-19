@@ -1,4 +1,4 @@
-# VibeGaffer v5.13.0
+# VibeGaffer v5.14.0
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
@@ -65,7 +65,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.13.0)
+## Features (v5.14.0)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -191,6 +191,18 @@ The xP horizon no longer hardcodes 12 GWs. Options are built from the GWs actual
 - **Clean-Sheet & xGC Outlook** — per-team next-fixture xGF/xGC and P(CS) = e^(−xGC) on the same 1000-scale Elo/strength numbers the engine uses, sorted by clean-sheet odds, in the Fixtures tab (FFHub/FFix-style display-only model)
 - **Form vs Fixture Difficulty scatter** — whole-pool Chart.js scatter in the Compare tab, x = next-GW FDR (blank counts as 5), y = form, coloured by position
 - **Elo idempotency fix** — `computeTeamElo` now seeds from a `_eloBase` snapshot taken by `buildMaps`, so repeated defensive-outlook recomputation is byte-identical instead of compounding drift
+
+### Pre-GW1 Robustness (v5.14.0)
+
+- **European fixture congestion risk** — `VG.fixtureGapDays` + `VG.congestionMultiplier` penalise minutes projections for teams with tight fixture spacing (heavy rotators: MCI/ARS/LIV/CHE/AVL/TOT/BHA/NEW)
+- **Three-phase early-season model** — form confidence capped at 30% for GW1–3, 55% for GW4–5, unlimited from GW6+; ep_next blend shifts to 45%/35%/25% accordingly
+- **VC blank-risk discount** — vice-captain insurance EV now discounted by `(1 - vcBlank)`, so risky VCs produce less insurance
+- **Deadline countdown** — live header countdown to the next deadline (red < 1h, yellow < 6h)
+- **Rate My Team efficiency score** — 6th component: mean xP / CV across starters, penalising volatile boom-or-bust squads
+- **Position-differentiated home boost** — DEF get 1.18x home advantage vs MID/FWD 1.15x vs GK 1.12x
+- **Chip hint bug fix** — `evaluateChips` returns object not array; briefing now iterates keys
+- **FT dropdown 1–5** — expanded free transfer options (was 1–2)
+- **Scatter tooltips** — Compare tab form-vs-fixture chart shows player name, FDR, and form on hover
 
 ### Transfer & Foreign-Signing Awareness (v5.13.0)
 
@@ -440,6 +452,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.14.0 | — | Pre-GW1 robustness: European fixture congestion risk (gap-days + heavy-rotator penalty on minutes), three-phase early-season confidence model (GW1-3/4-5/6+), VC blank-risk discount, deadline countdown timer, chip hint bug fix, FT dropdown 1–5, scatter tooltips, Rate My Team efficiency score (mean xP / CV), position-differentiated home boost (DEF 1.18x, MID/FWD 1.15x, GK 1.12x). Tests 274 → 286. |
 | v5.13.0 | — | Transfer & foreign-signing awareness: summer-transfer detection by cross-season club code (vaastav `team_code` vs current element code, stable franchise key, 33 real moves found), new-club attacking-context multiplier on goal/assist projections (old-club per-90 rates adjusted to the new club's strength, clamped ±20%, with a 0.92 confidence dampen), foreign-league priors (Understat fetcher now pulls La Liga/Bundesliga/Serie A/Ligue 1 and matches new-to-PL signings by exact full name, best-minute league wins), `NEW CLUB · OLD → NEW` badges in Compare/Differentials/Profile/Briefing, `priorTeamCode` attached to all elements by `applyHistoryPriors`, and regeneration of history-priors.json (team codes) + understat.json (36 foreign priors). Tests 246 → 274. |
 | v5.12.0 | `de17921` | One-stop-shop intelligence layer: new GW Briefing tab (outlook, captain + VC, roll-vs-spend transfer call, chip hint, market/price-risk, injury watch, bench concern), Predicted Lineups (xMins-weighted projected XI per team, surplus-only minimum fix-up), Clean-Sheet & xGC Outlook table (Poisson on the engine's own Elo), and a Form-vs-Fixture scatter in Compare (Chart.js). Plus an Elo idempotency fix (`computeTeamElo` seeds from a `buildMaps` `_eloBase` snapshot so recomputation no longer compounds drift). |
 | v5.11.0 | - | Architectural hardening: externalized data transport and UI modules, delegated all UI actions, removed inline script execution from CSP, added compact bootstrap generation with fallback, and expanded release regression coverage. |
@@ -491,7 +504,7 @@ Test coverage:
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.13.0
+- **Application**: VibeGaffer v5.14.0
 - **Author**: Tushant Sharma
 - **License**: Proprietary
 - **Live URL**: https://vibegaffer.astraiva.app/

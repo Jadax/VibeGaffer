@@ -4,7 +4,20 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 ## Handover Status
 
-- **Current version**: v5.13.0 (transfer & foreign-signing awareness on top of v5.12.0)
+- **Current version**: v5.14.0 (pre-GW1 robustness layer on top of v5.13.0)
+- **v5.14.0 shipped** — European rotation risk, three-phase early-season model, deadline countdown, and polish:
+  1. **European fixture congestion risk** — `VG.fixtureGapDays(fixtures, teamId, gw)` computes days since the team's previous PL fixture. `VG.congestionMultiplier(fixtures, teamId, gw)` returns a penalty multiplier (0.82–1.0) based on gap length and whether the team is in `VG.HEAVY_ROTATORS` (MCI/ARS/LIV/CHE/AVL/TOT/BHA/NEW). Applied to `minsProb` in `computeFixtureXP` via `VG._projGW`.
+  2. **Three-phase early-season model** — `dataConfidence` (form reliability) is capped at 0.30 for GW1–3, 0.55 for GW4–5, and unlimited from GW6+. The form/ep_next/understat blend shifts to 40/45/15 (GW1–3), 50/35/15 (GW4–5), and 60/25/15 (GW6+). Controlled by `VG._projGW` set by `computeMultiGWXP` before each `computeFixtureXP` call.
+  3. **VC blank-risk discount** — `computeViceCaptainEV` now discounts the insurance value by `(1 - vcBlank)`, so a risky VC produces less insurance EV than a nailed one.
+  4. **Deadline countdown timer** — `VG.startDeadlineCountdown()` in `docs/ui.js` renders a live countdown to the next deadline in the header badge, colour-coded (red < 1h, yellow < 6h).
+  5. **Chip hint bug fix** — `evaluateChips` returns an object keyed by chip name, not an array; fixed the briefing to iterate object keys and pick the `recommend: true` chip.
+  6. **Expanded FT dropdown** — Free Transfers select now offers 1–5 options (was 1–2).
+  7. **Scatter chart tooltips** — Form vs Fixture scatter in Compare tab now shows player name, FDR, and form on hover.
+  8. **Efficiency Score in Rate My Team** — New 6th component: `mean_xP / CV` across starters, penalising volatile boom-or-bust squads. Weighted 5% in the overall grade.
+  9. **Position-differentiated home boost** — DEF get a larger home advantage (1.18x) vs MID/FWD (1.15x) vs GK (1.12x), reflecting the clean-sheet home premium.
+  - **BPS rules already compliant** — verified from FPL API: each GW's live BPS contains the correct tie-break totals. No code change needed; bonus rounding was a pre-season false alarm.
+  - Tests: 274 → 286 (12 new: congestion multiplier checks, three-phase confidence, VC blank discount, deadline countdown source, FT dropdown, scatter tooltip source, efficiency score component, home boost position differentiation, fixtureGapDays function).
+- **Previous**: v5.13.0 (transfer & foreign-signing awareness on top of v5.12.0)
 - **v5.13.0 shipped** — transfer detection, new-club context, and foreign-league priors:
   1. **Summer-transfer detection** — `VG.transferInfo(p)` compares `p.priorTeamCode` (previous season's club code, attached by `VG.applyHistoryPriors` from the free vaastav feed) against the element's current club code. **The key is `team_code`, NOT the FPL team id**: FPL team ids change across seasons (2025-26 vs 2026-27 differ), but the franchise code (ARS=3 etc.) is stable, and `bootstrap-lite` elements + `teams.code` both carry it. `VG.buildMaps` now builds `VG.teamByCode` (code → team). Validated live: 33 real 2025-26→2026-27 moves detected (Meslier LEE→ARS, Bruno G. NEW→ARS, Tonali NEW→TOT, Robertson LIV→TOT, Garnacho CHE→AVL…). **Gotcha that bit us twice**: `VG.applyHistoryPriors(bootstrap, priors)` takes TWO args (`priors` is the `players` map, not the whole file) — a probe that passed only the file silently attached nothing; and the test restore step must set strengths back BY VALUE, not `delete` (undefined strengths → NaN → every later projection for that club goes NaN).
   2. **New-club context multiplier** — `computeFixtureXP` applies `newClubMult = clamp(1 + (newAtt − oldAtt)/1700, 0.80, 1.20)` to projGoals/projAssists for transferred players (old club's attack strength from the same 1000-scale fallback; unknown old club → 1000) plus a `transferConf = 0.92` confidence dampen. Surface: `transferred`/`fromTeam`/`toTeam` on the fixture return and `computeMultiGWXP.info`.
@@ -334,7 +347,7 @@ Tests committed in `tests/run.js`, run in GitHub Actions.
 
 Run: `npm test`
 
-274/274 tests pass.
+286/286 tests pass.
 
 ## Remaining Improvements
 

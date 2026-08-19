@@ -212,6 +212,37 @@ VG.foreignLeagueLabel = (league) => {
   return names[league] || String(league).toUpperCase();
 };
 
+// ── Fixture congestion / European rotation risk (v5.14) ──────────────
+// Teams in European competition (CL/EL/ECL) play midweek fixtures that don't
+// appear in the FPL fixture list.  When a team's PL fixtures are spaced < 5
+// days apart, a midweek European match almost certainly occurred, increasing
+// rotation risk.  Heavy-rotator managers (historically Guardiola, Arteta,
+// Slot, Emery, Postecoglou) apply an extra penalty in congested weeks.
+VG.HEAVY_ROTATORS = new Set(["MCI", "ARS", "LIV", "CHE", "AVL", "TOT", "BHA", "NEW"]);
+VG.fixtureGapDays = (fixtures, teamId, gw) => {
+  if (!fixtures || !teamId) return 14;
+  const prevGW = [];
+  const nextGW = [];
+  fixtures.forEach(f => {
+    if (f.event < gw && (f.team_h === teamId || f.team_a === teamId)) prevGW.push(f);
+    if (f.event === gw && (f.team_h === teamId || f.team_a === teamId)) nextGW.push(f);
+  });
+  if (prevGW.length === 0 || nextGW.length === 0) return 14;
+  const prev = prevGW[prevGW.length - 1];
+  const nxt = nextGW[0];
+  const prevDate = prev.kickoff_time ? new Date(prev.kickoff_time) : null;
+  const nxtDate = nxt.kickoff_time ? new Date(nxt.kickoff_time) : null;
+  if (!prevDate || !nxtDate) return 14;
+  return (nxtDate - prevDate) / 864e5;
+};
+VG.congestionMultiplier = (fixtures, teamId, gw) => {
+  const gap = VG.fixtureGapDays(fixtures, teamId, gw);
+  if (gap >= 7) return 1.0;
+  if (gap < 4) return VG.HEAVY_ROTATORS.has(String(teamId)) ? 0.82 : 0.88;
+  if (gap < 5) return VG.HEAVY_ROTATORS.has(String(teamId)) ? 0.88 : 0.93;
+  return 0.97;
+};
+
 VG.buildMaps = (data) => {
   VG.players = {};
   VG.teams = {};
@@ -606,8 +637,14 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   }
   minsProb = Math.max(0.15, Math.min(0.97, minsProb));
 
-  // Confidence adjustment: low sample = regress toward league average
-  const dataConfidence = Math.min(1.0, gamesPlayed / Math.max(seasonGames * 0.5, 10));
+  // Confidence adjustment: low sample = regress toward league average.
+  // Three-phase early-season model (FPL Prophet pattern): GW1-3 are heavily
+  // prior-reliant (ep_next, season averages); GW4-5 is hybrid; GW6+ is full
+  // in-season.  This prevents a single lucky/unlucky GW1 from dominating.
+  const gw = VG._projGW || 1;
+  let dataConfidence = Math.min(1.0, gamesPlayed / Math.max(seasonGames * 0.5, 10));
+  if (gw <= 3) dataConfidence = Math.min(dataConfidence, 0.30);
+  else if (gw <= 5) dataConfidence = Math.min(dataConfidence, 0.55);
   const confidenceMult = 0.5 + 0.5 * dataConfidence;
   const leagueAvgMinsProb = 0.72; // ~72% of starters play 60+ mins
   minsProb = minsProb * confidenceMult + leagueAvgMinsProb * (1 - confidenceMult);
@@ -616,6 +653,11 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
     ? Math.max(0, Math.min(1, Number(chance) / 100))
     : p.status === "d" ? 0.75 : 1;
   minsProb *= availability;
+
+  // ── European rotation / fixture congestion penalty (v5.14) ──
+  // Midweek European fixtures (CL/EL/ECL) reduce start probability. Detected
+  // from short PL fixture gaps (<5 days), which signal midweek congestion.
+  minsProb *= VG.congestionMultiplier(VG.allFixtures, p.team, VG._projGW || 1);
 
   // ── Per-90 rates: prefer FPL pre-computed per-90, fall back to manual ──
   const nineties = mins > 0 ? mins / 90 : 1;
@@ -669,8 +711,13 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const valueFormBoost = valueForm > 0 ? Math.min(1.0 + valueForm * 0.02, 1.15) : 1.0;
   // Exponential form: hot streaks (form/ppg > 1) amplified, cold streaks penalized more
   const expForm = formVsPPG > 1.0 ? Math.pow(formVsPPG, 1.3) : Math.pow(formVsPPG, 0.7);
-  // 60% exponential form trend + 25% FPL ep_next + 15% value form
-  const rawTrend = 0.6 * expForm + 0.25 * epNextSignal + 0.15 * valueFormBoost;
+  // Three-phase form blend: early-season leans on FPL's own ep_next (which
+  // already bakes in fixtures, ICT and form).  Once 5+ GWs of data exist,
+  // revert to the standard 60/25/15 split.
+  const epWeight = gw <= 3 ? 0.45 : gw <= 5 ? 0.35 : 0.25;
+  const formWeight = gw <= 3 ? 0.40 : gw <= 5 ? 0.50 : 0.60;
+  const vfWeight = 1.0 - epWeight - formWeight;
+  const rawTrend = formWeight * expForm + epWeight * epNextSignal + vfWeight * valueFormBoost;
   const trendMult = Math.min(Math.max(0.80 + 0.20 * rawTrend, 0.70), 1.30);
 
   // ── Fixture difficulty multipliers ──
@@ -768,7 +815,7 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
     0), 0.70);
 
   // ── Goal / assist probability ──
-  const homeBoost = 1.15;
+  const homeBoost = pos === 2 ? 1.18 : pos === 1 ? 1.12 : 1.15;
   const sp = VG.setPieceRole(pid);
   // Set-piece premium (v5.5, FFHUB/FFS idea): penalty takers get a real goal
   // bump (clean shot on goal), FK/corner takers a smaller assist bump.
@@ -1386,6 +1433,7 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   } else {
     upcoming.forEach(f => {
       const info = VG.fixtureInfo(f, teamId);
+      VG._projGW = f.event;
       const res = VG.computeFixtureXP(pid, info.oppId, info.isHome, info.fdr);
       res.gw = f.event;
       res.opponent = info.oppName;
@@ -3125,8 +3173,8 @@ VG.rateMyTeam = (result, allXP, fixtures, gw) => {
   let formScore = 60;
   if (posCount[1] >= 1 && posCount[2] >= 3 && posCount[3] >= 2 && posCount[4] >= 1) formScore = 100;
   else if (posCount[1] >= 1 && posCount[2] >= 2 && posCount[3] >= 2 && posCount[4] >= 1) formScore = 85;
-  if (posCount[1] === 0) formScore = 20; // no GK = broken
-  if (posCount[1] > 2) formScore -= 15;  // hoarding GKs wastes budget
+  if (posCount[1] === 0) formScore = 20;
+  if (posCount[1] > 2) formScore -= 15;
 
   // 4. Budget efficiency (20%): bank + average value.
   const bank = result.budgetRemaining || 0;
@@ -3142,7 +3190,21 @@ VG.rateMyTeam = (result, allXP, fixtures, gw) => {
   const capXP = cap ? byId[cap.id]?.totalXP || cap.totalXP || 0 : 0;
   const capScore = bestCapXP > 0 ? Math.min(100, (capXP / bestCapXP) * 100) : 70;
 
-  const score = Math.round(0.25 * xpScore + 0.20 * rotScore + 0.20 * formScore + 0.20 * budgetScore + 0.15 * capScore);
+  // 6. Efficiency Score (FPL Prophet pattern): mean_xP / coefficient of
+  //    variation across the starting XI.  Penalises volatile scorers who
+  //    haul one week and blank the next — a lower-floor squad scores less
+  //    even if the mean is the same.
+  const gwXPs = starting.map(p => {
+    const xp = byId[p.id];
+    return xp ? (xp.gwXP || xp.totalXP || 0) : 0;
+  });
+  const gwMean = gwXPs.length ? gwXPs.reduce((a, b) => a + b, 0) / gwXPs.length : 0;
+  const gwVar = gwXPs.length > 1 ? gwXPs.reduce((s, v) => s + (v - gwMean) ** 2, 0) / gwXPs.length : 0;
+  const gwSD = Math.sqrt(gwVar);
+  const cv = gwMean > 0 ? gwSD / gwMean : 1.0;
+  const effScore = Math.max(0, Math.min(100, (1 - Math.min(cv, 1.5) / 1.5) * 100));
+
+  const score = Math.round(0.25 * xpScore + 0.20 * rotScore + 0.15 * formScore + 0.20 * budgetScore + 0.15 * capScore + 0.05 * effScore);
   const grade = score >= 90 ? "A+" : score >= 80 ? "A" : score >= 70 ? "B" : score >= 60 ? "C" : score >= 50 ? "D" : "F";
   const gradeColor = score >= 80 ? "#00ff87" : score >= 60 ? "#fbbf24" : "#ef4444";
 
@@ -3153,6 +3215,7 @@ VG.rateMyTeam = (result, allXP, fixtures, gw) => {
   if (capScore < 85) advice.push("Captaincy could be improved: your squad holds a stronger option than the current captain.");
   if (formScore < 90) advice.push("Positional balance is off: aim for at least one GK, three DEF, two MID and one FWD.");
   if (xpScore < 80) advice.push("Squad xP is below the top-third of the player pool: consider wildcard or targeted upgrades.");
+  if (effScore < 50) advice.push("High variance in your starting XI — you have many boom-or-bust picks. Consider more consistent scorers for a higher floor.");
   if (!advice.length) advice.push("Strong, balanced squad. Maintain and monitor for injuries.");
 
   return {
@@ -3162,7 +3225,8 @@ VG.rateMyTeam = (result, allXP, fixtures, gw) => {
       { label: "Rotation risk", score: Math.round(rotScore), note: `avg ${avgXMins.toFixed(0)} min` },
       { label: "Formation", score: Math.round(formScore), note: `${posCount[2]}-${posCount[3]}-${posCount[4]}` },
       { label: "Budget", score: Math.round(budgetScore), note: `£${bank.toFixed(1)}m bank` },
-      { label: "Captaincy", score: Math.round(capScore), note: cap ? cap.name : "none" }
+      { label: "Captaincy", score: Math.round(capScore), note: cap ? cap.name : "none" },
+      { label: "Efficiency", score: Math.round(effScore), note: `CV ${cv.toFixed(2)}` }
     ],
     advice
   };
@@ -3948,11 +4012,14 @@ VG.computeBlankProbability = (cap, fixtures, gw) => {
 };
 
 // Vice-captain EV: every 10% of captain blank = +1.4 EV from the right VC.
+// Discounted by the VC's own blank probability — insurance is worthless if
+// the VC also blanks.
 VG.computeViceCaptainEV = (captain, vice, fixtures, gw) => {
   if (!captain || !vice) return 0;
-  const { pBlank } = VG.computeBlankProbability(captain, fixtures, gw);
+  const { pBlank: capBlank } = VG.computeBlankProbability(captain, fixtures, gw);
+  const { pBlank: vcBlank } = VG.computeBlankProbability(vice, fixtures, gw);
   const vcXP = vice.gwXP || vice.totalXP || 0;
-  return +(1.4 * (pBlank / 0.10) * Math.min(vcXP / 5, 1.5)).toFixed(2);
+  return +(1.4 * (capBlank / 0.10) * (1 - vcBlank) * Math.min(vcXP / 5, 1.5)).toFixed(2);
 };
 
 // Differential matrix zones (ownership vs xP/£m)
@@ -4213,11 +4280,15 @@ VG.buildBriefing = (result, allXP, fixtures, gw) => {
     source: "roll-value"
   } : null);
 
-  // 4) Chip hint from the optimizer's chip advice.
+  // 4) Chip hint from the optimizer's chip advice (object keyed by chip name).
   let chipHint = null;
-  if (result.chipAdvice && Array.isArray(result.chipAdvice)) {
-    const rec = result.chipAdvice.find(c => c && /recommend|use|play/i.test((c.label || c.chip || "") + (c.advice || c.reason || ""))) || result.chipAdvice[0];
-    if (rec) chipHint = { label: rec.label || rec.chip || "", advice: rec.advice || rec.reason || rec.text || "" };
+  const ca = result.chipAdvice;
+  if (ca && typeof ca === "object") {
+    const chips = ["triple_captain", "bench_boost", "wildcard", "free_hit"];
+    const best = chips.reduce((a, k) => (ca[k] && (ca[k].score || 0) > ((a && a.score) || 0)) ? ca[k] : a, null);
+    if (best && best.recommend) {
+      chipHint = { label: (best.label || best.chip || "").replace(/_/g, " ").toUpperCase(), advice: best.reason || best.advice || "" };
+    }
   }
 
   // 5) Market / price-risk flags for the squad, plus any summer-transfer/new-
@@ -4532,7 +4603,9 @@ VG.render.formFixturesChart = (canvasId, allXP, fixtures, gw) => {
           ticks: { color: '#64748b' }, grid: { color: 'rgba(255,255,255,0.05)' }
         }
       },
-      plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } }
+      plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.raw.name || ''} (FDR ${ctx.raw.x}, form ${ctx.raw.y})` } }
+      }
     }
   });
 };
