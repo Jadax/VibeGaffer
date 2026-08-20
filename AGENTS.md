@@ -94,11 +94,11 @@ Primary context document for AI models working on this codebase. Read fully befo
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `docs/app.js` | ~4400 | All logic: xP engine, optimizer, chips, transfers, planner, league, tips, live GW |
-| `docs/index.html` | ~160 | Markup, CSP, tab shells, and static controls |
-| `docs/data.js` | ~180 | FPL transport, cache, local-data fallbacks, and enrichment loaders |
-| `docs/ui.js` | ~980 | UI orchestration, tab preloading, rendering calls, delegated actions |
-| `docs/style.css` | 275 | All styles |
+| `docs/app.js` | ~4610 | All analytical logic: xP engine, optimizer, chips, transfers, planner, league, tips, live GW |
+| `docs/index.html` | ~167 | Markup, CSP, ten tab shells, and static controls |
+| `docs/data.js` | ~190 | FPL transport, cache, local-data fallbacks, and enrichment loaders |
+| `docs/ui.js` | ~1065 | UI orchestration, tab preloading, rendering calls, delegated actions, deadline countdown |
+| `docs/style.css` | ~327 | All styles |
 | `docs/data/bootstrap.json` | ~1.3MB | Player data (~560 active, 20 teams) |
 | `docs/data/bootstrap-lite.json` | generated | Compact public player/team/event payload; preferred by the app with full snapshot fallback |
 | `docs/data/fixtures.json` | ~118KB | 380 fixtures with FDR |
@@ -111,7 +111,7 @@ Primary context document for AI models working on this codebase. Read fully befo
 | `.github/workflows/fetch-recent-form.yml` | ~90 | Daily last-5-GW rotation-risk fetch (v5.7.0) |
 | `.github/workflows/fetch-odds.yml` | ~55 | Optional bookmaker odds (needs `ODDS_API_KEY`) |
 | `.github/workflows/test.yml` | ~30 | CI: `node --check` + `npm test` |
-| `tests/run.js` | ~800 | Regression suite (274 checks) |
+| `tests/run.js` | ~1000 | Regression suite (286 checks) |
 
 ## Golden Rules (violations cause bugs)
 
@@ -355,10 +355,10 @@ Run: `npm test`
 - ~~Replace inline `onclick=` with delegated listeners so CSP can drop `'unsafe-inline'`~~ completed in `docs/ui.js`; remaining module split is app.js-only.
 - ~~Trim `bootstrap.json` to the ~35 fields the engine reads (currently ships 105)~~ compact `bootstrap-lite.json` is generated and preferred by the app
 - Move `docs/data/` to its own branch to keep `main` history clean
-- Drop third-party CORS proxies or gate them behind explicit user consent
-- ~~Add browser-level smoke tests for the nine UI tabs~~ release smoke + nine-tab contract checks are in place
+- ~~Drop third-party CORS proxies or gate them behind explicit user consent~~ proxy fallbacks are gated by one-session consent in `docs/data.js`
+- ~~Add browser-level smoke tests for the ten UI tabs~~ release smoke + ten-tab contract checks are in place
 - **Done in v5.7.0** (was on this list): mini-league Monte Carlo win probability (`VG.simulateLeagueRace`), recency-weighted rotation risk (`fetch-recent-form.yml` + the `startRate` blend). Chip EV calendar and effective ownership were already done in v5.5/v5.6.
-- Un-implemented research candidates: Monte Carlo median xP/ceiling variance in squad *selection* (not just display — an optimizer that trades some mean xP for a higher floor/ceiling), multi-period ILP with free-transfer banking, sensitivity analysis (how much of a squad's edge depends on shaky xP inputs), fixture-congestion/European-minutes rotation risk (needs a non-FPL fixture source — no clean free one identified yet), defensive vulnerability ticker (set-piece/counter-attack concession patterns — needs shot-location data beyond what Understat's league-level endpoint exposes). Reddit r/FantasyPL sentiment feed considered and **rejected**: no statistically validated signal, meaningfully more scraping-ToS risk than the read-only APIs in the allowed list, adds noise rather than correctness.
+- Un-implemented research candidates: Monte Carlo median xP/ceiling variance in squad *selection* (not just display — an optimizer that trades some mean xP for a higher floor/ceiling), multi-period ILP with free-transfer banking, sensitivity analysis (how much of a squad's edge depends on shaky xP inputs), defensive vulnerability ticker (set-piece/counter-attack concession patterns — needs shot-location data beyond what Understat's league-level endpoint exposes). European fixture congestion risk is shipped in v5.14.0 using the FPL fixture calendar plus a heavy-rotator prior. Reddit r/FantasyPL sentiment feed considered and **rejected**: no statistically validated signal, meaningfully more scraping-ToS risk than the read-only APIs in the allowed list, adds noise rather than correctness.
 
 ## Commit Convention
 

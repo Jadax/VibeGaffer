@@ -1,4 +1,4 @@
-// VibeGaffer v5.11.0 — pure static FPL analytics (GitHub Pages, no backend)
+// VibeGaffer v5.14.0 — pure static FPL analytics (GitHub Pages, no backend)
 // Docs: README.md / AGENTS.md · Data: docs/data/*.json via GitHub Actions
 const VG = {};
 
