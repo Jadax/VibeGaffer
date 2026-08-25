@@ -611,16 +611,25 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const seasonGames = 38;
   const gamesPlayed = starts || Math.max(1, Math.ceil(mins / 80));
 
-  // Start rate: how often the player started when available
-  // GKs almost always start when in squad; outfield players vary more
+  // Start rate: how often the player started when available. Bayesian
+  // shrinkage toward a role prior — a fresh-season sample (1 game) must not
+  // extrapolate. The old max(games, 5) floor divided 1 start by a phantom
+  // denominator of 5 and read every GW1 starter as a ~20% starter (Haaland
+  // projected 40 xMins). Priors scale with the evidence on record:
+  // featured-and-started → 0.72/0.80 (GK), featured-but-benched → 0.30,
+  // no minutes at all → 0.12 (unknown role).
   let startRate;
+  const hasStarted = starts > 0;
+  const hasFeatured = mins > 0 || hasStarted;
   if (pos === 1) {
-    // GK: starts are more binary — either #1 or backup
-    startRate = starts >= 30 ? 0.95 : starts >= 15 ? 0.75 : starts >= 5 ? 0.40 : 0.15;
+    // GK: starts are more binary — either #1 or backup.
+    const gkPrior = hasStarted ? 0.80 : 0.30;
+    startRate = Math.min(1.0, (starts + gkPrior * 10) / (gamesPlayed + 10));
   } else {
-    // Outfield: use actual start rate with floor for small samples
-    const effectiveGames = Math.max(gamesPlayed, 5);
-    startRate = Math.min(1.0, starts / Math.max(effectiveGames, 1));
+    // Featured-but-never-started = bench option (0.30), not a rotation
+    // candidate — one scoring cameo as a sub must not read as a 45%-starter.
+    const outfieldPrior = hasStarted ? 0.72 : hasFeatured ? 0.30 : 0.12;
+    startRate = Math.min(1.0, (starts + outfieldPrior * 15) / (gamesPlayed + 15));
   }
 
   // Recency blend: a season-total start rate can't tell "nailed on for the
@@ -643,11 +652,13 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const subRisk = minsPerStart < 60 ? 0.12 : minsPerStart < 75 ? 0.06 : 0;
   let minsProb = startRate * (1 - subRisk);
 
-  // Floor for players with data, fallback for no data
+  // Floor for players with data, fallback for no data. Tiered: a featured
+  // player keeps a bench-level floor; a complete unknown (0 minutes) gets a
+  // token floor only — unproven squad players must not out-project starters.
   if (mins < 90 || starts === 0) {
-    minsProb = Math.max(minsProb, 0.30);
+    minsProb = Math.max(minsProb, hasFeatured ? 0.25 : 0.12);
   }
-  minsProb = Math.max(0.15, Math.min(0.97, minsProb));
+  minsProb = Math.max(0.08, Math.min(0.97, minsProb));
 
   // Confidence adjustment: low sample = regress toward league average.
   // Three-phase early-season model (FPL Prophet pattern): GW1-3 are heavily
@@ -658,6 +669,12 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   if (gw <= 3) dataConfidence = Math.min(dataConfidence, 0.30);
   else if (gw <= 5) dataConfidence = Math.min(dataConfidence, 0.55);
   const confidenceMult = 0.5 + 0.5 * dataConfidence;
+  // Output-rate confidence: the per-90 shrinkage below already handles
+  // per-player sample noise, so the season-level confidence crush on RATES
+  // is gentler than the minutes regression (0.80-1.00, not 0.50-1.00).
+  // Stacking both regressions used to flatten premiums into the pack while
+  // structural GK/DEF points (CS/saves/appearance) kept their floor.
+  const rateConf = 0.80 + 0.20 * dataConfidence;
   const leagueAvgMinsProb = 0.72; // ~72% of starters play 60+ mins
   minsProb = minsProb * confidenceMult + leagueAvgMinsProb * (1 - confidenceMult);
   const chance = p.chance_of_playing_next_round;
@@ -678,20 +695,42 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const goalsPer90 = goals / Math.max(nineties, 0.1);
   const assistsPer90 = assists / Math.max(nineties, 0.1);
 
+  // ── Bayesian shrinkage toward positional per-90 priors ──
+  // A small sample must not extrapolate: a 1.47-xG-in-77-mins debut once read
+  // as a 1.72 xG/90 superhuman and hit the goal-prob cap every fixture, while
+  // a premium who blanked GW1 collapsed to ~0. 12 nineties (~11 games) of
+  // prior weight: a 1-game outlier keeps ~8% of its voice; a 30-ninety season
+  // keeps ~71%.
+  const POS_PRIOR_90 = {
+    1: { xg: 0.00, xa: 0.01 },
+    2: { xg: 0.08, xa: 0.07 },
+    3: { xg: 0.15, xa: 0.18 },
+    4: { xg: 0.40, xa: 0.15 }
+  };
+  const prior90 = POS_PRIOR_90[pos] || POS_PRIOR_90[3];
+  const K90 = 12;
+  const shrink90 = (rate, prior) => (rate * nineties + prior * K90) / (nineties + K90);
+  const xGPer90S = shrink90(xGPer90, prior90.xg);
+  const xAPer90S = shrink90(xAPer90, prior90.xa);
+  const goalsPer90S = shrink90(goalsPer90, prior90.xg);
+  const assistsPer90S = shrink90(assistsPer90, prior90.xa);
+
   // Understat real xG/xA prior (last completed season, or current season in
   // season), attached to the element by loadUnderstat. Independent xG source.
   const usP = p.understat;
   const realXGPer90 = usP && usP.time > 0 ? (usP.xG || 0) * 90 / usP.time : 0;
   const realXAPer90 = usP && usP.time > 0 ? (usP.xA || 0) * 90 / usP.time : 0;
 
-  // Blend: 60% FPL xG/xA + 40% actual; swap in the Understat prior when present
+  // Blend: 60% FPL xG/xA + 40% actual; swap in the Understat prior when present.
+  // The FPL-side rates are the shrunk ones; Understat carries a full previous
+  // season of sample, so it needs no shrinkage.
   let projGoalsPer90Raw, projAssistsPer90Raw;
   if (realXGPer90 > 0 || realXAPer90 > 0) {
-    projGoalsPer90Raw = 0.45 * xGPer90 + 0.35 * realXGPer90 + 0.20 * goalsPer90;
-    projAssistsPer90Raw = 0.45 * xAPer90 + 0.35 * realXAPer90 + 0.20 * assistsPer90;
+    projGoalsPer90Raw = 0.45 * xGPer90S + 0.35 * realXGPer90 + 0.20 * goalsPer90S;
+    projAssistsPer90Raw = 0.45 * xAPer90S + 0.35 * realXAPer90 + 0.20 * assistsPer90S;
   } else {
-    projGoalsPer90Raw = 0.6 * xGPer90 + 0.4 * goalsPer90;
-    projAssistsPer90Raw = 0.6 * xAPer90 + 0.4 * assistsPer90;
+    projGoalsPer90Raw = 0.6 * xGPer90S + 0.4 * goalsPer90S;
+    projAssistsPer90Raw = 0.6 * xAPer90S + 0.4 * assistsPer90S;
   }
 
   // ── Recency-weighted output blend (v5.8, OpenFPL/FPL Review pattern) ──
@@ -708,21 +747,28 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
     projAssistsPer90Raw *= nudge;
   }
 
-  const csRate = cleanSheets / Math.max(gamesPlayed, 1);
-  const savesPerGame = saves / Math.max(gamesPlayed, 1);
-  const bonusPerGame = bonus / Math.max(gamesPlayed, 1);
-  const yellowsPerGame = yellows / Math.max(gamesPlayed, 1);
-  const redsPerGame = reds / Math.max(gamesPlayed, 1);
-  const ownGoalsPerGame = ownGoals / Math.max(gamesPlayed, 1);
-  const penMissPerGame = penMiss / Math.max(gamesPlayed, 1);
-  const bpsPerGame = bps / Math.max(gamesPlayed, 1);
+  // Per-game rates, shrunk toward positional priors (same small-sample logic
+  // as the per-90 shrinkage above — one game must not read as a season trait).
+  const Kpg = 10;
+  const shrinkPg = (total, prior) => (total + prior * Kpg) / (gamesPlayed + Kpg);
+  const csRate = shrinkPg(cleanSheets, { 1: 0.32, 2: 0.28, 3: 0.08, 4: 0.02 }[pos] ?? 0.08);
+  const savesPerGame = shrinkPg(saves, 2.2);
+  const bonusPerGame = shrinkPg(bonus, 0.40);
+  const yellowsPerGame = shrinkPg(yellows, 0.15);
+  const redsPerGame = shrinkPg(reds, 0.01);
+  const ownGoalsPerGame = shrinkPg(ownGoals, 0.01);
+  const penMissPerGame = shrinkPg(penMiss, 0.02);
 
   // ── Enhanced form: exponential weighting to amplify hot/cold streaks ──
   const formVsPPG = ppg > 0 ? form / ppg : 1.0;
   const epNextSignal = epNext > 0 && ppg > 0 ? Math.min(epNext / ppg, 1.5) : 1.0;
   const valueFormBoost = valueForm > 0 ? Math.min(1.0 + valueForm * 0.02, 1.15) : 1.0;
-  // Exponential form: hot streaks (form/ppg > 1) amplified, cold streaks penalized more
-  const expForm = formVsPPG > 1.0 ? Math.pow(formVsPPG, 1.3) : Math.pow(formVsPPG, 0.7);
+  // Exponential form: hot streaks (form/ppg > 1) amplified, cold streaks penalized more.
+  // Dampened by sample reliability — with 1 game on record form == ppg and the
+  // ratio is pure noise, so it pulls toward neutral (1.0).
+  const formReliability = Math.min(1, gamesPlayed / 5);
+  const rawExpForm = formVsPPG > 1.0 ? Math.pow(formVsPPG, 1.3) : Math.pow(formVsPPG, 0.7);
+  const expForm = 1 + (rawExpForm - 1) * formReliability;
   // Three-phase form blend: early-season leans on FPL's own ep_next (which
   // already bakes in fixtures, ICT and form).  Once 5+ GWs of data exist,
   // revert to the standard 60/25/15 split.
@@ -809,22 +855,27 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   // confidence dampen: last season's per-90 rates were earned in a different
   // system/role, so they are a weaker signal for the new environment.
   const transferConf = transfer.transferred ? 0.92 : 1.0;
-  const projGoalsPer90 = projGoalsPer90Raw * attMult * attStrMult * trendMult * confidenceMult * newClubMult * transferConf + 0.05 * (1 - confidenceMult);
-  const projAssistsPer90 = projAssistsPer90Raw * attMult * attStrMult * trendMult * confidenceMult * newClubMult * transferConf + 0.03 * (1 - confidenceMult);
+  const projGoalsPer90 = projGoalsPer90Raw * attMult * attStrMult * trendMult * rateConf * newClubMult * transferConf;
+  const projAssistsPer90 = projAssistsPer90Raw * attMult * attStrMult * trendMult * rateConf * newClubMult * transferConf;
 
   // ── Clean sheet: use opponent defence strength + API cs_per_90 + xGC ──
   const baseCSPos = { 1: 0.35, 2: 0.30, 3: 0.08, 4: 0 };
   const baseCS = (baseCSPos[pos] || 0) * defMult * defStrMult;
   const xGCPerGame = xGC / Math.max(gamesPlayed, 1);
   const xGCImpact = Math.max(0.5, 1.0 - xGCPerGame * 0.05);
-  const csRatePer90 = csPer90API > 0 ? csPer90API : csRate;
+  const csRatePer90 = csPer90API > 0 ? shrink90(csPer90API, { 1: 0.32, 2: 0.28, 3: 0.08, 4: 0.02 }[pos] ?? 0.08) : csRate;
+  // Blend the structural base with the observed CS rate (weighted average —
+  // the old ADDITIVE form double-counted: base ~0.38 + rate ~0.36 = 0.74 hit
+  // the 0.70 cap and handed every first-choice GK 2.8 xP from clean sheets
+  // alone). The sample earns up to 60% voice as games accumulate.
+  const csObsWeight = Math.min(0.6, gamesPlayed / 10);
+  const csBlend = baseCS * (1 - csObsWeight) + csRate * csObsWeight;
   // Apply opponent defensive weakness: weak defence = easier clean sheet
   // Apply opponent attacking strength: strong attack = harder clean sheet
   const oppDefFactor = (oppDefStr + (1.6 - oppAttStr)) / 2;
   const projCS = Math.min(Math.max(
-    baseCS * confidenceMult * xGCImpact * oppDefFactor * oddsCSMult
-    + csRatePer90 * confidenceMult * defMult * oppDefFactor * oddsCSMult,
-    0), 0.70);
+    csBlend * rateConf * xGCImpact * oppDefFactor * oddsCSMult,
+    0), 0.55);
 
   // ── Goal / assist probability ──
   const homeBoost = pos === 2 ? 1.18 : pos === 1 ? 1.12 : 1.15;
@@ -833,11 +884,16 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   // bump (clean shot on goal), FK/corner takers a smaller assist bump.
   const penBoost = sp && sp.pen ? 1.28 : 1.0;
   const spAssistBoost = sp && (sp.fk || sp.cor) ? 1.15 : 1.0;
-  const projGoals = Math.min(projGoalsPer90 * (isHome ? homeBoost : 1.0) * oddsAttMult * penBoost, 0.85);
-  const projAssists = Math.min(projAssistsPer90 * (isHome ? homeBoost : 1.0) * oddsAttMult * spAssistBoost, 0.85);
+  // Positional caps: a defender scoring in every fixture is impossible — the
+  // old single 0.85 cap let a one-game hauler hit it (6 pts x 0.85 = 5.1 xP/goal
+  // for a £4.5m DEF). Caps reflect realistic per-fixture ceilings.
+  const GOAL_CAP = { 1: 0.15, 2: 0.35, 3: 0.60, 4: 0.75 };
+  const ASSIST_CAP = { 1: 0.10, 2: 0.35, 3: 0.65, 4: 0.55 };
+  const projGoals = Math.min(projGoalsPer90 * (isHome ? homeBoost : 1.0) * oddsAttMult * penBoost, GOAL_CAP[pos] || 0.60);
+  const projAssists = Math.min(projAssistsPer90 * (isHome ? homeBoost : 1.0) * oddsAttMult * spAssistBoost, ASSIST_CAP[pos] || 0.55);
 
   // ── Bonus: use BPS (strongest predictor) + position-specific ICT + xGI ──
-  const bpsPerGameNorm = bpsPerGame / 40;
+  const bpsPerGameNorm = shrinkPg(bps, 22) / 40;
   const influencePerGame = influence / Math.max(gamesPlayed, 1);
   const creativityPerGame = creativity / Math.max(gamesPlayed, 1);
   const threatPerGame = threat / Math.max(gamesPlayed, 1);
@@ -851,7 +907,7 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   }
   const xGIPerGame = xGI / Math.max(gamesPlayed, 1);
   const xgiBonus = Math.min(xGIPerGame / 0.7, 0.3);
-  const bonusBase = bonusPerGame * confidenceMult;
+  const bonusBase = bonusPerGame * rateConf;
   const projBonus = Math.min(bonusBase + bpsPerGameNorm * 0.5 + ictBonus + xgiBonus + (pos === 3 || pos === 4 ? 0.10 : 0.05), 0.70);
 
   // ── FPL scoring ──
@@ -861,16 +917,22 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const APPEARANCE_PTS = 2;
 
   // ── DEFCON: probability of reaching FPL's match-level threshold ──
+  // The API's defensive_contribution_per_90 explodes on tiny samples (1
+  // contribution in a 1-minute cameo reads as 90/90 → "certain" 2 points
+  // every fixture). Shrink toward a positional prior with a light K —
+  // DEFCON counts are high-frequency, so one full match is informative.
+  const defConPrior = pos === 2 ? 9.0 : pos === 3 ? 6.0 : 0;
+  const defConPer90S = defConPer90 > 0 ? (defConPer90 * nineties + defConPrior * 4) / (nineties + 4) : 0;
   let defconXP = 0;
   if (pos === 2) {
-    if (defConPer90 > 0) {
-      defconXP = 2 * VG.poissonAtLeast(defConPer90 * minsProb, 10);
+    if (defConPer90S > 0) {
+      defconXP = 2 * VG.poissonAtLeast(defConPer90S * minsProb, 10);
     } else {
       defconXP = 0;
     }
   } else if (pos === 3) {
-    if (defConPer90 > 0) {
-      defconXP = 2 * VG.poissonAtLeast(defConPer90 * minsProb, 12);
+    if (defConPer90S > 0) {
+      defconXP = 2 * VG.poissonAtLeast(defConPer90S * minsProb, 12);
     } else {
       defconXP = 0;
     }
@@ -882,7 +944,7 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const xpGoals = projGoals * (GOAL_PTS[pos] || 4);
   const xpAssists = projAssists * ASSIST_PTS;
   const xpBonus = projBonus * 1.5;
-  const xpSaves = pos === 1 ? Math.min(savesPerGame / 3, 1.0) * 3 * defMult * confidenceMult : 0;
+  const xpSaves = pos === 1 ? Math.min(savesPerGame / 3.5, 1.0) * 3 * rateConf : 0;
   const xpDEFCON = defconXP;
   const xpNegative = minsProb * (yellowsPerGame * 1 + redsPerGame * 3 + ownGoalsPerGame * 2 + penMissPerGame * 2);
 
@@ -908,8 +970,22 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
       // Understat-only prior: keep the model but flag the lower confidence.
       totalXP = modelXP;
     }
+  } else if (epNext > 0 && gw <= 5) {
+    // Early-season LEVEL anchor for established players: with 1-2 games on
+    // record the per-90 model is prior-dominated anyway, and FPL's ep_next
+    // encodes their own model + market expectation (it knows a premium is a
+    // premium even after one blank). Blend at the level, not just the trend
+    // multiplier — otherwise one-game noise ranks a hauler over Haaland.
+    const epLevelWeight = gw <= 3 ? 0.50 : 0.35;
+    totalXP = epLevelWeight * epNext + (1 - epLevelWeight) * modelXP;
   }
-  const totalXPFinal = Math.max(totalXP, 0.1);
+  // Captain-ceiling bonus (restored — it was documented but lost in a refactor):
+  // mean-regressed models systematically undervalue premiums, whose haul
+  // ceiling wins gameweeks and gets doubled by the armband. Forwards are the
+  // burstiest position (goals cluster), so they carry the bigger bonus:
+  // FWD >= £8.5m 1.18x, premium MID >= £8.5m 1.15x.
+  const ceilingMult = pos === 4 && p.now_cost >= 85 ? 1.18 : pos === 3 && p.now_cost >= 85 ? 1.15 : 1.0;
+  const totalXPFinal = Math.max(totalXP * ceilingMult, 0.1);
 
   return {
     xp: totalXPFinal,

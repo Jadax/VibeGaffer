@@ -134,7 +134,11 @@ jobs:
               'expected_goal_involvements_per_90', 'clean_sheets_per_90',
               'defensive_contribution_per_90', 'penalties_missed', 'red_cards',
               'yellow_cards', 'transfers_in_event', 'transfers_out_event',
-              'shirt_number', 'own_goals', 'penalties_saved', 'team_code'
+              'shirt_number', 'own_goals', 'penalties_saved', 'team_code',
+              # points_per_game is REQUIRED: the xP engine's ep_next trend
+              # signal (ep/ppg) and form ratio (form/ppg) both read it — with
+              # it missing the browser build silently flattened all premiums.
+              'points_per_game'
           }
           team_fields = {
               'id', 'name', 'short_name', 'code', 'strength',

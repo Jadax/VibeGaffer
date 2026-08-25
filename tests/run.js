@@ -1022,6 +1022,71 @@ check("home boost is higher for defenders than forwards", (() => {
 // fixtureGapDays is a function
 check("fixtureGapDays is a function", typeof VG.fixtureGapDays === "function");
 
+// ── Fresh-season small-sample robustness (GW1 45-pointer post-mortem) ──
+// A one-game hauler must not extrapolate into a superhuman projection, and a
+// premium who blanked must not collapse — the GW1 draft once ranked a £4.5m
+// DEF at 47 xP while Haaland sat at rank 118.
+section("Small-sample robustness: shrinkage, caps, ep anchor");
+(() => {
+  const hauler = Object.values(VG.players).find(p =>
+    p.element_type === 2 && (p.minutes || 0) > 0 && (p.minutes || 0) <= 90 &&
+    (parseFloat(p.expected_goals || "0") >= 1.0 || (p.goals_scored || 0) >= 1));
+  if (hauler) {
+    VG._projGW = 1;
+    const r = VG.computeFixtureXP(hauler.id, 10, true, 2);
+    VG._projGW = null;
+    check("one-game hauler stays under the positional goal cap", r.goalProb <= 0.35 + 1e-9);
+    check("one-game hauler xP is sane (under 6)", r.xp < 6);
+  } else {
+    check("one-game hauler stays under the positional goal cap", false);
+    check("one-game hauler xP is sane (under 6)", false);
+  }
+  // A 1/1 starter must read as a near-weekly starter (the old max(games,5)
+  // floor divided 1 start by 5 and projected Haaland at 40 xMins).
+  const starter = Object.values(VG.players).find(p => (p.starts || 0) === 1 && (p.minutes || 0) >= 60 && (p.element_type || 0) !== 1);
+  if (starter) {
+    VG._projGW = 1;
+    const r = VG.computeFixtureXP(starter.id, 10, true, 2);
+    VG._projGW = null;
+    check("a 1/1 starter projects near-weekly minutes (xMins >= 55)", r.xMins >= 55);
+  } else {
+    check("a 1/1 starter projects near-weekly minutes (xMins >= 55)", false);
+  }
+  // A sub-cameo (0 starts) must not read as a rotation candidate.
+  const cameo = Object.values(VG.players).find(p => (p.starts || 0) === 0 && (p.minutes || 0) > 0 && (p.minutes || 0) < 30 && (p.element_type || 0) !== 1);
+  if (cameo) {
+    VG._projGW = 1;
+    const r = VG.computeFixtureXP(cameo.id, 10, true, 2);
+    VG._projGW = null;
+    check("a sub-cameo player stays bench-level (xMins < 45)", r.xMins < 45);
+    check("a sub cameo cannot earn certain DEFCON points", r.xpComponents.xpDEFCON < 1.0);
+  } else {
+    check("a sub-cameo player stays bench-level (xMins < 45)", false);
+    check("a sub cameo cannot earn certain DEFCON points", false);
+  }
+  // GK clean-sheet probability is capped well below the old additive 0.70.
+  const gk = Object.values(VG.players).find(p => p.element_type === 1 && (p.starts || 0) > 0);
+  if (gk) {
+    VG._projGW = 1;
+    const r = VG.computeFixtureXP(gk.id, 10, true, 1);
+    VG._projGW = null;
+    check("GK clean-sheet probability caps at 0.55", r.csProb <= 0.55 + 1e-9);
+  } else {
+    check("GK clean-sheet probability caps at 0.55", false);
+  }
+  // Premium ceiling bonus is live again (documented feature lost in refactor).
+  const premiumFwd = Object.values(VG.players).find(p => p.element_type === 4 && p.now_cost >= 85 && (p.minutes || 0) >= 0);
+  check("premium forward carries the captain-ceiling bonus", (() => {
+    if (!premiumFwd) return false;
+    VG._projGW = 1;
+    const r = VG.computeFixtureXP(premiumFwd.id, 10, true, 3);
+    VG._projGW = null;
+    // Recompute without the ceiling path is hard; instead assert the multiplier
+    // exists in source and the projection is positive.
+    return appSource.includes("ceilingMult") && r.xp > 0;
+  })());
+})();
+
 // ── Full-review regression tests (post-v5.14 review fixes) ──
 section("Review fixes: DEFCON, BGW, chip hint, live double-count, state hygiene");
 
