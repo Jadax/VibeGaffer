@@ -237,9 +237,14 @@ VG.fixtureGapDays = (fixtures, teamId, gw) => {
 };
 VG.congestionMultiplier = (fixtures, teamId, gw) => {
   const gap = VG.fixtureGapDays(fixtures, teamId, gw);
+  // HEAVY_ROTATORS holds short_name codes (MCI, ARS, ...); callers pass the
+  // numeric FPL team id, so resolve it through VG.teams (fall back to accepting
+  // a short_name directly for synthetic/test use).
+  const team = (VG.teams && VG.teams[teamId]) || null;
+  const short = team ? (team.short_name || team.name) : String(teamId || "");
   if (gap >= 7) return 1.0;
-  if (gap < 4) return VG.HEAVY_ROTATORS.has(String(teamId)) ? 0.82 : 0.88;
-  if (gap < 5) return VG.HEAVY_ROTATORS.has(String(teamId)) ? 0.88 : 0.93;
+  if (gap < 4) return VG.HEAVY_ROTATORS.has(short) ? 0.82 : 0.88;
+  if (gap < 5) return VG.HEAVY_ROTATORS.has(short) ? 0.88 : 0.93;
   return 0.97;
 };
 
@@ -465,9 +470,9 @@ VG._recencyFactors = (p) => {
 
   let startsRate, mins, xgi90, pts90;
   if (hasWindows) {
-    // Availability: last-5 window, same semantics as the v5.7 rotation-risk
-    // signal (starts ÷ games on record) so nothing regresses.
-    startsRate = s5.mins > 0 ? s5.starts / 5 : 0;
+    // Availability: starts ÷ games on record (capped at the 5-window) so a
+    // 2-GW sample with 2 starts reads 1.0, not 0.4.
+    startsRate = s5.mins > 0 ? s5.starts / Math.min(rounds, 5) : 0;
     mins = s5.mins || s3.mins;
     // Output: use the last-3 window for a balance between noise (1 GW) and
     // staleness (5 GW), per the OpenFPL finding that 3-match windows carry
@@ -521,7 +526,7 @@ VG._matchWinProbs = (teamId, oppTeamId) => {
         const isHome = best.f.home === tShort;
         const win = (isHome ? w : l) / total;
         const lose = (isHome ? l : w) / total;
-        return { win, lose, oppWin: (isHome ? l : w) / total, source: "understat" };
+        return { win, lose, oppWin: lose, source: "understat" };
       }
     }
   }
@@ -542,7 +547,7 @@ VG._matchWinProbs = (teamId, oppTeamId) => {
       const isThisHome = matchOdds.home === tShort;
       const win = isThisHome ? pH : pA;
       const lose = isThisHome ? pA : pH;
-      return { win, lose, oppWin: isThisHome ? pA : pH, source: "bookmaker" };
+      return { win, lose, oppWin: lose, source: "bookmaker" };
     }
   }
   return null;
@@ -550,7 +555,14 @@ VG._matchWinProbs = (teamId, oppTeamId) => {
 
 VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const p = VG.players[pid];
-  if (!p) return { xp: 0, mins: 0, cs: 0, goal: 0, assist: 0, bonus: 0 };
+  // Missing-player fallback must mirror the full return shape so consumers
+  // reading xMins/csProb/etc. get zeros, not undefined.
+  if (!p) return {
+    xp: 0, xMins: 0, minsProb: 0, isNew: false, priorSignal: "",
+    transferred: false, fromTeam: null, toTeam: null, foreignLeague: null,
+    csProb: 0, goalProb: 0, assistProb: 0, bonusProb: 0, defconProb: 0,
+    fdr, xpComponents: { xpAppearance: 0, xpCS: 0, xpGoals: 0, xpAssists: 0, xpBonus: 0, xpSaves: 0, xpDEFCON: 0, xpNegative: 0 }
+  };
 
   // Transfer / new-club context (v5.13): a player who changed clubs this
   // summer carries last season's per-90 output, but their role, service and
@@ -663,8 +675,8 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const nineties = mins > 0 ? mins / 90 : 1;
   const xGPer90 = xGPer90API > 0 ? xGPer90API : xG / Math.max(nineties, 0.1);
   const xAPer90 = xAPer90API > 0 ? xAPer90API : xA / Math.max(nineties, 0.1);
-  const goalsPer90 = goals / nineties;
-  const assistsPer90 = assists / nineties;
+  const goalsPer90 = goals / Math.max(nineties, 0.1);
+  const assistsPer90 = assists / Math.max(nineties, 0.1);
 
   // Understat real xG/xA prior (last completed season, or current season in
   // season), attached to the element by loadUnderstat. Independent xG source.
@@ -871,7 +883,7 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const xpAssists = projAssists * ASSIST_PTS;
   const xpBonus = projBonus * 1.5;
   const xpSaves = pos === 1 ? Math.min(savesPerGame / 3, 1.0) * 3 * defMult * confidenceMult : 0;
-  const xpDEFCON = defconXP * 2;
+  const xpDEFCON = defconXP;
   const xpNegative = minsProb * (yellowsPerGame * 1 + redsPerGame * 3 + ownGoalsPerGame * 2 + penMissPerGame * 2);
 
   const modelXP = xpAppearance + xpCS + xpGoals + xpAssists + xpBonus + xpSaves + xpDEFCON - xpNegative;
@@ -1126,6 +1138,8 @@ VG._mcDrawTotal = (lambdas) => {
   for (const lam of lambdas) t += VG.mcPoisson(lam);
   return t;
 };
+// Percentile from an ascending-sorted sample array (shared by every MC consumer).
+VG._percentile = (sorted, f) => sorted[Math.max(0, Math.min(sorted.length - 1, Math.floor(f * sorted.length)))];
 // Returns distribution over a starting XI for a GW.
 // `starting` entries carry {id, positionId, isCaptain, multiplier, teamId}.
 VG.mcGWDistribution = (starting, fixtures, gw, iterations) => {
@@ -1134,16 +1148,11 @@ VG.mcGWDistribution = (starting, fixtures, gw, iterations) => {
   if (starters.length === 0) return { mean: 0, sd: 0, p10: 0, p90: 0, median: 0, samples: [], n: 0 };
   const lambdas = VG._mcLambdas(starting, fixtures, gw);
   const samples = [];
-  for (let it = 0; it < iterations; it++) {
-    let t = 0;
-    for (const lam of lambdas) t += VG.mcPoisson(lam);
-    samples.push(t);
-  }
+  for (let it = 0; it < iterations; it++) samples.push(VG._mcDrawTotal(lambdas));
   samples.sort((a, b) => a - b);
   const mean = samples.reduce((s, x) => s + x, 0) / samples.length;
   const sd = Math.sqrt(samples.reduce((s, x) => s + (x - mean) * (x - mean), 0) / samples.length);
-  const at = f => samples[Math.max(0, Math.min(samples.length - 1, Math.floor(f * samples.length)))];
-  return { mean: +mean.toFixed(1), sd: +sd.toFixed(1), p10: at(0.10), p90: at(0.90), median: at(0.5), samples, n: iterations };
+  return { mean: +mean.toFixed(1), sd: +sd.toFixed(1), p10: VG._percentile(samples, 0.10), p90: VG._percentile(samples, 0.90), median: VG._percentile(samples, 0.5), samples, n: iterations };
 };
 VG.greenArrowProb = (dist, target) => {
   if (!dist || !dist.samples || !dist.samples.length) return 0;
@@ -1194,10 +1203,9 @@ VG.simulateLeagueRace = (squads, fixtures, gw, iterations) => {
   return entrants.map(e => {
     const scores = gwScores[e.entry].slice().sort((a, b) => a - b);
     const mean = scores.reduce((s, x) => s + x, 0) / scores.length;
-    const at = f => scores[Math.max(0, Math.min(scores.length - 1, Math.floor(f * scores.length)))];
     return {
       entry: e.entry, name: e.name, priorTotal: e.priorTotal,
-      gwMean: +mean.toFixed(1), gwFloor: at(0.1), gwCeiling: at(0.9),
+      gwMean: +mean.toFixed(1), gwFloor: VG._percentile(scores, 0.1), gwCeiling: VG._percentile(scores, 0.9),
       winProb: +((wins[e.entry] / iterations) * 100).toFixed(1),
       top3Prob: +((top3[e.entry] / iterations) * 100).toFixed(1)
     };
@@ -1317,10 +1325,9 @@ VG.simulateRaceScenario = (squads, fixtures, gw, iterations, scenario) => {
   const row = (winsMap, scoresMap) => baseEntrants.map(e => {
     const scores = scoresMap[e.entry].slice().sort((a, b) => a - b);
     const mean = scores.reduce((s, x) => s + x, 0) / scores.length;
-    const at = f => scores[Math.max(0, Math.min(scores.length - 1, Math.floor(f * scores.length)))];
     return {
       entry: e.entry, name: e.name, priorTotal: e.priorTotal,
-      gwMean: +mean.toFixed(1), gwFloor: at(0.1), gwCeiling: at(0.9),
+      gwMean: +mean.toFixed(1), gwFloor: VG._percentile(scores, 0.1), gwCeiling: VG._percentile(scores, 0.9),
       winProb: +((winsMap[e.entry] / iterations) * 100).toFixed(1),
       top3Prob: null
     };
@@ -1344,7 +1351,10 @@ VG.raceScenarioDelta = (squads, fixtures, gw, iterations, scenario) => {
 // per-GW chip-window scoring for a squad.
 VG.buildSeasonPlanner = (fixtures) => {
   const gwMap = {};
+  const allTeams = new Set();
   (fixtures || []).forEach(f => {
+    allTeams.add(f.team_h);
+    allTeams.add(f.team_a);
     const ev = f.event;
     if (!gwMap[ev]) gwMap[ev] = {
       count: 0,
@@ -1359,7 +1369,9 @@ VG.buildSeasonPlanner = (fixtures) => {
     const g = gwMap[ev];
     const gws = parseInt(ev);
     g.dgwTeams = Object.keys(g.teams).filter(t => g.teams[t] >= 2).map(Number);
-    g.bgwTeams = Object.keys(g.teams).filter(t => g.teams[t] === 0).map(Number);
+    // Blank teams are those ABSENT from this GW's fixture map (a team with a
+    // fixture always has value >= 1 here), not zero-valued entries.
+    g.bgwTeams = [...allTeams].filter(t => !g.teams[t]).map(Number);
     return { gw: gws, fixtureCount: g.count, dgwTeams: g.dgwTeams, bgwTeams: g.bgwTeams };
   }).sort((a, b) => a.gw - b.gw);
   return out;
@@ -1421,6 +1433,7 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   if (upcoming.length === 0) {
     // Pre-season / no fixtures: use best available signal, scaled to the
     // number of GWs actually remaining in the season (not the raw request).
+    VG._projGW = null;
     const ppg = parseFloat(p.points_per_game || "0");
     const form = parseFloat(p.form || "0");
     const epNext = parseFloat(p.ep_next || "0");
@@ -1444,6 +1457,9 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
         Object.keys(aggComponents).forEach(k => { aggComponents[k] += res.xpComponents[k] || 0; });
       }
     });
+    // Clear the per-fixture projection gate so direct computeFixtureXP calls
+    // outside this loop don't inherit a stale gameweek.
+    VG._projGW = null;
   }
 
   const price = p.now_cost / 10;
@@ -2272,9 +2288,11 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
       } else {
         // Non-DGW: heavily penalized — almost never play TC here
         tcScore *= 0.15;
-        // Only exception: absurdly high single-GW xP (8.5+) against weak opponent
-        if (capGWXP >= 8.5 && capFDR <= 2) tcScore = 60;
-        else if (capGWXP >= 9.0 && capFDR <= 3) tcScore = 55;
+        // Only exception: absurdly high single-GW xP (8.5+) against weak
+        // opponent — score clears TC_THRESHOLD so the exception can actually
+        // produce a recommendation.
+        if (capGWXP >= 8.5 && capFDR <= 2) tcScore = 85;
+        else if (capGWXP >= 9.0 && capFDR <= 3) tcScore = 82;
       }
     }
 
@@ -2685,7 +2703,8 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank) => {
     // Find transfers for weak starters
     const transferOpts = [];
     for (const weak of weakStarters) {
-      if (weak.xp < 1.0) continue; // Skip very low-xP placeholders
+      // NOTE: no lower-xP skip here — a near-zero-xP starter (injured/blanked)
+      // is the PRIME transfer-out candidate, not a placeholder to ignore.
 
       const candidates = allXP.filter(p =>
         !currentSquadIds.has(p.id) && !usedIds.has(p.id) &&
@@ -3142,9 +3161,10 @@ VG.render.bench = (bench) => {
 // ── Rate My Team (v5.8, FPL Review / FFix "Rate My Team" idea) ───────
 // A transparent, component-scored team rating so advice is explainable:
 //   25% raw xP strength vs the field, 20% rotation risk (starter xMins),
-//   20% formation/positional balance, 20% budget efficiency, 15% captaincy
-//    quality vs the best available captain in-squad. Pure function — easy to
-//    unit-test. Returns { score, grade, gradeColor, components, advice }.
+//   15% formation/positional balance, 20% budget efficiency, 15% captaincy
+//   quality, 5% efficiency (1 - CV of starter xP — penalises boom-or-bust
+//   squads). Pure function — easy to unit-test.
+// Returns { score, grade, gradeColor, components, advice }.
 VG.rateMyTeam = (result, allXP, fixtures, gw) => {
   if (!result || !result.squad || !result.squad.length) return null;
   const squad = result.squad;
@@ -3355,10 +3375,10 @@ VG.fetchTeamRank = async (teamId, gw) => {
     let gwPts = 0, name = null, overallRank = null;
     if (info) {
       name = (info.player_first_name || "") + " " + (info.player_last_name || "");
-      const hist = info.history || [];
-      const cur = hist.find(h => h.event === ev) || hist[hist.length - 1];
-      if (cur) { gwPts = cur.points || 0; overallRank = cur.overall_rank == null ? null : cur.overall_rank; }
-      else { overallRank = info.summary_overall_rank; }
+      // The root /entry/{id}/ payload has no `history` array (that lives at
+      // /entry/{id}/history/); its summary fields are the intended source.
+      gwPts = info.summary_event_points || 0;
+      overallRank = info.summary_overall_rank == null ? null : info.summary_overall_rank;
     }
     const d = { name, gwPts, overallRank, ev };
     if (info) VG._rankCache = Object.assign(cache, { [key]: { d, t: Date.now() } });
@@ -3436,14 +3456,13 @@ VG.render.chipCard = (label, color, advice) => {
 };
 
 VG.render.ticker = (ticker, startGW, nGWs) => {
-  const fdrColors = { 1: "#22c55e", 2: "#86efac", 3: "#64748b", 4: "#fb923c", 5: "#ef4444", 0: "#1e293b" };
   let html = '<div class="ticker-scroll"><table class="ticker-table"><thead><tr><th></th>';
   for (let gw = startGW; gw < startGW + nGWs; gw++) html += `<th>GW${gw}</th>`;
   html += '</tr></thead><tbody>';
   Object.entries(ticker).forEach(([, row]) => {
     html += `<tr><td class="ticker-team">${VG.esc(row.name)}</td>`;
     row.fdr.forEach(cell => {
-      const bg = fdrColors[cell.fdr] || "#334155";
+      const bg = cell.fdr > 0 ? VG.fdrColor(cell.fdr) : "#1e293b";
       html += `<td><div class="fdr-chip" style="background:${bg}20;color:${bg};border:1px solid ${bg}40">${cell.fdr > 0 ? VG.esc(cell.opp) + (cell.isHome ? " (H)" : " (A)") : "–"}</div></td>`;
     });
     html += '</tr>';
@@ -3912,8 +3931,9 @@ VG.predictBonus = (liveData, fixtures, gw) => {
     liveData.elements.forEach(el => {
       (el.explain || []).forEach(fx => {
         if (fx.fixture === f.id) {
-          const mins = el.stats.minutes || 0;
-          if (mins > 0) inFix.push({ id: el.id, bps: el.stats.bps || 0 });
+          const st = el.stats || {};
+          const mins = st.minutes || 0;
+          if (mins > 0) inFix.push({ id: el.id, bps: st.bps || 0 });
         }
       });
     });
@@ -4077,19 +4097,19 @@ VG.renderLive = async (gw, teamId) => {
         const starting = squadPicks.filter(p => p.multiplier >= 1);
         const bench = squadPicks.filter(p => p.multiplier === 0);
         const cap = squadPicks.find(p => p.isCaptain);
-        const vc = squadPicks.find(p => p.isVice);
 
         const subResult = VG.simulateAutoSubs(starting, bench, liveMins);
-        // Points: starters ×multiplier; auto-subbed bench players count at 1×
+        const promotedIds = new Set(subResult.subs.map(s => s.in));
+        const subbedOutIds = new Set(subResult.subs.map(s => s.out));
+        // Points: starters ×multiplier; ONLY auto-subbed bench players score
+        // (FPL rules — a bench player who stayed on bench scores nothing).
         let startPts = 0;
         subResult.starting.forEach(p => {
           const mult = (cap && p.isCaptain) ? Math.max(p.multiplier, 1) : p.multiplier;
           startPts += (livePts[p.id] || 0) * Math.max(mult, 1);
         });
         let benchPts = 0;
-        bench.forEach(p => {
-          if (liveMins[p.id] > 0) benchPts += (livePts[p.id] || 0);
-        });
+        subResult.subs.forEach(s => { benchPts += (livePts[s.in] || 0); });
         const total = startPts + benchPts;
         const bp = (cap && bonus[cap.id]) ? bonus[cap.id] * Math.max(cap.multiplier, 1) : 0;
 
@@ -4101,13 +4121,17 @@ VG.renderLive = async (gw, teamId) => {
         html += `</div>`;
 
         html += `<table class="data-table" style="font-size:0.72rem;margin-top:10px;"><tr><th>Player</th><th>Pos</th><th>Mins</th><th>Points</th><th>Bonus</th><th>Status</th></tr>`;
-        const all = [...subResult.starting, ...bench];
+        // One row per player: current XI (incl. promoted bench players), the
+        // starters they replaced, and the bench players still to come.
+        const benchRows = bench.filter(p => !promotedIds.has(p.id));
+        const subbedOut = starting.filter(p => subbedOutIds.has(p.id));
+        const all = [...subResult.starting, ...subbedOut, ...benchRows];
         all.forEach(p => {
-          const isBench = bench.includes(p);
+          const isInXI = subResult.starting.includes(p);
           const playedNow = liveMins[p.id] > 0;
           const pts = (livePts[p.id] || 0) * (p.isCaptain ? Math.max(p.multiplier, 1) : 1);
-          const st = !isBench
-            ? (playedNow ? '<span style="color:#00ff87;">● playing</span>' : '<span style="color:#ef4444;">● 0 mins, sub risk</span>')
+          const st = isInXI
+            ? (playedNow ? '<span style="color:#00ff87;">● playing</span>' : (subbedOutIds.has(p.id) ? '<span style="color:#ef4444;">● 0 mins, auto-subbed</span>' : '<span style="color:#ef4444;">● 0 mins, sub risk</span>'))
             : (playedNow ? '<span style="color:#60a5fa;">● on bench (played)</span>' : '<span style="color:#334155;">● bench</span>');
           html += `<tr><td style="color:#e2e8f0;">${p.isCaptain ? '(C) ' : p.isVice ? '(VC) ' : ''}${VG.esc(p.name)}</td><td>${p.position}</td><td>${liveMins[p.id] ?? 0}'</td><td style="color:#00ff87;">${pts}</td><td style="color:#fbbf24;">${bonus[p.id] ? '+' + bonus[p.id] : '-'}</td><td>${st}</td></tr>`;
         });
@@ -4284,10 +4308,14 @@ VG.buildBriefing = (result, allXP, fixtures, gw) => {
   let chipHint = null;
   const ca = result.chipAdvice;
   if (ca && typeof ca === "object") {
-    const chips = ["triple_captain", "bench_boost", "wildcard", "free_hit"];
-    const best = chips.reduce((a, k) => (ca[k] && (ca[k].score || 0) > ((a && a.score) || 0)) ? ca[k] : a, null);
+    let bestKey = null, best = null;
+    Object.keys(ca).forEach(k => {
+      if (ca[k] && (ca[k].score || 0) > ((best && best.score) || 0)) { best = ca[k]; bestKey = k; }
+    });
     if (best && best.recommend) {
-      chipHint = { label: (best.label || best.chip || "").replace(/_/g, " ").toUpperCase(), advice: best.reason || best.advice || "" };
+      // The chip objects carry {recommend, bestGW, score, reason, tip} — the
+      // chip's identity is the KEY, not a field on the object.
+      chipHint = { label: String(bestKey || "").replace(/_/g, " ").toUpperCase(), advice: best.reason || best.advice || "" };
     }
   }
 
@@ -4339,7 +4367,7 @@ VG.render.briefing = (b) => {
     fdrTone = b.outlook.avgFDR <= 2.4 ? "#00ff87" : b.outlook.avgFDR <= 3.2 ? "#fbbf24" : "#ef4444";
   }
   html += '<div class="briefing-outlook">';
-  html += `<div class="metric"><div class="name">Avg FDR (XI)</div><div class="value" style="color:${fdrTone};">${b.outlook ? b.outlook.avgFDR : "—"}</div></div>`;
+  html += `<div class="metric"><div class="name">Avg FDR (XI)</div><div class="value" style="color:${fdrTone};">${(b.outlook && b.outlook.avgFDR != null) ? b.outlook.avgFDR : "—"}</div></div>`;
   html += `<div class="metric"><div class="name">Easy (FDR ≤ 2)</div><div class="value">${b.outlook ? b.outlook.easy : 0}</div></div>`;
   html += `<div class="metric"><div class="name">Tough (FDR ≥ 4)</div><div class="value">${b.outlook ? b.outlook.hard : 0}</div></div>`;
   if (b.outlook && b.outlook.doubles > 0) html += `<div class="metric"><div class="name">DGWs</div><div class="value" style="color:#00ff87;">${b.outlook.doubles}</div></div>`;

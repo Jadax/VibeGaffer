@@ -1,4 +1,4 @@
-# VibeGaffer v5.14.0
+# VibeGaffer v5.15.0
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
@@ -406,7 +406,7 @@ Tests are committed in `tests/run.js` and run automatically in GitHub Actions. R
 npm test
 ```
 
-**274/274 tests pass.**
+**300/300 tests pass.**
 
 Test coverage:
 - Optimizer: squad size, formation validity, captain, budget
@@ -452,6 +452,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v5.15.0 | — | Full-codebase correctness review. Model-output fixes: DEFCON no longer double-counted (defenders/mids were inflated ~2 xP/fixture), heavy-rotator congestion penalty actually fires now (numeric-id vs short-name lookup bug), blank-gameweek teams actually detected (planner/chip calendar), briefing chip hint renders (chip identity from object key), live-GW bench points no longer double-counted on auto-subs, transfer plan no longer ignores injured starters. Plus: allXP xP-order preserved (Compare sort no longer mutates the shared array), fetchTeamRank reads the real entry fields (GW points were permanently 0), _projGW stale-gate leak cleared, recency starts-rate divides by games on record, retry budget resets on success, live refresh timer leak fixed, ticker/planner FDR colours unified, MC percentile helper deduplicated. Tests 286 → 300. |
 | v5.14.0 | — | Pre-GW1 robustness: European fixture congestion risk (gap-days + heavy-rotator penalty on minutes), three-phase early-season confidence model (GW1-3/4-5/6+), VC blank-risk discount, deadline countdown timer, chip hint bug fix, FT dropdown 1–5, scatter tooltips, Rate My Team efficiency score (mean xP / CV), position-differentiated home boost (DEF 1.18x, MID/FWD 1.15x, GK 1.12x). Tests 274 → 286. |
 | v5.13.0 | — | Transfer & foreign-signing awareness: summer-transfer detection by cross-season club code (vaastav `team_code` vs current element code, stable franchise key, 33 real moves found), new-club attacking-context multiplier on goal/assist projections (old-club per-90 rates adjusted to the new club's strength, clamped ±20%, with a 0.92 confidence dampen), foreign-league priors (Understat fetcher now pulls La Liga/Bundesliga/Serie A/Ligue 1 and matches new-to-PL signings by exact full name, best-minute league wins), `NEW CLUB · OLD → NEW` badges in Compare/Differentials/Profile/Briefing, `priorTeamCode` attached to all elements by `applyHistoryPriors`, and regeneration of history-priors.json (team codes) + understat.json (36 foreign priors). Tests 246 → 274. |
 | v5.12.0 | `de17921` | One-stop-shop intelligence layer: new GW Briefing tab (outlook, captain + VC, roll-vs-spend transfer call, chip hint, market/price-risk, injury watch, bench concern), Predicted Lineups (xMins-weighted projected XI per team, surplus-only minimum fix-up), Clean-Sheet & xGC Outlook table (Poisson on the engine's own Elo), and a Form-vs-Fixture scatter in Compare (Chart.js). Plus an Elo idempotency fix (`computeTeamElo` seeds from a `buildMaps` `_eloBase` snapshot so recomputation no longer compounds drift). |
@@ -504,7 +505,7 @@ Test coverage:
 
 ## Metadata
 
-- **Application**: VibeGaffer v5.14.0
+- **Application**: VibeGaffer v5.15.0
 - **Author**: Tushant Sharma
 - **License**: Proprietary
 - **Live URL**: https://vibegaffer.astraiva.app/

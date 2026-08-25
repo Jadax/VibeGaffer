@@ -356,6 +356,10 @@ const insCapBlank = VG.computeBlankProbability(insuranceCaptain, fixtures, 1).pB
 const insVcBlank = VG.computeBlankProbability(insuranceVice, fixtures, 1).pBlank;
 const expectedInsurance = +(1.4 * (insCapBlank / 0.10) * (1 - insVcBlank) * Math.min(10 / 5, 1.5)).toFixed(2);
 check("VC insurance uses the captain blank risk, vice xP and vice blank discount", VG.computeViceCaptainEV(insuranceCaptain, insuranceVice, fixtures, 1) === expectedInsurance);
+// Remove the synthetic captains so later Object.values(VG.players) scans
+// (candidate searches etc.) don't iterate test stubs.
+delete VG.players[9998];
+delete VG.players[9999];
 
 // differential matrix zones
 const zones = [
@@ -366,11 +370,12 @@ const zones = [
 ];
 check("differential matrix classifies all four zones", zones.map(z => z.zone).join(",") === "gold,anchor,wait,trap");
 
-// price-change predictor needs a minimal player table
-VG.players = VG.players || {};
-VG.players[100] = { web_name: "P1", element_type: 3, now_cost: 80 };
-VG.players[101] = { web_name: "P2", element_type: 4, now_cost: 90 };
-VG.players[102] = { web_name: "P3", element_type: 2, now_cost: 60 };
+// price-change predictor needs a minimal player table. Save + restore the
+// real entries — these ids exist in the bootstrap and later tests scan
+// Object.values(VG.players).
+const priceStubIds = [100, 101, 102];
+const priceStubsSaved = priceStubIds.map(id => [id, VG.players[id]]);
+priceStubIds.forEach((id, i) => { VG.players[id] = { web_name: "P" + (i + 1), element_type: [3, 4, 2][i], now_cost: [80, 90, 60][i] }; });
 const priceLive = { elements: [
   { id: 100, stats: { transfers_in: 200000, transfers_out: 0 } },
   { id: 101, stats: { transfers_in: 0, transfers_out: 80000 } },
@@ -378,6 +383,7 @@ const priceLive = { elements: [
 ]};
 const priceMoves = VG.predictPriceChanges(priceLive);
 check("price predictor flags risers and fallers", priceMoves.some(p => p.risk === "rising") && priceMoves.some(p => p.risk === "falling") && priceMoves.length === 2);
+priceStubIds.forEach((id, i) => { if (priceStubsSaved[i][1] === undefined) delete VG.players[id]; else VG.players[id] = priceStubsSaved[i][1]; });
 
 // Understat enrichment: forecasts, real xG, injury feed
 section("Understat enrichment (v5.4)");
@@ -569,14 +575,14 @@ check("player profile renders rich HTML", typeof prof === "string" && prof.inclu
 check("player profile shows EO and set-piece", prof.includes("EO:") && (prof.includes("Set-pieces:") || prof.includes("Set-piece")));
 const teamNews = VG.teamNewsFeed();
 check("team news feed is a team->players map", typeof teamNews === "object" && teamNews !== null && !Array.isArray(teamNews));
-check("team news feed has data for some teams", Object.keys(teamNews).length >= 0);
+check("team news feed entries are well-formed lists", Object.values(teamNews).every(list => Array.isArray(list) && list.every(e => e && typeof e.name === "string" && typeof e.news === "string")));
 // Chip calendar: with a normal (no-DGW) schedule it returns [] or only strong-TC rows.
 const chipPlanner = VG.buildSeasonPlanner(fixtures);
 const chipCal = VG.chipCalendar(mcDraft.squad, chipPlanner);
 check("chip calendar returns an array", Array.isArray(chipCal) && chipCal.every(c => typeof c.gw === "number"));
 check("chip calendar renders or shows a no-window note", typeof VG.render.chipCalendar(chipCal) === "string");
 // fixture run profile reflects easy/hard count
-check("profile fixture run is length-limited to 5", (prof.match(/\(A\)|·|BYE/g) || []).length >= 0);
+check("profile fixture run is length-limited to 5", ((prof.match(/\(A\)|\(H\)|BYE/g) || []).length <= 5) && ((prof.match(/\(A\)|\(H\)|BYE/g) || []).length >= 1));
 
 // ── v5.7: Mini-League Race Simulator ───────────────────────────────────
 section("v5.7 Mini-League Race Simulator");
@@ -692,6 +698,11 @@ if (ctxPlayer) {
   const weakClub = Object.values(VG.teams).find(t => t.id !== ctxPlayer.team && t.id !== strongClub.id);
   const ctxClubs = [ctxTeam, strongClub, weakClub].filter(Boolean);
   const savedCtx = { clubs: ctxClubs.map(t => ({ t, home: t.strength_attack_home, away: t.strength_attack_away })), prior: ctxPlayer.priorTeamCode };
+  // Pin the projection gate to a mid-season GW: these direct computeFixtureXP
+  // calls assert EXACT multiplier ratios, which only hold at full data
+  // confidence (GW6+ disables the three-phase cap and its additive
+  // league-average regression term).
+  VG._projGW = 10;
   if (ctxFixture && strongClub && weakClub) {
     const ctxHome = ctxFixture.team_h === ctxPlayer.team;
     const ctxOpp = ctxHome ? ctxFixture.team_a : ctxFixture.team_h;
@@ -741,6 +752,7 @@ if (ctxPlayer) {
     check("multi-GW info carries transfer context", ctxMulti.info.transferred === true && ctxMulti.info.toTeam === ctxTeam.short_name && ctxMulti.info.fromTeam === weakClub.short_name);
     ctxPlayer.priorTeamCode = savedCtx.prior;
   }
+  VG._projGW = null;
 }
 
 // A foreign signing (0 PL minutes) with a non-EPL understat prior must be
@@ -931,12 +943,25 @@ check("scatter form is a finite number", [].concat(...Object.values(ff)).every(p
 // ── v5.14: European rotation / congestion / early-season / VC insurance ──
 section("v5.14 Congestion rotation, early-season phases, VC discount, deadline, FT 5");
 
-// Congestion multiplier
-check("congestion multiplier is 1.0 with no fixtures (pre-season gap)", VG.congestionMultiplier(fixtures, 1, 1) === 1.0);
-check("congestion multiplier is 1.0 for far-apart fixtures", (() => {
-  const gap = VG.fixtureGapDays(fixtures, 1, 1);
-  return gap >= 7 ? VG.congestionMultiplier(fixtures, 1, 1) === 1.0 : true;
+// Congestion multiplier — synthetic short-gap schedules exercise every branch.
+// Callers pass NUMERIC team ids, so the heavy-rotator lookup must resolve the
+// short_name through VG.teams (regression: it used to compare the id string
+// against "MCI"-style codes and never matched).
+const mciId = bootstrap.teams.find(t => t.short_name === "MCI").id;
+const nonRotatorId = bootstrap.teams.find(t => !VG.HEAVY_ROTATORS.has(t.short_name)).id;
+const synFixtures = [
+  { id: 9001, event: 1, team_h: mciId, team_a: nonRotatorId, kickoff_time: "2026-09-12T14:00:00Z" },
+  { id: 9002, event: 2, team_h: mciId, team_a: nonRotatorId, kickoff_time: "2026-09-15T14:00:00Z" },
+  { id: 9003, event: 3, team_h: mciId, team_a: nonRotatorId, kickoff_time: "2026-09-26T14:00:00Z" }
+];
+check("3-day gap penalises a heavy rotator hardest (numeric id lookup)", VG.congestionMultiplier(synFixtures, mciId, 2) === 0.82);
+check("3-day gap penalises a non-rotator less", VG.congestionMultiplier(synFixtures, nonRotatorId, 2) === 0.88);
+check("4-day gap tier applies", (() => {
+  const f4 = [{ id: 1, event: 1, team_h: mciId, team_a: 1, kickoff_time: "2026-09-12T14:00:00Z" }, { id: 2, event: 2, team_h: mciId, team_a: 1, kickoff_time: "2026-09-16T14:00:00Z" }];
+  return VG.congestionMultiplier(f4, mciId, 2) === 0.88;
 })());
+check("7-day+ gap applies no penalty", VG.congestionMultiplier(synFixtures, mciId, 3) === 1.0);
+check("congestion multiplier defaults to no penalty with no fixtures", VG.congestionMultiplier(fixtures, mciId, 1) === 1.0);
 check("heavy rotators are flagged in the set", VG.HEAVY_ROTATORS.has("MCI") && VG.HEAVY_ROTATORS.has("ARS"));
 check("congestion multiplier is <= 1.0 for any team/gw", VG.congestionMultiplier(fixtures, 1, 1) <= 1.0 + 0.01);
 
@@ -949,11 +974,15 @@ VG._projGW = null;
 check("early-season xP is more conservative (lower or equal) than mid-season", gw1Res.xp <= gw10Res.xp + 0.5);
 
 // VC blank discount: a VC with high blank risk reduces insurance value
-const vcCap = { id: 9998, teamId: 1, gwXP: 8 };
+const vcCap = { id: 99970, teamId: 1, gwXP: 8 };
 const vcVcNailed = { id: 7, teamId: 1, gwXP: 8 };
-const vcVcRisk = { id: 9999, teamId: 1, gwXP: 8 };
+const vcVcRisk = { id: 99990, teamId: 1, gwXP: 8 };
+VG.players[99970] = { starts: 30, minutes: 2700, status: "a", yellow_cards: 0 };
+VG.players[99990] = { starts: 0, minutes: 0, status: "u", yellow_cards: 0 };
 const evNailed = VG.computeViceCaptainEV(vcCap, vcVcNailed, fixtures, 1);
 const evRisk = VG.computeViceCaptainEV(vcCap, vcVcRisk, fixtures, 1);
+delete VG.players[99970];
+delete VG.players[99990];
 check("VC insurance is lower when the VC itself has high blank risk", evNailed >= evRisk);
 
 // Deadline countdown helper exists
@@ -982,6 +1011,57 @@ check("home boost is higher for defenders than forwards", (() => {
 // fixtureGapDays is a function
 check("fixtureGapDays is a function", typeof VG.fixtureGapDays === "function");
 
+// ── Full-review regression tests (post-v5.14 review fixes) ──
+section("Review fixes: DEFCON, BGW, chip hint, live double-count, state hygiene");
+
+// DEFCON must enter the model at its face value (2 × P(threshold)), not
+// doubled again — xpDEFCON used to be defconXP * 2 and inflate every DEF/MID.
+const defconDefender = Object.values(VG.players).find(p => p.element_type === 2 && (p.minutes || 0) > 0);
+if (defconDefender) {
+  VG._projGW = 10;
+  const dres = VG.computeFixtureXP(defconDefender.id, 1, true, 2);
+  VG._projGW = null;
+  check("DEFCON contributes at face value (xpDEFCON === defconProb)", Math.abs(dres.xpComponents.xpDEFCON - dres.defconProb) < 1e-3);
+} else {
+  check("DEFCON contributes at face value (xpDEFCON === defconProb)", false);
+}
+
+// BGW detection: a team ABSENT from a GW's fixtures is a blank, not a team
+// with a zero-valued entry (the old filter could never match).
+const bgwPlanner = VG.buildSeasonPlanner(synFixtures);
+const gw2Row = bgwPlanner.find(p => p.gw === 2);
+check("planner leaves bgwTeams empty when every tracked team plays", Array.isArray(gw2Row.bgwTeams) && gw2Row.bgwTeams.length === 0);
+const thirdTeamId = bootstrap.teams.find(t => t.id !== mciId && t.id !== nonRotatorId).id;
+const bgwFixtures = [
+  synFixtures[0],
+  { id: 9102, event: 2, team_h: mciId, team_a: thirdTeamId, kickoff_time: "2026-09-15T14:00:00Z" },
+  synFixtures[2]
+];
+check("planner flags a team with no fixture in a GW as BGW", VG.buildSeasonPlanner(bgwFixtures).find(p => p.gw === 2).bgwTeams.includes(nonRotatorId));
+
+// Chip hint: the label comes from the chip KEY (objects carry no label field).
+(() => {
+  const brief = VG.buildBriefing({ squad: [], chipAdvice: { free_hit: { recommend: true, score: 99, bestGW: 2, reason: "blank week incoming", tip: "" } } }, allXP, fixtures, 1);
+  check("briefing chip hint surfaces the chip name from its key", !!brief && !!brief.chipHint && brief.chipHint.label === "FREE HIT" && brief.chipHint.advice === "blank week incoming");
+})();
+
+// The per-fixture projection gate must be reset after a multi-GW run so
+// direct computeFixtureXP calls don't inherit a stale gameweek.
+VG.computeMultiGWXP(defconDefender ? defconDefender.id : 1, 1, 2, fixtures);
+check("_projGW is cleared after computeMultiGWXP", VG._projGW === null || VG._projGW === undefined);
+
+// Static guards: live double-count fix, rank endpoint fields, allXP copy-sort.
+check("live bench points come only from auto-subbed players", appSource.includes("subResult.subs.forEach(s => { benchPts += (livePts[s.in] || 0); })"));
+check("live table excludes promoted players from the bench rows", appSource.includes("const benchRows = bench.filter(p => !promotedIds.has(p.id));"));
+check("team rank reads the entry payload's summary fields", appSource.includes("info.summary_event_points") && !appSource.includes("const hist = info.history"));
+check("comparison select sorts a copy of allXP (xP order preserved)", indexSource.includes("[...allXP].sort((a, b) => a.name.localeCompare(b.name))"));
+check("run retry budget resets after a successful run", /VG\._runRetries = 0;\s*VG\.preloadTabs\(gw\)/.test(indexSource));
+check("home boost differentiates positions by clean-sheet premium", (() => {
+  const src = appSource;
+  const idx = src.indexOf("const homeBoost = pos === 2 ? 1.18 : pos === 1 ? 1.12 : 1.15");
+  return idx >= 0;
+})());
+
 (async () => {
   let analyzeLeagueThrew = false;
   const leagueResult = await VG.analyzeLeague(999999, 1, fixtures).catch(() => { analyzeLeagueThrew = true; return "threw"; });
@@ -993,7 +1073,11 @@ check("fixtureGapDays is a function", typeof VG.fixtureGapDays === "function");
   // defined" on every real click — silently, since the onclick has no .catch().
   // Guard against that class of bug reappearing.
   check("runWhatIf resolves its own DOM lookups, not a borrowed `el` closure", !/VG\.runWhatIf = async[\s\S]*?\bel\(/.test(indexSource.slice(indexSource.indexOf("VG.runWhatIf"), indexSource.indexOf("VG.runWhatIf") + 1500)));
-  check("watchlist handlers resolve gameweek from the document", !appSource.includes("parseInt(el('gameweek').value)"));
+  // The delegated watchlist handlers (top of ui.js, before VG.switchTab) run
+  // outside any closure that defines `el` — they must use document.getElementById
+  // directly. (preloadTabs legitimately defines its own `el`; don't police that.)
+  const uiHandlerRegion = uiSource.slice(0, uiSource.indexOf("VG.switchTab"));
+  check("watchlist handlers resolve gameweek from the document", !uiHandlerRegion.includes("el('gameweek')") && !uiHandlerRegion.includes('el("gameweek")'));
   check("watchlist player labels escape team names", !appSource.includes("${p.teamName} £${p.price"));
   check("league what-if player labels escape team names", !indexSource.includes("${p.teamName} £${p.price"));
 

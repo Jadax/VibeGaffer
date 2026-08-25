@@ -9,11 +9,14 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (action === "what-if") return VG.runWhatIf(target.dataset.mode, Number(target.dataset.gw));
+  const refreshTips = () => {
+    const tips = document.getElementById("tipsContent");
+    if (tips && VG.currentResult && VG.allXP && VG.allFixtures) tips.innerHTML = VG.render.tips(VG.currentResult, VG.allXP, VG.allFixtures, Number(document.getElementById("gameweek")?.value || 1));
+  };
   if (action === "watch-toggle" || action === "watch-remove") {
     VG.toggleWatch(Number(target.dataset.playerId));
     if (action === "watch-toggle" && document.getElementById("compareSelect")) VG.renderComparison();
-    const tips = document.getElementById("tipsContent");
-    if (tips && VG.currentResult && VG.allXP && VG.allFixtures) tips.innerHTML = VG.render.tips(VG.currentResult, VG.allXP, VG.allFixtures, Number(document.getElementById("gameweek")?.value || 1));
+    refreshTips();
     return;
   }
   if (action === "watch-add") {
@@ -21,8 +24,7 @@ document.addEventListener("click", (event) => {
     if (!select?.value) return;
     VG.toggleWatch(Number(select.value));
     select.value = "";
-    const tips = document.getElementById("tipsContent");
-    if (tips && VG.currentResult && VG.allXP && VG.allFixtures) tips.innerHTML = VG.render.tips(VG.currentResult, VG.allXP, VG.allFixtures, Number(document.getElementById("gameweek")?.value || 1));
+    refreshTips();
   }
 });
 
@@ -106,51 +108,66 @@ VG.run = async () => {
 
     const allXP = VG.computeAllXP(gw, horizon, VG.allFixtures);
 
-    let result;
-    if (teamId <= 0 || gw === 1) {
+    // Draft builder shared by the no-team path AND the fallback when a real
+    // squad can't be loaded (e.g. GW1 picks don't exist until the deadline
+    // passes — the API 404s). Keeps "team ID + GW1" working all week.
+    const buildDraft = async () => {
       const strategy = el("strategy").value;
       if (strategy === "all") {
         // Generate all 3 strategies and pick balanced as primary
         const strategies = VG.optimizeStrategies(allXP, 100, VG.allFixtures, gw, horizon);
         const draft = strategies.balanced;
         const chips = VG.evaluateChips(draft.squad, draft.gwPicks, VG.allFixtures);
-        result = { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, gwTotalXP: draft.gwPicks?.[0]?.gwTotalXP || 0, mode: "draft", strategies };
-      } else {
-        const draft = strategy === "balanced"
-          ? await VG.optimizeDraftILP(allXP, 100, VG.allFixtures, gw, horizon)
-          : VG.optimizeStrategies(allXP, 100, VG.allFixtures, gw, horizon)[strategy];
-        const chips = VG.evaluateChips(draft.squad, draft.gwPicks, VG.allFixtures);
-        result = { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, gwTotalXP: draft.gwPicks?.[0]?.gwTotalXP || 0, mode: "draft" };
+        return { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, gwTotalXP: draft.gwPicks?.[0]?.gwTotalXP || 0, mode: "draft", strategies };
       }
+      const draft = strategy === "balanced"
+        ? await VG.optimizeDraftILP(allXP, 100, VG.allFixtures, gw, horizon)
+        : VG.optimizeStrategies(allXP, 100, VG.allFixtures, gw, horizon)[strategy];
+      const chips = VG.evaluateChips(draft.squad, draft.gwPicks, VG.allFixtures);
+      return { ...draft, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0, gwTotalXP: draft.gwPicks?.[0]?.gwTotalXP || 0, mode: "draft" };
+    };
+
+    let result;
+    if (teamId <= 0) {
+      result = await buildDraft();
     } else {
-      const squadData = await VG.loadSquad(teamId, gw);
-      const currentSquad = squadData.picks.picks;
-      const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
-      const freeTransfers = parseInt(el("freeTransfers").value);
-      const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, gw, 5);
-      const transferOutIds = new Set(transferResult.transfersOut.map(p => p.id));
-      const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
-      const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
-      const fullIds = [...retainedIds, ...transferInIds];
-      const allSquad = allXP.filter(p => fullIds.includes(p.id)).sort((a, b) => b.totalXP - a.totalXP);
-      // Compute per-GW picks for transfer squad
-      const gwPicks = [];
-      const horizonGWs = [...new Set(VG.allFixtures.map(f => f.event))]
-        .sort((a, b) => a - b)
-        .filter(g => g >= gw && g < gw + horizon);
-      horizonGWs.forEach(g => gwPicks.push(VG.computePerGWPicks(allSquad, g, VG.allFixtures)));
-      const starting11 = gwPicks[0]?.starting || allSquad.slice(0, 11);
-      const bench4 = gwPicks[0]?.bench || allSquad.slice(11, 15);
-      const gotCap = gwPicks[0]?.gotCap || VG.topCaptainCandidates(starting11, "totalXP");
-      const chips = VG.evaluateChips(allSquad, gwPicks, VG.allFixtures);
-      result = {
-        ...transferResult, chipAdvice: chips, starting: starting11, bench: bench4,
-        totalCost: +allSquad.reduce((s, p) => s + (p.price || 0), 0).toFixed(1),
-        budgetRemaining: bank, formation: gwPicks[0]?.formation || { DEF: 4, MID: 4, FWD: 2 },
-        totalXP: +gwPicks.reduce((s, g) => s + g.gwTotalXP, 0).toFixed(1),
-        gwTotalXP: gwPicks[0]?.gwTotalXP || 0,
-        mode: "transfer", gotCap, gwPicks, squad: allSquad
-      };
+      try {
+        const squadData = await VG.loadSquad(teamId, gw);
+        const currentSquad = squadData.picks.picks;
+        const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
+        const freeTransfers = parseInt(el("freeTransfers").value);
+        const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, gw, 5);
+        const transferOutIds = new Set(transferResult.transfersOut.map(p => p.id));
+        const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
+        const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
+        const fullIds = [...retainedIds, ...transferInIds];
+        const allSquad = allXP.filter(p => fullIds.includes(p.id)).sort((a, b) => b.totalXP - a.totalXP);
+        // Compute per-GW picks for transfer squad
+        const gwPicks = [];
+        const horizonGWs = [...new Set(VG.allFixtures.map(f => f.event))]
+          .sort((a, b) => a - b)
+          .filter(g => g >= gw && g < gw + horizon);
+        horizonGWs.forEach(g => gwPicks.push(VG.computePerGWPicks(allSquad, g, VG.allFixtures)));
+        const starting11 = gwPicks[0]?.starting || allSquad.slice(0, 11);
+        const bench4 = gwPicks[0]?.bench || allSquad.slice(11, 15);
+        const gotCap = gwPicks[0]?.gotCap || VG.topCaptainCandidates(starting11, "totalXP");
+        const chips = VG.evaluateChips(allSquad, gwPicks, VG.allFixtures);
+        result = {
+          ...transferResult, chipAdvice: chips, starting: starting11, bench: bench4,
+          totalCost: +allSquad.reduce((s, p) => s + (p.price || 0), 0).toFixed(1),
+          budgetRemaining: bank, formation: gwPicks[0]?.formation || { DEF: 4, MID: 4, FWD: 2 },
+          totalXP: +gwPicks.reduce((s, g) => s + g.gwTotalXP, 0).toFixed(1),
+          gwTotalXP: gwPicks[0]?.gwTotalXP || 0,
+          mode: "transfer", gotCap, gwPicks, squad: allSquad
+        };
+      } catch (squadErr) {
+        // 404 = picks don't exist yet for this GW (pre-deadline): fall back to
+        // a draft. Any other failure (network etc.) rethrows so the outer
+        // retry logic still applies.
+        if (!/404/.test(String(squadErr && squadErr.message))) throw squadErr;
+        console.warn("[VG] squad picks not available (404), using draft fallback");
+        result = await buildDraft();
+      }
     }
 
     VG.currentResult = result;
@@ -523,10 +540,11 @@ VG.run = async () => {
       briefingEl.innerHTML = VG.render.briefing(briefing);
     }
 
-    // Comparison select
+    // Comparison select — sort a COPY: allXP is xP-ordered and shared with the
+    // Differentials quartile math + watchlist pool downstream.
     const sel = el("compareSelect");
     sel.innerHTML = "";
-    allXP.sort((a, b) => a.name.localeCompare(b.name)).forEach(p => {
+    [...allXP].sort((a, b) => a.name.localeCompare(b.name)).forEach(p => {
       sel.innerHTML += `<option value="${p.id}">${VG.esc(p.name)} (${VG.esc(p.position)} · ${VG.esc(p.teamName)})</option>`;
     });
     sel.onchange = () => VG.renderComparison();
@@ -536,6 +554,9 @@ VG.run = async () => {
     // whole pool at a glance, so "in-form with an easy fixture" pops out.
     VG.render.formFixturesChart("formFixturesChart", allXP, VG.allFixtures, gw);
 
+    // Run succeeded: clear the retry budget so unrelated future errors get
+    // their own fresh 3 attempts.
+    VG._runRetries = 0;
     VG.preloadTabs(gw);
 
 
@@ -653,6 +674,9 @@ VG.preloadTabs = async (gw) => {
     const liveGW = parseInt(el("gameweek").value);
     const liveTeam = parseInt(el("teamId").value) || 0;
     const gwInProgress = VG.gwData && VG.gwData.some(g => g.is_current);
+    // Cancel any pending self-rescheduling refresh from a previous run BEFORE
+    // branching, so the "not live" path can't leave a stale timer polling.
+    clearTimeout(VG._liveTimer);
     if (!gwInProgress) {
       document.getElementById("liveContent").innerHTML = '<p style="color:#475569;">Live tracking activates when a gameweek is in progress. Check back after the deadline.</p>';
     } else {
@@ -665,9 +689,8 @@ VG.preloadTabs = async (gw) => {
           document.getElementById("liveContent").innerHTML = '<p style="color:#475569;">Live data unavailable.</p>';
         });
       // Auto-refresh every 5 min during a live GW. Self-reschedules so it
-      // keeps polling rather than firing once; clearTimeout below still
+      // keeps polling rather than firing once; the clearTimeout above
       // cancels the whole chain when a new run supersedes this one.
-      clearTimeout(VG._liveTimer);
       const scheduleLiveRefresh = () => {
         VG._liveTimer = setTimeout(() => {
           VG.renderLive(liveGW, liveTeam)
