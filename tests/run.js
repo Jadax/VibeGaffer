@@ -78,10 +78,13 @@ check("Low-minute backup GKs may remain below 20 xP", allXP.some(p => p.position
 // absent pre-season) closes that gap. Test the blend directly against a
 // real mid-rotation-rate player so both directions of the correction show up.
 section("Recency-weighted rotation risk (v5.7)");
+// Season-agnostic band: mid-season data has 10-30 start players; a freshly
+// reset season has 0/1-start players — any outfielder with minutes on record
+// exercises both directions of the recency correction.
 const rotationCandidate = Object.values(VG.players).find(p =>
-  p.element_type !== 1 && (p.starts || 0) >= 10 && (p.starts || 0) <= 30 && (p.minutes || 0) > 0
+  p.element_type !== 1 && (p.starts || 0) >= 1 && (p.starts || 0) <= 30 && (p.minutes || 0) > 0
 );
-check("fixture data has a mid-rotation-rate outfield player to test against", !!rotationCandidate);
+check("fixture data has an outfield player with minutes on record to test against", !!rotationCandidate);
 if (rotationCandidate) {
   const fx = fixtures.find(f => f.event === 1 && (f.team_h === rotationCandidate.team || f.team_a === rotationCandidate.team));
   const isHome = fx.team_h === rotationCandidate.team;
@@ -480,11 +483,15 @@ Object.values(VG.teams).forEach(t => {
     oh: t.strength_overall_home, oa: t.strength_overall_away
   };
 });
-const preElo = VG.computeTeamElo(fixtures); // real fixtures.json: none finished pre-season
+// Seed-only path: clone the real schedule but strip result fields, so the
+// assertion holds in-season too (real fixtures.json carries finished GWs once
+// games are played — the old "real data is pre-season" assumption broke at GW1).
+const unfinishedFx = fixtures.map(f => ({ ...f, finished: false, finished_provisional: false, team_h_score: null, team_a_score: null }));
+const preElo = VG.computeTeamElo(unfinishedFx);
 check("elo returns a full 20-team table pre-season", preElo && preElo.length === 20);
-check("elo is seed-only pre-season (no finished fixtures)", preElo.every(r => r.played === 0 && r.weight === 0 && r.source === "seed"));
-check("elo pre-season leaves the strength fields byte-identical", Object.values(VG.teams).every(t => t.strength_attack_home === eloStrengths[t.id].ah && t.strength_overall_home === eloStrengths[t.id].oh));
-check("elo HTML renders nothing pre-season", VG.eloRatingsHTML(preElo) === "");
+check("elo is seed-only with no finished fixtures", preElo.every(r => r.played === 0 && r.weight === 0 && r.source === "seed"));
+check("elo with no finished fixtures leaves the strength fields byte-identical", Object.values(VG.teams).every(t => t.strength_attack_home === eloStrengths[t.id].ah && t.strength_overall_home === eloStrengths[t.id].oh));
+check("elo HTML renders nothing with no data", VG.eloRatingsHTML(preElo) === "");
 
 // Synthetic finished fixtures: ARS (1) beats SHU (19) 3-0 and LIV (5) 2-1;
 // MCI (20) wins 2-0 away at CHE (2). Enough to move ratings off the seed.
@@ -697,11 +704,13 @@ if (ctxPlayer) {
   const strongClub = Object.values(VG.teams).find(t => t.id !== ctxPlayer.team && t.id !== (ctxFixture ? (ctxFixture.team_h === ctxPlayer.team ? ctxFixture.team_a : ctxFixture.team_h) : -1));
   const weakClub = Object.values(VG.teams).find(t => t.id !== ctxPlayer.team && t.id !== strongClub.id);
   const ctxClubs = [ctxTeam, strongClub, weakClub].filter(Boolean);
-  const savedCtx = { clubs: ctxClubs.map(t => ({ t, home: t.strength_attack_home, away: t.strength_attack_away })), prior: ctxPlayer.priorTeamCode };
-  // Pin the projection gate to a mid-season GW: these direct computeFixtureXP
-  // calls assert EXACT multiplier ratios, which only hold at full data
-  // confidence (GW6+ disables the three-phase cap and its additive
-  // league-average regression term).
+  const savedCtx = { clubs: ctxClubs.map(t => ({ t, home: t.strength_attack_home, away: t.strength_attack_away })), prior: ctxPlayer.priorTeamCode, starts: ctxPlayer.starts, minutes: ctxPlayer.minutes };
+  // Pin the projection gate to a mid-season GW AND a full-confidence sample:
+  // these direct computeFixtureXP calls assert EXACT multiplier ratios, which
+  // only hold when dataConfidence is 1.0 (GW6+ disables the three-phase cap,
+  // and gamesPlayed >= 19 disables the league-average regression term). A
+  // freshly-reset season has 1-start players, so force the sample explicitly.
+  ctxPlayer.starts = 38;
   VG._projGW = 10;
   if (ctxFixture && strongClub && weakClub) {
     const ctxHome = ctxFixture.team_h === ctxPlayer.team;
@@ -753,6 +762,8 @@ if (ctxPlayer) {
     ctxPlayer.priorTeamCode = savedCtx.prior;
   }
   VG._projGW = null;
+  ctxPlayer.starts = savedCtx.starts;
+  ctxPlayer.minutes = savedCtx.minutes;
 }
 
 // A foreign signing (0 PL minutes) with a non-EPL understat prior must be
