@@ -6,12 +6,33 @@ VG.cache = {
   set(k, d) { try { localStorage.setItem("vg_" + k, JSON.stringify({ d, t: Date.now() })); } catch {} }
 };
 
+// Proxy chain, most-reliable-first (tested 2026-08: allorigins works but can
+// take 20-30s; codetabs is a decent middle; corsproxy.io now 403s most
+// browser origins and stays only as a last resort).
 VG.PROXIES = [
-  { fn: (url) => url, name: "direct" },
-  { fn: (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url), name: "allorigins" },
-  { fn: (url) => "https://corsproxy.io/?" + encodeURIComponent(url), name: "corsproxy" },
+  { fn: (url) => url, name: "direct", timeout: 15000 },
+  { fn: (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url), name: "allorigins", timeout: 30000, retries: 1 },
+  { fn: (url) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url), name: "codetabs", timeout: 20000 },
+  { fn: (url) => "https://corsproxy.io/?url=" + encodeURIComponent(url), name: "corsproxy", timeout: 15000 },
 ];
 VG.proxyConsent = false;
+// Concurrent fetches (loadSquad's Promise.all) must share ONE consent dialog,
+// not race two of them.
+VG._proxyConsentPromise = null;
+VG.ensureProxyConsent = () => {
+  if (VG.proxyConsent) return Promise.resolve(true);
+  if (!VG._proxyConsentPromise) {
+    VG._proxyConsentPromise = Promise.resolve(
+      typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm("The FPL API is not reachable directly. Allow a public CORS relay to receive this request? Team and league IDs may be visible to that relay.")
+        : false
+    ).then(approved => {
+      VG.proxyConsent = approved;
+      return approved;
+    }).finally(() => { VG._proxyConsentPromise = null; });
+  }
+  return VG._proxyConsentPromise;
+};
 
 VG.fetch = async (url, label) => {
   const c = VG.cache.get(url);
@@ -21,22 +42,24 @@ VG.fetch = async (url, label) => {
   let lastErr = null;
   for (const proxy of VG.PROXIES) {
     if (proxy.name !== "direct" && !VG.proxyConsent) {
-      const approved = typeof window !== "undefined" && typeof window.confirm === "function"
-        && window.confirm("The FPL API is not reachable directly. Allow a public CORS relay to receive this request? Team and league IDs may be visible to that relay.");
+      const approved = await VG.ensureProxyConsent();
       if (!approved) break;
-      VG.proxyConsent = true;
     }
-    try {
-      setStatus('<span class="status-dot warning"></span> Trying ' + proxy.name + '...');
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 15000);
-      const r = await fetch(proxy.fn(url), { signal: ctrl.signal, cache: "no-cache" });
-      clearTimeout(timer);
-      if (!r.ok) { lastErr = new Error(proxy.name + " " + r.status); continue; }
-      const j = await r.json();
-      VG.cache.set(url, j);
-      return j;
-    } catch (e) { lastErr = e; }
+    const attempts = 1 + (proxy.retries || 0);
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        if (attempt > 0) setStatus('<span class="status-dot warning"></span> Retrying ' + proxy.name + '...');
+        else setStatus('<span class="status-dot warning"></span> Trying ' + proxy.name + '...');
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), proxy.timeout || 15000);
+        const r = await fetch(proxy.fn(url), { signal: ctrl.signal, cache: "no-cache" });
+        clearTimeout(timer);
+        if (!r.ok) { lastErr = new Error(proxy.name + " " + r.status); break; }
+        const j = await r.json();
+        VG.cache.set(url, j);
+        return j;
+      } catch (e) { lastErr = e; }
+    }
   }
   setStatus('<span class="status-dot error"></span> ' + label + ' failed');
   throw new Error(label + ": " + (lastErr?.message || "all routes failed"));
