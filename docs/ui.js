@@ -196,6 +196,17 @@ VG.run = async () => {
       });
     }
 
+    // Draft-mode banner: the FPL API has no picks for this GW yet (deadline
+    // hasn't passed), so the squad below is an OPTIMAL DRAFT we built from
+    // projections — NOT the user's actual team. Be explicit so this is never
+    // mistaken for their real squad.
+    if (result.mode === "draft" && teamId > 0) {
+      html += `<div style="margin:14px 0;padding:12px;border:1px solid rgba(251,191,36,0.4);border-radius:12px;background:rgba(251,191,36,0.08);">
+        <div style="font-size:0.78rem;font-weight:700;color:#fbbf24;margin-bottom:4px;">⚠️ This is an OPTIMAL DRAFT, not your actual squad</div>
+        <div style="font-size:0.72rem;color:#e2e8f0;">There are no FPL picks on record for GW${VG.esc(String(gw))} yet (the deadline hasn't passed / FPL hasn't published them), so we couldn't load your real team for that week. The squad below is the optimizer's recommended line-up from scratch. To analyze your <b>actual</b> squad, select a GW whose deadline has passed (e.g. GW1).</div>
+      </div>`;
+    }
+
     // Metrics
     const gwProjStarting = (result.starting?.length >= 11 ? result.starting : (result.gwPicks?.[0]?.starting || result.squad.slice(0, 11)));
     const mcMetric = (gwProjStarting && gwProjStarting.length >= 11) ? VG.render.gwProjection(gwProjStarting, VG.allFixtures, gw, result.gotCap?.[0]?.id) : null;
