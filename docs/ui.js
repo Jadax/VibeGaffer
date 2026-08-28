@@ -207,6 +207,52 @@ VG.run = async () => {
       </div>`;
     }
 
+    // ══ ACTION CARD: the actionable stuff first (transfers + chips) so the
+    // user sees "what to do this GW" without hunting down the page. ──
+    const actionItems = [];
+    // Chips that are actually recommended this GW
+    if (result.chipAdvice) {
+      [["triple_captain", "TC"], ["bench_boost", "BB"], ["wildcard", "WC"], ["free_hit", "FH"]].forEach(([key, abbr]) => {
+        const c = result.chipAdvice[key];
+        if (c && c.recommend) {
+          const gwTxt = c.bestGW ? `GW${c.bestGW}` : "this week";
+          actionItems.push({
+            tag: `<span style="color:#fbbf24;font-weight:800;">${abbr} CHIP</span>`,
+            main: `Play ${abbr} in ${gwTxt}`,
+            sub: c.reason ? " " + VG.esc(c.reason) : "",
+            tip: c.tip ? VG.esc(c.tip) : ""
+          });
+        }
+      });
+    }
+    // Transfers recommended
+    if ((result.transfersIn?.length || result.transfersOut?.length)) {
+      const inN = result.transfersIn?.length || 0, outN = result.transfersOut?.length || 0;
+      const cost = result.hitCost || 0;
+      const names = (result.transfersIn || []).map(p => VG.esc(p.name)).join(", ");
+      const tTip = cost > 0 ? ` (costs -${cost}pt hit)` : " (free)";
+      actionItems.push({
+        tag: `<span style="color:#00ff87;font-weight:800;">TRANSFERS</span>`,
+        main: `${inN} IN: ${names || "—"}${tTip}`,
+        sub: (result.transfersOut || []).length ? ` OUT: ${(result.transfersOut || []).map(p => VG.esc(p.name)).join(", ")}` : "",
+        tip: cost > 0 && result.hitWarning ? VG.esc(result.hitWarning) : ""
+      });
+    }
+    if (actionItems.length) {
+      html += '<div style="margin:14px 0;padding:14px;border:1px solid rgba(0,255,135,0.3);border-radius:12px;background:rgba(0,255,135,0.06);">';
+      html += '<div style="font-size:0.78rem;font-weight:800;color:#00ff87;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">⚡ What to do this gameweek</div>';
+      html += actionItems.map(a => {
+        let row = `<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.06);">`;
+        row += `<div style="font-size:0.72rem;white-space:nowrap;">${a.tag}</div>`;
+        row += `<div style="flex:1;"><div style="font-size:0.85rem;color:#e2e8f0;font-weight:600;">${a.main}</div>`;
+        if (a.sub) row += `<div style="font-size:0.72rem;color:#94a3b8;">${a.sub}</div>`;
+        if (a.tip) row += `<div style="font-size:0.7rem;color:#fbbf24;margin-top:2px;">💡 ${a.tip}</div>`;
+        row += `</div></div>`;
+        return row;
+      }).join('');
+      html += '</div>';
+    }
+
     // Metrics
     const gwProjStarting = (result.starting?.length >= 11 ? result.starting : (result.gwPicks?.[0]?.starting || result.squad.slice(0, 11)));
     const mcMetric = (gwProjStarting && gwProjStarting.length >= 11) ? VG.render.gwProjection(gwProjStarting, VG.allFixtures, gw, result.gotCap?.[0]?.id) : null;
