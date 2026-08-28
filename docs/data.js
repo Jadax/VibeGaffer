@@ -6,15 +6,28 @@ VG.cache = {
   set(k, d) { try { localStorage.setItem("vg_" + k, JSON.stringify({ d, t: Date.now() })); } catch {} }
 };
 
-// Proxy chain, most-reliable-first (tested 2026-08: allorigins works but can
-// take 20-30s; codetabs is a decent middle; corsproxy.io now 403s most
-// browser origins and stays only as a last resort).
+// Proxy chain, most-reliable-first. The preferred relay is the user's OWN
+// Cloudflare Worker (worker/cors-proxy.js) — set it in the sidebar "CORS
+// Worker URL" box (localStorage key vg_proxyURL); it's used first and needs
+// no consent because the user controls it. Free public relays sit behind it:
+// api.cors.lol is fast but rate-limits repeat users; allorigins is flaky
+// (522/timeouts); codetabs sputters; corsproxy.io now demands an API key.
 VG.PROXIES = [
   { fn: (url) => url, name: "direct", timeout: 15000 },
+  { fn: (url) => "https://api.cors.lol/?url=" + encodeURIComponent(url), name: "cors.lol", timeout: 20000 },
   { fn: (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url), name: "allorigins", timeout: 30000, retries: 1 },
   { fn: (url) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url), name: "codetabs", timeout: 20000 },
   { fn: (url) => "https://corsproxy.io/?url=" + encodeURIComponent(url), name: "corsproxy", timeout: 15000 },
 ];
+
+// Persist/read the user's own Worker URL. Appended with ?url=<encoded target>.
+VG.proxyURL = () => {
+  try { return (localStorage.getItem("vg_proxyURL") || "").trim().replace(/\/$/, ""); } catch { return ""; }
+};
+VG.setProxyURL = (url) => {
+  try { localStorage.setItem("vg_proxyURL", (url || "").trim()); } catch {}
+};
+
 VG.proxyConsent = false;
 // Concurrent fetches (loadSquad's Promise.all) must share ONE consent dialog,
 // not race two of them.
@@ -34,14 +47,23 @@ VG.ensureProxyConsent = () => {
   return VG._proxyConsentPromise;
 };
 
+// Ordered list of relays to try, starting with the user's own Worker if set.
+VG._relayList = () => {
+  const list = [];
+  const own = VG.proxyURL();
+  if (own) list.push({ fn: (url) => own + "/?url=" + encodeURIComponent(url), name: "worker", timeout: 25000, own: true });
+  return list.concat(VG.PROXIES);
+};
+
 VG.fetch = async (url, label) => {
   const c = VG.cache.get(url);
   if (c) return c;
   const setStatus = (t) => { const el = document.getElementById("status"); if (el) el.innerHTML = t; };
   setStatus('<span class="status-dot warning"></span> Fetching ' + (label || "data") + '...');
   let lastErr = null;
-  for (const proxy of VG.PROXIES) {
-    if (proxy.name !== "direct" && !VG.proxyConsent) {
+  for (const proxy of VG._relayList()) {
+    // The user's own Worker needs no consent; free public relays do.
+    if (proxy.name !== "direct" && !proxy.own && !VG.proxyConsent) {
       const approved = await VG.ensureProxyConsent();
       if (!approved) break;
     }

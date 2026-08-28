@@ -39,6 +39,14 @@ VG.init = async () => {
   const el = id => document.getElementById(id);
   VG._retries = 0;
   el("status").innerHTML = '<span class="status-dot warning"></span> Loading data...';
+  // Restore the user's own CORS Worker URL (if any) into the sidebar and keep
+  // it in sync. This is the reliable path for reading personal entry/picks.
+  const proxyInput = el("proxyURL");
+  if (proxyInput) {
+    proxyInput.value = VG.proxyURL();
+    proxyInput.addEventListener("input", () => VG.setProxyURL(proxyInput.value));
+    proxyInput.addEventListener("change", () => VG.setProxyURL(proxyInput.value));
+  }
   try {
     VG.bootstrapData = await VG.loadBootstrap();
     VG.applyHistoryPriors(VG.bootstrapData, await VG.loadHistoryPriors());
