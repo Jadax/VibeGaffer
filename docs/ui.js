@@ -207,61 +207,7 @@ VG.run = async () => {
       </div>`;
     }
 
-    // ══ ACTION CARD: the actionable stuff first (transfers + chips) so the
-    // user sees "what to do this GW" without hunting down the page. ──
-    const actionItems = [];
-    // Chips that are actually recommended this GW
-    if (result.chipAdvice) {
-      [["triple_captain", "TC"], ["bench_boost", "BB"], ["wildcard", "WC"], ["free_hit", "FH"]].forEach(([key, abbr]) => {
-        const c = result.chipAdvice[key];
-        if (c && c.recommend) {
-          const gwTxt = c.bestGW ? `GW${c.bestGW}` : "this week";
-          actionItems.push({
-            tag: `<span style="color:#fbbf24;font-weight:800;">${abbr} CHIP</span>`,
-            main: `Play ${abbr} in ${gwTxt}`,
-            sub: c.reason ? " " + VG.esc(c.reason) : "",
-            tip: c.tip ? VG.esc(c.tip) : ""
-          });
-        }
-      });
-    }
-    // Transfers recommended
-    if ((result.transfersIn?.length || result.transfersOut?.length)) {
-      const inN = result.transfersIn?.length || 0, outN = result.transfersOut?.length || 0;
-      const cost = result.hitCost || 0;
-      const names = (result.transfersIn || []).map(p => VG.esc(p.name)).join(", ");
-      const tTip = cost > 0 ? ` (costs -${cost}pt hit)` : " (free)";
-      actionItems.push({
-        tag: `<span style="color:#00ff87;font-weight:800;">TRANSFERS</span>`,
-        main: `${inN} IN: ${names || "—"}${tTip}`,
-        sub: (result.transfersOut || []).length ? ` OUT: ${(result.transfersOut || []).map(p => VG.esc(p.name)).join(", ")}` : "",
-        tip: cost > 0 && result.hitWarning ? VG.esc(result.hitWarning) : ""
-      });
-    }
-    if (actionItems.length) {
-      html += '<div style="margin:14px 0;padding:14px;border:1px solid rgba(0,255,135,0.3);border-radius:12px;background:rgba(0,255,135,0.06);">';
-      html += '<div style="font-size:0.78rem;font-weight:800;color:#00ff87;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">⚡ What to do this gameweek</div>';
-      html += actionItems.map(a => {
-        let row = `<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.06);">`;
-        row += `<div style="font-size:0.72rem;white-space:nowrap;">${a.tag}</div>`;
-        row += `<div style="flex:1;"><div style="font-size:0.85rem;color:#e2e8f0;font-weight:600;">${a.main}</div>`;
-        if (a.sub) row += `<div style="font-size:0.72rem;color:#94a3b8;">${a.sub}</div>`;
-        if (a.tip) row += `<div style="font-size:0.7rem;color:#fbbf24;margin-top:2px;">💡 ${a.tip}</div>`;
-        row += `</div></div>`;
-        return row;
-      }).join('');
-      html += '</div>';
-    }
-
-    // Metrics
-    const gwProjStarting = (result.starting?.length >= 11 ? result.starting : (result.gwPicks?.[0]?.starting || result.squad.slice(0, 11)));
-    const mcMetric = (gwProjStarting && gwProjStarting.length >= 11) ? VG.render.gwProjection(gwProjStarting, VG.allFixtures, gw, result.gotCap?.[0]?.id) : null;
-    html += VG.render.metrics(result, mcMetric);
-
-    // Rate My Team (v5.8, FPL Review/FFix idea) , transparent component scores.
-    html += VG.render.rateMyTeam(result, VG.allXP, VG.allFixtures, gw);
-
-    // Transfers
+    // Transfers — actionable advice up top so it's immediately visible.
     if (result.transfersIn?.length || result.transfersOut?.length) {
       html += '<div class="section-title">Transfers</div>';
       if (result.hitWarning) {
@@ -294,6 +240,69 @@ VG.run = async () => {
         html += `<div style="text-align:center;color:#00ff87;font-size:0.72rem;margin-top:8px;">✓ Using free transfer only, champion strategy</div>`;
       }
     }
+
+    // Chip Strategy — also up top with the transfers.
+    if (result.chipAdvice) {
+      html += '<div class="section-title">Chip Strategy</div>';
+      html += '<div class="chip-sequence"><strong>Classic Sequence:</strong> Wildcard → Bench Boost → Free Hit → Triple Captain (GW32-38)</div>';
+      html += '<div class="chips-grid">';
+      html += VG.render.chipCard("TC", "#fbbf24", result.chipAdvice.triple_captain);
+      html += VG.render.chipCard("BB", "#3b82f6", result.chipAdvice.bench_boost);
+      html += VG.render.chipCard("WC", "#7c3aed", result.chipAdvice.wildcard);
+      html += VG.render.chipCard("FH", "#ef4444", result.chipAdvice.free_hit);
+      html += '</div>';
+
+      // Chip Opportunity Timeline: per-GW score bars
+      const gwScores = result.chipAdvice.gwScores;
+      if (gwScores && gwScores.length > 1) {
+        html += '<div style="margin-top:16px;font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Chip Opportunity Timeline</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(' + gwScores.length + ',1fr);gap:6px;margin-top:8px;">';
+        gwScores.forEach(gs => {
+          const isDGW = gs.isDGW;
+          const isBGW = gs.isBGW;
+          const gwLabel = 'GW' + gs.gw;
+          const dgwTag = isDGW ? '<span style="color:#fbbf24;font-size:0.55rem;">DGW</span>' : isBGW ? '<span style="color:#ef4444;font-size:0.55rem;">BGW</span>' : '';
+          html += `<div style="background:${isDGW ? 'rgba(251,191,36,0.08)' : isBGW ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.02)'};border-radius:6px;padding:8px 6px;text-align:center;">`;
+          html += `<div style="font-weight:700;color:#e2e8f0;font-size:0.7rem;">${gwLabel}</div>`;
+          html += dgwTag;
+          // TC bar
+          const tcH = Math.max((gs.tcScore / 100) * 40, 2);
+          html += `<div style="margin-top:4px;display:flex;align-items:flex-end;justify-content:center;gap:2px;height:50px;">`;
+          html += `<div title="TC: ${gs.tcScore}" style="width:6px;height:${tcH}px;background:#fbbf24;border-radius:2px 2px 0 0;"></div>`;
+          // BB bar
+          const bbH = Math.max((gs.bbScore / 100) * 40, 2);
+          html += `<div title="BB: ${gs.bbScore}" style="width:6px;height:${bbH}px;background:#3b82f6;border-radius:2px 2px 0 0;"></div>`;
+          // WC bar
+          const wcH = Math.max((gs.wcScore / 100) * 40, 2);
+          html += `<div title="WC: ${gs.wcScore}" style="width:6px;height:${wcH}px;background:#7c3aed;border-radius:2px 2px 0 0;"></div>`;
+          // FH bar
+          const fhH = Math.max((gs.fhScore / 100) * 40, 2);
+          html += `<div title="FH: ${gs.fhScore}" style="width:6px;height:${fhH}px;background:#ef4444;border-radius:2px 2px 0 0;"></div>`;
+          html += '</div>';
+          // Captain info
+          if (gs.capName) {
+            html += `<div style="font-size:0.55rem;color:#64748b;margin-top:3px;">C: ${VG.esc(gs.capName)}</div>`;
+          }
+          html += '</div>';
+        });
+        html += '</div>';
+        // Legend
+        html += '<div style="display:flex;gap:12px;margin-top:6px;font-size:0.6rem;color:#64748b;justify-content:center;">';
+        html += '<span><span style="display:inline-block;width:8px;height:8px;background:#fbbf24;border-radius:2px;margin-right:3px;"></span>TC</span>';
+        html += '<span><span style="display:inline-block;width:8px;height:8px;background:#3b82f6;border-radius:2px;margin-right:3px;"></span>BB</span>';
+        html += '<span><span style="display:inline-block;width:8px;height:8px;background:#7c3aed;border-radius:2px;margin-right:3px;"></span>WC</span>';
+        html += '<span><span style="display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:2px;margin-right:3px;"></span>FH</span>';
+        html += '</div>';
+      }
+    }
+
+    // Metrics
+    const gwProjStarting = (result.starting?.length >= 11 ? result.starting : (result.gwPicks?.[0]?.starting || result.squad.slice(0, 11)));
+    const mcMetric = (gwProjStarting && gwProjStarting.length >= 11) ? VG.render.gwProjection(gwProjStarting, VG.allFixtures, gw, result.gotCap?.[0]?.id) : null;
+    html += VG.render.metrics(result, mcMetric);
+
+    // Rate My Team (v5.8, FPL Review/FFix idea) , transparent component scores.
+    html += VG.render.rateMyTeam(result, VG.allXP, VG.allFixtures, gw);
 
     // Transfer Roadmap: per-GW fixture grid + recommendations
     if (result.mode === "draft" && result.squad?.length >= 11) {
@@ -426,61 +435,6 @@ VG.run = async () => {
           html += '</tr>';
         });
         html += '</table>';
-      }
-    }
-
-    // Chips
-    if (result.chipAdvice) {
-      html += '<div class="section-title">Chip Strategy</div>';
-      html += '<div class="chip-sequence"><strong>Classic Sequence:</strong> Wildcard → Bench Boost → Free Hit → Triple Captain (GW32-38)</div>';
-      html += '<div class="chips-grid">';
-      html += VG.render.chipCard("TC", "#fbbf24", result.chipAdvice.triple_captain);
-      html += VG.render.chipCard("BB", "#3b82f6", result.chipAdvice.bench_boost);
-      html += VG.render.chipCard("WC", "#7c3aed", result.chipAdvice.wildcard);
-      html += VG.render.chipCard("FH", "#ef4444", result.chipAdvice.free_hit);
-      html += '</div>';
-
-      // Chip Opportunity Timeline: per-GW score bars
-      const gwScores = result.chipAdvice.gwScores;
-      if (gwScores && gwScores.length > 1) {
-        html += '<div style="margin-top:16px;font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Chip Opportunity Timeline</div>';
-        html += '<div style="display:grid;grid-template-columns:repeat(' + gwScores.length + ',1fr);gap:6px;margin-top:8px;">';
-        gwScores.forEach(gs => {
-          const isDGW = gs.isDGW;
-          const isBGW = gs.isBGW;
-          const gwLabel = 'GW' + gs.gw;
-          const dgwTag = isDGW ? '<span style="color:#fbbf24;font-size:0.55rem;">DGW</span>' : isBGW ? '<span style="color:#ef4444;font-size:0.55rem;">BGW</span>' : '';
-          html += `<div style="background:${isDGW ? 'rgba(251,191,36,0.08)' : isBGW ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.02)'};border-radius:6px;padding:8px 6px;text-align:center;">`;
-          html += `<div style="font-weight:700;color:#e2e8f0;font-size:0.7rem;">${gwLabel}</div>`;
-          html += dgwTag;
-          // TC bar
-          const tcH = Math.max((gs.tcScore / 100) * 40, 2);
-          html += `<div style="margin-top:4px;display:flex;align-items:flex-end;justify-content:center;gap:2px;height:50px;">`;
-          html += `<div title="TC: ${gs.tcScore}" style="width:6px;height:${tcH}px;background:#fbbf24;border-radius:2px 2px 0 0;"></div>`;
-          // BB bar
-          const bbH = Math.max((gs.bbScore / 100) * 40, 2);
-          html += `<div title="BB: ${gs.bbScore}" style="width:6px;height:${bbH}px;background:#3b82f6;border-radius:2px 2px 0 0;"></div>`;
-          // WC bar
-          const wcH = Math.max((gs.wcScore / 100) * 40, 2);
-          html += `<div title="WC: ${gs.wcScore}" style="width:6px;height:${wcH}px;background:#7c3aed;border-radius:2px 2px 0 0;"></div>`;
-          // FH bar
-          const fhH = Math.max((gs.fhScore / 100) * 40, 2);
-          html += `<div title="FH: ${gs.fhScore}" style="width:6px;height:${fhH}px;background:#ef4444;border-radius:2px 2px 0 0;"></div>`;
-          html += '</div>';
-          // Captain info
-          if (gs.capName) {
-            html += `<div style="font-size:0.55rem;color:#64748b;margin-top:3px;">C: ${VG.esc(gs.capName)}</div>`;
-          }
-          html += '</div>';
-        });
-        html += '</div>';
-        // Legend
-        html += '<div style="display:flex;gap:12px;margin-top:6px;font-size:0.6rem;color:#64748b;justify-content:center;">';
-        html += '<span><span style="display:inline-block;width:8px;height:8px;background:#fbbf24;border-radius:2px;margin-right:3px;"></span>TC</span>';
-        html += '<span><span style="display:inline-block;width:8px;height:8px;background:#3b82f6;border-radius:2px;margin-right:3px;"></span>BB</span>';
-        html += '<span><span style="display:inline-block;width:8px;height:8px;background:#7c3aed;border-radius:2px;margin-right:3px;"></span>WC</span>';
-        html += '<span><span style="display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:2px;margin-right:3px;"></span>FH</span>';
-        html += '</div>';
       }
     }
 
