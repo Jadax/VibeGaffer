@@ -285,6 +285,8 @@ check("FPL 404 is authoritative so pre-deadline falls back to draft, not relay r
 check("user-owned Cloudflare Worker relay is tried first (override) and needs no consent", dataSource.includes("VG._relayList") && dataSource.includes("own: true") && dataSource.includes("VG.proxyURL = ()"));
 check("a shared app-wide relay is built in so every visitor loads squad data with no setup", dataSource.includes("VG.SHARED_RELAY") && dataSource.includes("vibegaffer-relay.sharma-tushant.workers.dev") && dataSource.includes('name: "relay"'));
 check("CSP allows the workers.dev relay scope", indexMarkup.includes("https://*.workers.dev"));
+check("sidebar no longer surfaces CORS Worker URL or Mini-League ID inputs to users", !indexMarkup.includes('id="proxyURL"') && !indexMarkup.includes('id="leagueId"') && !indexMarkup.includes("Mini-League ID"));
+check("primary classic league is auto-detected from the entry, no Manual league ID", dataSource.includes("VG.detectPrimaryLeague") && uiSource.includes("VG.detectPrimaryLeague"))
 
 const dataWorkflow = fs.readFileSync(dataWorkflowPath, "utf8");
 check("Data fetch fails fast on HTTP errors so fallbacks fire", dataWorkflow.includes("curl -sfL"));

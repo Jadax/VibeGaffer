@@ -267,4 +267,23 @@ VG.loadSquad = async (tid, gw) => {
   return { info, picks };
 };
 
+// The user's "primary" classic mini-league, auto-detected from their entry so
+// the League tab needs no manual ID. Prefers the entry's own named league:
+// skip the global "Overall" and per-gameweek system leagues, and any closed
+// ones; fall back to the first real classic league by API order.
+VG.primaryLeagueId = 0;
+VG.detectPrimaryLeague = (info) => {
+  try {
+    const classic = (info && info.leagues && info.leagues.classic) || [];
+    const isSystem = (l) => {
+      const n = (l && (l.name || "")) || "";
+      const s = (l && l.short_name) || "";
+      return /^overall$/i.test(n) || /^overall$/i.test(s) || /^gameweek\s/i.test(n);
+    };
+    const pick = classic.find(l => l && l.id && !l.closed && !isSystem(l));
+    if (pick && pick.id) VG.primaryLeagueId = pick.id;
+  } catch (e) { /* non-fatal */ }
+  return VG.primaryLeagueId;
+};
+
 

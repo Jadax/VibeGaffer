@@ -39,14 +39,6 @@ VG.init = async () => {
   const el = id => document.getElementById(id);
   VG._retries = 0;
   el("status").innerHTML = '<span class="status-dot warning"></span> Loading data...';
-  // Restore the user's own CORS Worker URL (if any) into the sidebar and keep
-  // it in sync. This is the reliable path for reading personal entry/picks.
-  const proxyInput = el("proxyURL");
-  if (proxyInput) {
-    proxyInput.value = VG.proxyURL();
-    proxyInput.addEventListener("input", () => VG.setProxyURL(proxyInput.value));
-    proxyInput.addEventListener("change", () => VG.setProxyURL(proxyInput.value));
-  }
   try {
     VG.bootstrapData = await VG.loadBootstrap();
     VG.applyHistoryPriors(VG.bootstrapData, await VG.loadHistoryPriors());
@@ -86,15 +78,6 @@ VG.init = async () => {
 VG.run = async () => {
   const el = id => document.getElementById(id);
   const loader = (t) => `<div class="vg-loader"><div class="vg-loader-spinner"></div><div class="vg-loader-text">${t}</div></div>`;
-
-  // Submit-time capture: read the live "CORS Worker URL" input now and persist
-  // it, so even if the input event never fired (paste/autofill edge cases) the
-  // typed worker is used the instant the user hits Optimize — and is shown on
-  // the next visit too.
-  try {
-    const proxyInput = document.getElementById("proxyURL");
-    if (proxyInput && proxyInput.value) VG.setProxyURL(proxyInput.value.trim());
-  } catch (e) { /* non-fatal */ }
 
   try {
     el("welcome").style.display = "none";
@@ -150,6 +133,7 @@ VG.run = async () => {
     } else {
       try {
         const squadData = await VG.loadSquad(teamId, gw);
+        VG.detectPrimaryLeague(squadData.info);
         const currentSquad = squadData.picks.picks;
         const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
         const freeTransfers = parseInt(el("freeTransfers").value);
@@ -843,7 +827,7 @@ VG.preloadTabs = async (gw) => {
 
 
   try {
-    const leagueId = parseInt(el("leagueId").value) || 0;
+    const leagueId = VG.primaryLeagueId || 0;
     if (leagueId > 0) {
       const gw = parseInt(el("gameweek").value);
       const league = await VG.analyzeLeague(leagueId, gw, VG.allFixtures);
@@ -938,7 +922,7 @@ VG.preloadTabs = async (gw) => {
         document.getElementById("leagueContent").innerHTML = '<p style="color:#475569;">Could not load league data. Check the League ID is correct and the league is public.</p>';
       }
     } else {
-      document.getElementById("leagueContent").innerHTML = '<p style="color:#475569;">Enter a Mini-League ID in the sidebar to compare your squad vs rivals.</p>';
+      document.getElementById("leagueContent").innerHTML = '<p style="color:#475569;">Enter a FPL Team ID to compare your squad against your own classic league automatically (no Mini-League ID needed).</p>';
     }
   } catch(e) {
     console.warn("[VG] League:", e);
@@ -959,7 +943,7 @@ VG.runWhatIf = async (mode, gw) => {
   if (!resultEl) return;
   const playerId = parseInt(document.getElementById("whatIfPlayer")?.value || "0");
   if (!playerId) { resultEl.innerHTML = '<p style="color:#475569;">Select a player first.</p>'; return; }
-  const leagueId = parseInt(document.getElementById("leagueId").value);
+  const leagueId = VG.primaryLeagueId || 0;
   if (!leagueId) return;
   try {
     resultEl.innerHTML = '<p style="color:#60a5fa;">Simulating…</p>';
