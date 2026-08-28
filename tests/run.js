@@ -281,6 +281,9 @@ check("UI logic is externalized and inline handlers are removed", indexMarkup.in
 check("data transport is externalized into its own module", indexMarkup.includes(`data.js?v=${pkg.version}`) && fs.readFileSync(dataPath, "utf8").includes("VG.loadBootstrap"));
 check("public modules load in dependency order", indexMarkup.indexOf("app.js?v=") < indexMarkup.indexOf("data.js?v=") && indexMarkup.indexOf("data.js?v=") < indexMarkup.indexOf("ui.js?v="));
 check("CORS proxy fallback requires explicit user consent", dataSource.includes("window.confirm(\"The FPL API is not reachable directly") && dataSource.includes("VG.proxyConsent = false"));
+check("FPL 404 is authoritative so pre-deadline falls back to draft, not relay roulette", dataSource.includes('r.status === 404') && dataSource.includes('/404/.test(String(e.message))'));
+check("user-owned Cloudflare Worker relay is tried first and needs no consent", dataSource.includes("VG._relayList") && dataSource.includes("own: true") && dataSource.includes("VG.proxyURL = ()"));
+check("CSP allows the workers.dev relay scope", indexMarkup.includes("https://*.workers.dev"));
 
 const dataWorkflow = fs.readFileSync(dataWorkflowPath, "utf8");
 check("Data fetch fails fast on HTTP errors so fallbacks fire", dataWorkflow.includes("curl -sfL"));

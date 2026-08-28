@@ -29,6 +29,12 @@ wrangler login
 wrangler deploy        # run inside this worker/ folder
 ```
 
+## Deployed
+
+Live at **`https://vibegaffer-cors.sharma-tushant.workers.dev`** (account
+`sharma-tushant`). Re-deploy after editing with `wrangler deploy` in this
+folder.
+
 ## Wire it into VibeGaffer
 
 Set the Worker URL in the VibeGaffer sidebar's **"CORS Worker URL"** box

@@ -76,11 +76,25 @@ VG.fetch = async (url, label) => {
         const timer = setTimeout(() => ctrl.abort(), proxy.timeout || 15000);
         const r = await fetch(proxy.fn(url), { signal: ctrl.signal, cache: "no-cache" });
         clearTimeout(timer);
+        // 404 is authoritative: the FPL endpoint genuinely has no data for
+        // this resource (e.g. picks don't exist pre-deadline). Retrying other
+        // relays won't change that, and run()'s draft fallback keys on it — so
+        // surface 404 immediately instead of exhausting the whole chain first
+        // (which used to bury it under a generic "Failed to fetch").
+        if (r.status === 404) {
+          setStatus('<span class="status-dot error"></span> ' + label + ' not found (404)');
+          throw new Error(label + ": 404");
+        }
         if (!r.ok) { lastErr = new Error(proxy.name + " " + r.status); break; }
         const j = await r.json();
         VG.cache.set(url, j);
         return j;
-      } catch (e) { lastErr = e; }
+      } catch (e) {
+        // 404 must propagate immediately (it's authoritative), not be
+        // swallowed by the relay-retry catch.
+        if (e && /404/.test(String(e.message))) throw e;
+        lastErr = e;
+      }
     }
   }
   setStatus('<span class="status-dot error"></span> ' + label + ' failed');
