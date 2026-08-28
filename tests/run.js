@@ -246,6 +246,7 @@ const optBody = optStart >= 0 ? appSource.slice(optStart, appSource.indexOf("VG.
 check("ILP uses exact GK constraint", appSource.includes("' pos' + pos + '_exact: '"));
 check("ILP no longer allows flexible forward counts", !appSource.includes("fwd_min:"));
 check("Optimizer no longer uses random swaps", !optBody.includes("Math.random()"));
+check("Pitch is inverted per FPL-opposite request (GK row at top)", appSource.includes('{ pos: 1, label: "GK", y: 18 }'));
 
 const oddsWorkflow = fs.readFileSync(oddsWorkflowPath, "utf8");
 check("Odds workflow handles bookmaker arrays", oddsWorkflow.includes("for bookmaker in event.get('bookmakers', []):"));

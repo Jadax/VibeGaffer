@@ -3175,12 +3175,13 @@ VG.render.pitch = (result) => {
   starting.forEach(p => byPos[p.positionId].push(p));
   Object.values(byPos).forEach(arr => arr.sort((a, b) => b.totalXP - a.totalXP));
 
-  // Row order: FWD, MID, DEF, GK (top to bottom)
+  // Row order: GK, DEF, MID, FWD (top to bottom) — inverted from the default
+  // FPL view (GK at top) per the author's explicit request.
   const rowDefs = [
-    { pos: 4, label: "FWD", y: 18 },
-    { pos: 3, label: "MID", y: 37 },
-    { pos: 2, label: "DEF", y: 56 },
-    { pos: 1, label: "GK", y: 75 }
+    { pos: 1, label: "GK", y: 18 },
+    { pos: 2, label: "DEF", y: 37 },
+    { pos: 3, label: "MID", y: 56 },
+    { pos: 4, label: "FWD", y: 75 }
   ];
 
   let html = '<div class="pitch-container"><div class="pitch-surface">';
