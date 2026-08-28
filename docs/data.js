@@ -98,7 +98,19 @@ VG.fetch = async (url, label) => {
     }
   }
   setStatus('<span class="status-dot error"></span> ' + label + ' failed');
-  throw new Error(label + ": " + (lastErr?.message || "all routes failed"));
+  const msg = lastErr?.message || "all routes failed";
+  // If a worker is configured but nothing made it, the page may be running a
+  // stale cached index.html whose Content-Security-Policy predates the worker
+  // relay and blocks the cross-origin fetch (surfaces as "Failed to fetch").
+  let hint = "";
+  try {
+    const el = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+    const csp = (el && el.content) || "";
+    if (VG.proxyURL() && csp && !csp.includes("workers.dev")) {
+      hint = " — your page is an old cached version; hard-refresh (Ctrl+Shift+R) to load the CSP that allows the worker";
+    }
+  } catch (e) { /* ignore */ }
+  throw new Error(label + ": " + msg + hint);
 };
 
 VG.loadBootstrap = async () => {
