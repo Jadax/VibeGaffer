@@ -6,10 +6,13 @@ VG.cache = {
   set(k, d) { try { localStorage.setItem("vg_" + k, JSON.stringify({ d, t: Date.now() })); } catch {} }
 };
 
-// Proxy chain, most-reliable-first. The preferred relay is the user's OWN
-// Cloudflare Worker (worker/cors-proxy.js) — set it in the sidebar "CORS
-// Worker URL" box (localStorage key vg_proxyURL); it's used first and needs
-// no consent because the user controls it. Free public relays sit behind it:
+// Shared app-wide CORS relay (author-deployed Cloudflare Worker, see
+// worker/src/shared-relay.js). This is what EVERY visitor uses automatically
+// to load their personal FPL squad/league data — no per-user setup, no consent
+// dialog. It only relays fantasy.premierleague.com/api/*.
+VG.SHARED_RELAY = "https://vibegaffer-relay.sharma-tushant.workers.dev";
+
+// Free public relays sit behind the shared relay as last resorts:
 // api.cors.lol is fast but rate-limits repeat users; allorigins is flaky
 // (522/timeouts); codetabs sputters; corsproxy.io now demands an API key.
 VG.PROXIES = [
@@ -47,11 +50,14 @@ VG.ensureProxyConsent = () => {
   return VG._proxyConsentPromise;
 };
 
-// Ordered list of relays to try, starting with the user's own Worker if set.
+// Ordered list of relays, most-reliable-first. The user's OWN worker (if set)
+// is the top override; otherwise (and for all visitors by default) the shared
+// app-wide relay is used automatically. Both need no consent.
 VG._relayList = () => {
   const list = [];
   const own = VG.proxyURL();
   if (own) list.push({ fn: (url) => own + "/?url=" + encodeURIComponent(url), name: "worker", timeout: 25000, own: true });
+  list.push({ fn: (url) => VG.SHARED_RELAY + "/?url=" + encodeURIComponent(url), name: "relay", timeout: 25000, own: true });
   return list.concat(VG.PROXIES);
 };
 
@@ -102,18 +108,15 @@ VG.fetch = async (url, label) => {
   const msg = lastErr?.message || "all routes failed";
   let hint = "";
   try {
-    // No worker configured → the free public relays are unreliable, so nudge
-    // the user to paste their own worker URL (the reliable path).
-    if (!VG.proxyURL()) {
-      hint = " — paste your Cloudflare Worker URL into the 'CORS Worker URL' box on the left and click Optimize again";
+    // The shared relay is automatic, so if even it failed the page is almost
+    // certainly running a stale cached index.html whose CSP predates it (the
+    // free public relays are unreliable, so they aren't a useful fallback).
+    const el = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+    const csp = (el && el.content) || "";
+    if (csp && !csp.includes("workers.dev")) {
+      hint = " — your page is an old cached version; hard-refresh (Ctrl+Shift+R) to load the CSP that allows the built-in relay";
     } else {
-      // Worker configured but nothing made it → possibly a stale cached
-      // index.html whose CSP predates the worker and blocks it.
-      const el = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
-      const csp = (el && el.content) || "";
-      if (csp && !csp.includes("workers.dev")) {
-        hint = " — your page is an old cached version; hard-refresh (Ctrl+Shift+R) to load the CSP that allows the worker";
-      }
+      hint = " — the built-in relay is unreachable right now; try again shortly, or paste your own Cloudflare Worker URL into the 'CORS Worker URL' box";
     }
   } catch (e) { /* ignore */ }
   throw new Error(label + ": " + msg + hint);

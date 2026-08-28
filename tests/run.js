@@ -282,7 +282,8 @@ check("data transport is externalized into its own module", indexMarkup.includes
 check("public modules load in dependency order", indexMarkup.indexOf("app.js?v=") < indexMarkup.indexOf("data.js?v=") && indexMarkup.indexOf("data.js?v=") < indexMarkup.indexOf("ui.js?v="));
 check("CORS proxy fallback requires explicit user consent", dataSource.includes("window.confirm(\"The FPL API is not reachable directly") && dataSource.includes("VG.proxyConsent = false"));
 check("FPL 404 is authoritative so pre-deadline falls back to draft, not relay roulette", dataSource.includes('r.status === 404') && dataSource.includes('/404/.test(String(e.message))'));
-check("user-owned Cloudflare Worker relay is tried first and needs no consent", dataSource.includes("VG._relayList") && dataSource.includes("own: true") && dataSource.includes("VG.proxyURL = ()"));
+check("user-owned Cloudflare Worker relay is tried first (override) and needs no consent", dataSource.includes("VG._relayList") && dataSource.includes("own: true") && dataSource.includes("VG.proxyURL = ()"));
+check("a shared app-wide relay is built in so every visitor loads squad data with no setup", dataSource.includes("VG.SHARED_RELAY") && dataSource.includes("vibegaffer-relay.sharma-tushant.workers.dev") && dataSource.includes('name: "relay"'));
 check("CSP allows the workers.dev relay scope", indexMarkup.includes("https://*.workers.dev"));
 
 const dataWorkflow = fs.readFileSync(dataWorkflowPath, "utf8");

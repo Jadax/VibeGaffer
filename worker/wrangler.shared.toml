@@ -1,0 +1,6 @@
+name = "vibegaffer-relay"
+main = "src/shared-relay.js"
+compatibility_date = "2026-08-01"
+
+[observability]
+enabled = true

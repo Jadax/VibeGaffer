@@ -119,7 +119,7 @@ This project is **permitted and encouraged** to copy ideas and patterns from top
 
 1. **Greedy fallback** can miss the global optimum when HiGHS fails to load.
 2. **Pre-season data**: team strengths equalized (fallback ~1015), form 0.0 — fallback estimates used. Tests that install synthetic strengths must restore them **by value** (undefined → NaN → every later projection NaN).
-3. **CORS proxies require consent** (`allorigins.win` / `corsproxy.io`) — gated by one-session `confirm()` before team/league-ID requests.
+3. **CORS**: the FPL API sends no `Access-Control-Allow-Origin`, so entry/picks must go through a relay. The app uses a **shared app-wide Cloudflare Worker** (`VG.SHARED_RELAY`, `https://vibegaffer-relay.sharma-tushant.workers.dev`) automatically with no consent; the author's private worker (`vg_proxyURL`)/free relays are fallbacks. Free public relays (`allorigins.win`/`corsproxy.io`/etc.) still require one-session `confirm()` consent before team/league-ID requests.
 4. **Pre-season live API**: `/event/{gw}/live/` returns `elements: []` until the first deadline — the Live tab shows a notice, not an error.
 5. **`bootstrap-lite.json` / `odds.json` 404s pre-season are expected** console noise.
 6. **FPL team ids change across seasons**; the stable cross-season key is the franchise `code` (`team_code`).
@@ -152,7 +152,7 @@ Base: `https://fantasy.premierleague.com/api`
 
 <!-- Volatile section — update every release; everything above should stay stable. -->
 
-- **Current version**: v5.16.4 (submit-time capture of the CORS Worker URL so a typed worker is always used even if the input event didn't fire; clearer self-diagnosing error when no worker is set or CSP is stale)
+- **Current version**: v5.16.5 (shared app-wide CORS relay `https://vibegaffer-relay.sharma-tushant.workers.dev` — every visitor loads personal squad/league data automatically, no setup, no consent; author's private worker from the sidebar remains the top override)
 - **v5.16.0 shipped** — the "GW1 45-pointer" post-mortem. The user's draft scored 45 vs 131 (rank 5.8M). Root cause: the 2026-27 season reset left every player with 0–1 games, and the engine had NO small-sample protection — a one-game hauler (De Cuyper: 1 goal, 1 assist, 1 CS in 77 mins) extrapolated to 1.72 xG/90, hit the 0.85 goal-prob cap every fixture and projected 47 xP (#1) while Haaland (0.74 xG, 0 goals) ranked 118th at 3.2 xP. The draft then captained Dasilva (rank 237). Fixes:
   1. **Bayesian shrinkage everywhere** (see Engine Model above) — per-90, per-game, DEFCON, start-rate all regress toward positional priors by sample size.
   2. **Positional goal/assist caps** replace the global 0.85.
