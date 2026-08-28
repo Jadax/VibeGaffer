@@ -1,0 +1,6 @@
+name = "vibegaffer-cors"
+main = "src/cors-proxy.js"
+compatibility_date = "2026-08-01"
+
+[observability]
+enabled = true
