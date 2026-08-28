@@ -152,7 +152,7 @@ Base: `https://fantasy.premierleague.com/api`
 
 <!-- Volatile section — update every release; everything above should stay stable. -->
 
-- **Current version**: v5.16.3 (reliable squad loading — user-owned Cloudflare Worker relay `https://vibegaffer-cors.sharma-tushant.workers.dev` first, free-relay fallback; FPL 404 surfaces immediately so pre-deadline GWs fall back to draft instead of exhausting the relay chain)
+- **Current version**: v5.16.4 (submit-time capture of the CORS Worker URL so a typed worker is always used even if the input event didn't fire; clearer self-diagnosing error when no worker is set or CSP is stale)
 - **v5.16.0 shipped** — the "GW1 45-pointer" post-mortem. The user's draft scored 45 vs 131 (rank 5.8M). Root cause: the 2026-27 season reset left every player with 0–1 games, and the engine had NO small-sample protection — a one-game hauler (De Cuyper: 1 goal, 1 assist, 1 CS in 77 mins) extrapolated to 1.72 xG/90, hit the 0.85 goal-prob cap every fixture and projected 47 xP (#1) while Haaland (0.74 xG, 0 goals) ranked 118th at 3.2 xP. The draft then captained Dasilva (rank 237). Fixes:
   1. **Bayesian shrinkage everywhere** (see Engine Model above) — per-90, per-game, DEFCON, start-rate all regress toward positional priors by sample size.
   2. **Positional goal/assist caps** replace the global 0.85.

@@ -87,6 +87,15 @@ VG.run = async () => {
   const el = id => document.getElementById(id);
   const loader = (t) => `<div class="vg-loader"><div class="vg-loader-spinner"></div><div class="vg-loader-text">${t}</div></div>`;
 
+  // Submit-time capture: read the live "CORS Worker URL" input now and persist
+  // it, so even if the input event never fired (paste/autofill edge cases) the
+  // typed worker is used the instant the user hits Optimize — and is shown on
+  // the next visit too.
+  try {
+    const proxyInput = document.getElementById("proxyURL");
+    if (proxyInput && proxyInput.value) VG.setProxyURL(proxyInput.value.trim());
+  } catch (e) { /* non-fatal */ }
+
   try {
     el("welcome").style.display = "none";
     el("results").style.display = "block";

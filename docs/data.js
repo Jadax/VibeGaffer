@@ -58,6 +58,7 @@ VG._relayList = () => {
 VG.fetch = async (url, label) => {
   const c = VG.cache.get(url);
   if (c) return c;
+  console.debug("[VG] fetch", label, "relays:", VG._relayList().map(r => r.name));
   const setStatus = (t) => { const el = document.getElementById("status"); if (el) el.innerHTML = t; };
   setStatus('<span class="status-dot warning"></span> Fetching ' + (label || "data") + '...');
   let lastErr = null;
@@ -99,15 +100,20 @@ VG.fetch = async (url, label) => {
   }
   setStatus('<span class="status-dot error"></span> ' + label + ' failed');
   const msg = lastErr?.message || "all routes failed";
-  // If a worker is configured but nothing made it, the page may be running a
-  // stale cached index.html whose Content-Security-Policy predates the worker
-  // relay and blocks the cross-origin fetch (surfaces as "Failed to fetch").
   let hint = "";
   try {
-    const el = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
-    const csp = (el && el.content) || "";
-    if (VG.proxyURL() && csp && !csp.includes("workers.dev")) {
-      hint = " — your page is an old cached version; hard-refresh (Ctrl+Shift+R) to load the CSP that allows the worker";
+    // No worker configured → the free public relays are unreliable, so nudge
+    // the user to paste their own worker URL (the reliable path).
+    if (!VG.proxyURL()) {
+      hint = " — paste your Cloudflare Worker URL into the 'CORS Worker URL' box on the left and click Optimize again";
+    } else {
+      // Worker configured but nothing made it → possibly a stale cached
+      // index.html whose CSP predates the worker and blocks it.
+      const el = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+      const csp = (el && el.content) || "";
+      if (csp && !csp.includes("workers.dev")) {
+        hint = " — your page is an old cached version; hard-refresh (Ctrl+Shift+R) to load the CSP that allows the worker";
+      }
     }
   } catch (e) { /* ignore */ }
   throw new Error(label + ": " + msg + hint);
