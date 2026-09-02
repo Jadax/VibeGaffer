@@ -1236,6 +1236,31 @@ check("home boost differentiates positions by clean-sheet premium", (() => {
   check("fallback surfaces the source GW via fallbackGW", /fallbackGW: squadData\.fallbackGW \|\| null/.test(uiSource));
   check("fallback-GW notice banner renders", /Planning transfers for GW\$\{VG\.esc\(String\(result\.planningForGW \|\| gw\)\)\} from your GW/.test(uiSource));
 
+  // v5.17.3: the FPL picks API returns ONLY element/position/multiplier — no
+  // price or name. buildFromSquad must enrich each pick from VG.players, or
+  // the forced-replacement pass computes selling_price=0 and can never afford
+  // a replacement, so transfers vanish entirely (the real "no transfers shown"
+  // bug the user reported).
+  check("buildFromSquad enriches picks with prices/names from VG.players",
+    /const currentSquad = squadData\.picks\.picks\.map\(sp => \{/.test(uiSource) &&
+    /selling_price: sp\.selling_price \|\| sp\.now_cost \|\| \(boot && boot\.now_cost\)/.test(uiSource));
+  // Functional reproduction of the exact live bug: element-only picks (as the
+  // API returns them) must still yield the forced Watkins/Mateta replacements.
+  check("forced transfers survive element-only picks after price enrichment", (() => {
+    try {
+      // Real GW2 squad element ids incl. unavailable Watkins(55)/Mateta(223).
+      const ew = [82, 4, 269, 203, 130, 12, 481, 516, 375, 411, 55, 529, 498, 103, 223];
+      const elElementOnly = ew.map(el => ({ element: el, position: 1, multiplier: 1 }));
+      const enriched = elElementOnly.map(sp => {
+        const boot = VG.players && VG.players[sp.element];
+        return { ...sp, web_name: sp.web_name || (boot && boot.web_name) || "?", now_cost: sp.now_cost || (boot && boot.now_cost) || 0, selling_price: sp.selling_price || sp.now_cost || (boot && boot.now_cost) || 0 };
+      });
+      const res = VG.optimizeTransfers(enriched, allXP, 0.4, 2, 3, 5, {});
+      const outIds = res.transfersOut.map(p => p.id).sort((a, b) => a - b);
+      return res.transfersOut.length > 0 && res.transfersIn.length > 0 && outIds.includes(55) && outIds.includes(223);
+    } catch (e) { return false; }
+  })());
+
   // v5.17: forced replacement for players NOT in allXP (injured/left-league).
   check("forced pass builds a bootstrap stub for players missing from allXP", /if \(!cXP\) \{\s*const boot = VG\.players\[pid\]/.test(appSource));
 

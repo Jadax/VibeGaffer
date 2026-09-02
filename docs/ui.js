@@ -202,7 +202,20 @@ VG.run = async () => {
       // path (picks 404 pre-deadline → we use the last available GW's squad).
       const buildFromSquad = (squadData) => {
         VG.detectPrimaryLeague(squadData.info);
-        const currentSquad = squadData.picks.picks;
+        // The FPL picks API returns only element/position/multiplier — NO price
+        // or name. The transfer optimizer reads selling_price/now_cost to
+        // compute affordability, so enrich each pick from the bootstrap or the
+        // forced-replacement pass computes cPrice=0 and can never afford a
+        // replacement. (This was the real reason forced transfers vanished.)
+        const currentSquad = squadData.picks.picks.map(sp => {
+          const boot = VG.players && VG.players[sp.element];
+          return {
+            ...sp,
+            web_name: sp.web_name || (boot && boot.web_name) || "?",
+            now_cost: sp.now_cost || (boot && boot.now_cost) || 0,
+            selling_price: sp.selling_price || sp.now_cost || (boot && boot.now_cost) || 0
+          };
+        });
         const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
         const freeTransfers = parseInt(el("freeTransfers").value);
         const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, gw, 5, constraints);

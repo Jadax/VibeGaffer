@@ -1,4 +1,4 @@
-# VibeGaffer v5.17.2
+# VibeGaffer v5.17.3
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
