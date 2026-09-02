@@ -197,8 +197,10 @@ VG.run = async () => {
     } else if (teamId <= 0) {
       result = await buildDraft();
     } else {
-      try {
-        const squadData = await VG.loadSquad(teamId, gw);
+      // Build the full transfer-and-squad result from a loaded squad. Shared
+      // by the normal path (squad loads for the selected GW) AND the fallback
+      // path (picks 404 pre-deadline → we use the last available GW's squad).
+      const buildFromSquad = (squadData) => {
         VG.detectPrimaryLeague(squadData.info);
         const currentSquad = squadData.picks.picks;
         const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
@@ -219,21 +221,48 @@ VG.run = async () => {
         const bench4 = gwPicks[0]?.bench || allSquad.slice(11, 15);
         const gotCap = gwPicks[0]?.gotCap || VG.topCaptainCandidates(starting11, "totalXP");
         const chips = VG.evaluateChips(allSquad, gwPicks, VG.allFixtures);
-        result = {
+        return {
           ...transferResult, chipAdvice: chips, starting: starting11, bench: bench4,
           totalCost: +allSquad.reduce((s, p) => s + (p.price || 0), 0).toFixed(1),
           budgetRemaining: bank, formation: gwPicks[0]?.formation || { DEF: 4, MID: 4, FWD: 2 },
           totalXP: +gwPicks.reduce((s, g) => s + g.gwTotalXP, 0).toFixed(1),
           gwTotalXP: gwPicks[0]?.gwTotalXP || 0,
-          mode: "transfer", gotCap, gwPicks, squad: allSquad
+          mode: "transfer", gotCap, gwPicks, squad: allSquad,
+          fallbackGW: squadData.fallbackGW || null
         };
+      };
+
+      try {
+        const squadData = await VG.loadSquad(teamId, gw);
+        result = buildFromSquad(squadData);
       } catch (squadErr) {
-        // 404 = picks don't exist yet for this GW (pre-deadline): fall back to
-        // a draft. Any other failure (network etc.) rethrows so the outer
-        // retry logic still applies.
+        // 404 = picks don't exist yet for this GW (pre-deadline for the
+        // upcoming GW). FPL plans transfers from your LAST PLAYED squad, so we
+        // fall back to the most recent GW with published picks and run the
+        // transfer optimizer against THAT squad targeting the selected GW.
+        // Any non-404 failure (network etc.) rethrows for the retry logic.
         if (!/404/.test(String(squadErr && squadErr.message))) throw squadErr;
-        console.warn("[VG] squad picks not available (404), using draft fallback");
-        result = await buildDraft();
+        console.warn(`[VG] squad picks not available for GW${gw} (404), trying earlier GWs for transfer planning`);
+        let fallback = null;
+        for (let fg = gw - 1; fg >= Math.max(1, gw - 5); fg--) {
+          try {
+            const fData = await VG.loadSquad(teamId, fg);
+            fData.fallbackGW = fg;
+            fallback = fData;
+            break;
+          } catch (e) {
+            if (!/404/.test(String(e && e.message))) throw e;
+          }
+        }
+        if (fallback) {
+          // Stamp the target GW onto the result so downstream tabs target it.
+          result = buildFromSquad(fallback);
+          result.planningForGW = gw;
+          console.warn(`[VG] using GW${fallback.fallbackGW} squad to plan GW${gw} transfers`);
+        } else {
+          console.warn("[VG] no published squad found, using draft fallback");
+          result = await buildDraft();
+        }
       }
     }
 
@@ -284,6 +313,15 @@ VG.run = async () => {
       html += `<div style="margin:14px 0;padding:12px;border:1px solid rgba(251,191,36,0.4);border-radius:12px;background:rgba(251,191,36,0.08);">
         <div style="font-size:0.78rem;font-weight:700;color:#fbbf24;margin-bottom:4px;">🎯 ${chipName} team — projected, not your current squad</div>
         <div style="font-size:0.72rem;color:#e2e8f0;">${chipDesc}</div>
+      </div>`;
+    }
+
+    // Fallback-GW notice: the selected GW's picks aren't published yet
+    // (pre-deadline), so transfers are planned from the last played squad.
+    if (result.fallbackGW && teamId > 0) {
+      html += `<div style="margin:14px 0;padding:12px;border:1px solid rgba(96,165,250,0.35);border-radius:12px;background:rgba(96,165,250,0.08);">
+        <div style="font-size:0.78rem;font-weight:700;color:#60a5fa;margin-bottom:4px;">ℹ️ Planning transfers for GW${VG.esc(String(result.planningForGW || gw))} from your GW${VG.esc(String(result.fallbackGW))} squad</div>
+        <div style="font-size:0.72rem;color:#e2e8f0;">FPL hasn't published picks for the selected GW yet, so the transfers below are computed from your most recent played squad (GW${VG.esc(String(result.fallbackGW))}). This is how you should plan — but hit "back to team" or wait until after the deadline to confirm.</div>
       </div>`;
     }
 

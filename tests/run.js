@@ -1227,6 +1227,18 @@ check("home boost differentiates positions by clean-sheet premium", (() => {
   check("watchlist player labels escape team names", !appSource.includes("${p.teamName} £${p.price"));
   check("league what-if player labels escape team names", !indexSource.includes("${p.teamName} £${p.price"));
 
+  // v5.17.1: when the selected GW's picks 404 (upcoming GW pre-deadline), the
+  // app must fall back to the last published squad and plan transfers from it
+  // — NOT silently drop to a from-scratch draft (which shows no transfers and
+  // hides dead assets like Watkins/Mateta).
+  check("404 pick fallback tries earlier GWs, not just a draft", /trying earlier GWs for transfer planning/.test(uiSource));
+  check("fallback builds transfers from the last published squad", /const buildFromSquad = \(squadData\) => \{/.test(uiSource));
+  check("fallback surfaces the source GW via fallbackGW", /fallbackGW: squadData\.fallbackGW \|\| null/.test(uiSource));
+  check("fallback-GW notice banner renders", /Planning transfers for GW\$\{VG\.esc\(String\(result\.planningForGW \|\| gw\)\)\} from your GW/.test(uiSource));
+
+  // v5.17: forced replacement for players NOT in allXP (injured/left-league).
+  check("forced pass builds a bootstrap stub for players missing from allXP", /if \(!cXP\) \{\s*const boot = VG\.players\[pid\]/.test(appSource));
+
   // v5.17: Free Hit / Wildcard generators (FFHub "optimal chip team" idea).
   try {
     const wc = await VG.generateWildcard(allXP, 100, fixtures, 1, 5);
