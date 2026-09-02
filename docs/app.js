@@ -2355,8 +2355,19 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGW
     if (outPlayers.length >= cap) break;
     const pid = sp.element;
     if (soldIds.has(pid)) continue;
-    const cXP = players.find(p => p.id === pid);
-    if (!cXP) continue;
+    // A player missing from allXP is by definition unavailable (computeAllXP
+    // excludes status !== "a"/"d"). Build a minimal stub from the bootstrap
+    // so the forced-replacement pass can still find and replace them.
+    let cXP = players.find(p => p.id === pid);
+    if (!cXP) {
+      const boot = VG.players[pid];
+      if (!boot || (boot.status === "a" || boot.status === "d")) continue; // genuinely unknown or available
+      cXP = {
+        id: pid, name: sp.web_name || boot.web_name || "?", teamId: boot.team,
+        positionId: boot.element_type, price: (sp.selling_price || sp.now_cost || 0) / 10,
+        totalXP: 0, status: boot.status
+      };
+    }
     if (VG.isAvailable(cXP)) continue; // only force-move unavailable players
     const cPrice = (sp.selling_price || sp.now_cost || 0) / 10;
     const pos = cXP.positionId;
@@ -2376,7 +2387,7 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGW
       spent += cost;
       usedIds.add(best.id);
       soldIds.add(pid);
-      hitDetails.push({ name: best.name, breakEvenGWs: 0, gwAvgGain: gain, forced: true });
+      hitDetails.push({ name: sp.web_name || cXP.name || "?", breakEvenGWs: 0, gwAvgGain: gain, forced: true, inName: best.name });
     }
   }
 
@@ -2429,7 +2440,7 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGW
     hitDetails,
     hitWarning: forcedDetails.length > 0 || hitOnlyDetails.length > 0
       ? (forcedDetails.length > 0
-          ? `🚨 Forced out: ${forcedDetails.map(h => h.name).join(', ')} (unavailable — replaced to avoid blank).`
+          ? `🚨 Forced: ${forcedDetails.map(h => h.name + ' → ' + (h.inName || '?')).join('; ')} (unavailable — replaced to avoid blank).`
           : '') +
         (hits > 0
           ? ` ${hitTransfers} hit(s) = -${hits} pts. Break-even: ${hitOnlyDetails.map(h => `${h.name} in ~${h.breakEvenGWs} GWs (${h.gwAvgGain} pts/GW)`).join('; ')}.`
