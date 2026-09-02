@@ -112,7 +112,7 @@ VG.injuryNews = () => {
 // Top 2 non-GK captain candidates by xP key ("totalXP" or "gwXP")
 VG.topCaptainCandidates = (starting, key = "totalXP") =>
   (starting || [])
-    .filter(p => p.positionId !== 1)
+    .filter(p => p.positionId !== 1 && VG.isAvailable(p))
     .sort((a, b) => (b[key] || 0) - (a[key] || 0))
     .slice(0, 2);
 
@@ -1750,7 +1750,8 @@ VG.computePerGWPicks = (squad, gw, fixtures) => {
 };
 
 // ── Optimizer: maximize total xP within budget ──────────────────────────
-VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12) => {
+VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12, opts = {}) => {
+  const key = opts.key || "totalXP";
   const target = VG.POS_TARGET;
   let bestSquad = null, bestStrategyXP = -1, bestSpent = 0;
 
@@ -1777,7 +1778,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
     const seeds = [];
     [1, 2, 3, 4].forEach(function(pos) {
       const candidates = players.filter(function(p) { return p.positionId === pos && !inSquad.has(p.id) && VG.isAvailable(p); })
-        .sort(function(a, b) { return b.totalXP - a.totalXP; });
+        .sort(function(a, b) { return b[key] - a[key]; });
       seeds.push(candidates[0]);
       if (pos === 3 && candidates[1]) seeds.push(candidates[1]);
     });
@@ -1795,11 +1796,11 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
     if (strategy === 'value') {
       byValue = players.filter(VG.isAvailable).sort((a, b) => (b._sortBy || b.xpPerPrice) - (a._sortBy || a.xpPerPrice));
     } else if (strategy === 'xp') {
-      byValue = players.filter(VG.isAvailable).sort((a, b) => b.totalXP - a.totalXP);
+      byValue = players.filter(VG.isAvailable).sort((a, b) => b[key] - a[key]);
     } else { // mixed
       byValue = players.filter(VG.isAvailable).sort((a, b) => {
-        const scoreA = (a._sortBy || a.xpPerPrice) * 0.5 + (a.totalXP / 10) * 0.5;
-        const scoreB = (b._sortBy || b.xpPerPrice) * 0.5 + (b.totalXP / 10) * 0.5;
+        const scoreA = (a._sortBy || a.xpPerPrice) * 0.5 + (a[key] / 10) * 0.5;
+        const scoreB = (b._sortBy || b.xpPerPrice) * 0.5 + (b[key] / 10) * 0.5;
         return scoreB - scoreA;
       });
     }
@@ -1856,7 +1857,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
       if (remaining() < 0.1) break;
       let improved = false;
       const indices = Array.from({ length: squad.length }, (_, i) => i);
-      indices.sort((a, b) => squad[a].totalXP - squad[b].totalXP);
+      indices.sort((a, b) => squad[a][key] - squad[b][key]);
       for (const i of indices) {
         if (remaining() < 0.1) break;
         const cur = squad[i];
@@ -1867,7 +1868,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
           const costDiff = +(p.price - cur.price).toFixed(1);
           if (costDiff <= 0 || costDiff > remaining()) continue;
           if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== cur.teamId) continue;
-          const gain = p.totalXP - cur.totalXP;
+          const gain = (p[key] || 0) - (cur[key] || 0);
           if (gain > bestGain) { bestGain = gain; bestCand = p; }
         }
         if (bestCand && bestGain > 0) {
@@ -1891,7 +1892,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
     // Protect top-xP player in each position (captain candidates)
     const topByPos = {};
     squad.forEach(function(p) {
-      if (!topByPos[p.positionId] || p.totalXP > topByPos[p.positionId].totalXP) {
+      if (!topByPos[p.positionId] || p[key] > topByPos[p.positionId][key]) {
         topByPos[p.positionId] = p;
       }
     });
@@ -1910,7 +1911,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
             if (inSquad.has(p.id) || !VG.isAvailable(p)) continue;
             if (p.positionId !== sA.positionId) continue;
             if ((clubCounts[p.teamId] || 0) >= 3 && p.teamId !== sA.teamId) continue;
-            const gain = p.totalXP - sA.totalXP;
+            const gain = (p[key] || 0) - (sA[key] || 0);
             if (gain > bestAGain) { bestAGain = gain; bestA = { p, gain: gain }; }
           }
           if (!bestA) continue;
@@ -1922,7 +1923,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
             const costDiffB = +(p.price - sB.price).toFixed(1);
             const totalCost = +(bestA.p.price - sA.price + costDiffB).toFixed(1);
             if (totalCost > remaining()) continue;
-            const netGain = bestAGain + (p.totalXP - sB.totalXP);
+            const netGain = bestAGain + ((p[key] || 0) - (sB[key] || 0));
             if (netGain > bestNetGain) {
               bestNetGain = netGain;
               bestMove = { i, j, newA: bestA.p, newB: p };
@@ -1961,7 +1962,7 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
           if (cand.teamId !== cur.teamId && (clubCounts[cand.teamId] || 0) >= 3) continue;
           const costDiff = +(cand.price - cur.price).toFixed(1);
           if (costDiff > remaining()) continue;
-          const gain = cand.totalXP - cur.totalXP;
+          const gain = (cand[key] || 0) - (cur[key] || 0);
           if (gain <= 0) continue;
           if (!bestSwap || gain > bestSwap.gain || (gain === bestSwap.gain && costDiff < bestSwap.costDiff)) {
             bestSwap = { idx, cur, cand, costDiff, gain };
@@ -1981,10 +1982,10 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
       spent = +(spent + costDiff).toFixed(1);
     }
 
-    // Evaluate this squad's total XP
-    const totalXP = squad.reduce((s, p) => s + p.totalXP, 0);
-    if (totalXP > bestStrategyXP && squad.length === 15) {
-      bestStrategyXP = totalXP;
+    // Evaluate this squad by the requested key
+    const squadScore = squad.reduce((s, p) => s + (p[key] || 0), 0);
+    if (squadScore > bestStrategyXP && squad.length === 15) {
+      bestStrategyXP = squadScore;
       bestSquad = [...squad];
       bestSpent = spent;
     }
@@ -1994,8 +1995,8 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
   if (!squad || squad.length < 11) return VG.emptyDraftResult(budget);
   const spent = bestSpent;
 
-  const { formation: bestFormation, starting, bench } = VG.pickBestXI(squad, "totalXP");
-  bench.sort((a, b) => a.positionId - b.positionId || b.totalXP - a.totalXP);
+  const { formation: bestFormation, starting, bench } = VG.pickBestXI(squad, key);
+  bench.sort((a, b) => a.positionId - b.positionId || b[key] - a[key]);
 
   // Per-GW picks: best XI/formation/captain for each GW in the horizon
   const gwPicks = [];
@@ -2007,13 +2008,14 @@ VG.optimizeDraft = (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12
   const benchXP = +gwPicks.reduce((s, g) => s + g.gwBenchXP, 0).toFixed(1);
 
   return {
-    mode: "draft",
+    mode: key === "gwXP" ? "free_hit" : "draft",
     squad, starting: gwPicks[0]?.starting || starting.slice(0, 11), bench: gwPicks[0]?.bench || bench.slice(0, 4),
     formation: gwPicks[0]?.formation || bestFormation,
     totalCost: +spent.toFixed(1), budgetRemaining: +(budget - spent).toFixed(1),
     totalXP, benchXP,
-    gotCap: gwPicks[0]?.gotCap || [...starting].filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2),
-    gwPicks
+    gotCap: gwPicks[0]?.gotCap || [...starting].filter(p => p.positionId !== 1).sort((a, b) => b[key] - a[key]).slice(0, 2),
+    gwPicks,
+    key
   };
 };
 
@@ -2060,17 +2062,21 @@ VG._loadHighs = async () => {
   }
 };
 
-VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12) => {
+VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, nGWs = 12, opts = {}) => {
   const highs = await VG._loadHighs();
+  // Ranking key drives both the ILP objective and the starting-XI selection.
+  // Default "totalXP" = horizon-wide optimization (wildcard/draft). A single
+  // gameweek ("gwXP", e.g. a Free Hit) maximizes the upcoming GW instead.
+  const key = opts.key || "totalXP";
   if (!highs) {
     // Fallback to greedy
-    return VG.optimizeDraft(players, budget, fixtures, startGW, nGWs);
+    return VG.optimizeDraft(players, budget, fixtures, startGW, nGWs, opts);
   }
 
   const target = VG.POS_TARGET;
   const n = players.length;
   if (n === 0) {
-    return { mode: "draft", squad: [], starting: [], bench: [], formation: { DEF: 4, MID: 4, FWD: 2 }, totalCost: 0, budgetRemaining: budget, totalXP: 0, benchXP: 0, gotCap: [], gwPicks: [] };
+    return { mode: "draft", squad: [], starting: [], bench: [], formation: { DEF: 4, MID: 4, FWD: 2 }, totalCost: 0, budgetRemaining: budget, totalXP: 0, benchXP: 0, gotCap: [], gwPicks: [], key };
   }
 
   // Build CPLEX .lp problem
@@ -2078,7 +2084,7 @@ VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, 
   let lp = 'Maximize\n obj:';
   const terms = [];
   for (let i = 0; i < n; i++) {
-    const xp = players[i].totalXP || 0;
+    const xp = players[i][key] || 0;
     if (xp > 0) terms.push(xp + ' x' + i);
   }
   lp += ' ' + terms.join(' + ');
@@ -2154,9 +2160,9 @@ VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, 
 
     const spent = selected.reduce((s, p) => s + (p.price || 0), 0);
 
-    // Select starting XI: best formation
-    const { formation: bestFormation, starting, bench } = VG.pickBestXI(selected, "totalXP");
-    bench.sort((a, b) => a.positionId - b.positionId || b.totalXP - a.totalXP);
+    // Select starting XI: best formation ranked by the requested key
+    const { formation: bestFormation, starting, bench } = VG.pickBestXI(selected, key);
+    bench.sort((a, b) => a.positionId - b.positionId || b[key] - a[key]);
 
     // Per-GW picks
     const gwPicks = [];
@@ -2168,7 +2174,7 @@ VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, 
     const benchXP = +gwPicks.reduce((s, g) => s + g.gwBenchXP, 0).toFixed(1);
 
     return {
-      mode: "draft",
+      mode: key === "gwXP" ? "free_hit" : "draft",
       squad: selected,
       starting: gwPicks[0]?.starting || starting.slice(0, 11),
       bench: gwPicks[0]?.bench || bench.slice(0, 4),
@@ -2176,15 +2182,60 @@ VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, 
       totalCost: +spent.toFixed(1),
       budgetRemaining: +(budget - spent).toFixed(1),
       totalXP, benchXP,
-      gotCap: gwPicks[0]?.gotCap || [...starting].filter(p => p.positionId !== 1).sort((a, b) => b.totalXP - a.totalXP).slice(0, 2),
+      gotCap: gwPicks[0]?.gotCap || [...starting].filter(p => p.positionId !== 1).sort((a, b) => b[key] - a[key]).slice(0, 2),
       gwPicks,
-      solver: "ILP"
+      solver: "ILP",
+      key
     };
   } catch (e) {
     console.warn('[VG] ILP solve failed:', e.message, '- falling back to greedy');
-    return VG.optimizeDraft(players, budget, fixtures, startGW, nGWs);
+    return VG.optimizeDraft(players, budget, fixtures, startGW, nGWs, opts);
   }
 };
+
+// ── Chip Team Generators: FREE HIT + WILDCARD ─────────────────────────
+// Top FPL tools (FFHub, FFix) give you an "optimal WC/FH team" to plan your
+// chips against. A Wildcard rebuilds your squad for the whole horizon; a Free
+// Hit is a single-gameweek team (unlimited transfers, no team-value build) so
+// it must be optimised for THAT GW's points, not the season average.
+
+// Reusable filter: applies user constraints (avoidTeams/maxPrice/minEO/...)
+// to the candidate pool feeding the chip optimizers.
+VG.filterPool = (players, opts = {}) => {
+  const c = opts.constraints || {};
+  return players.filter(p => VG.isAvailable(p) && VG.validTransfer(p, c));
+};
+
+// Free Hit: optimise the next GW only. Attach a fresh gwXP to each player
+// (ranked by that GW's fixtures), then run the ILP with key "gwXP".
+VG.generateFreeHit = async (players, budget, fixtures, gw, horizon, opts = {}) => {
+  const clones = VG.filterPool(players, opts)
+    .map(p => {
+      const proj = VG.computePlayerGWProjection(p, gw, fixtures);
+      return Object.assign({}, p, {
+        gwXP: proj.gwXP,
+        gwOpp: proj.oppName,
+        gwVenue: proj.venue,
+        gwFDR: proj.fdr
+      });
+    });
+  const made = await VG.optimizeDraftILP(clones, budget, fixtures, gw, horizon || 1, Object.assign({}, opts, { key: "gwXP" }));
+  made.mode = "free_hit";
+  made.chip = "Free Hit";
+  return made;
+};
+
+// Wildcard: rebuild the squad for the horizon (same as an optimal draft, but
+// labelled as the chip so users can compare it to their current team). Users
+// can pass constraints (avoidTeams/maxPrice...) to shape the rebuilt squad.
+VG.generateWildcard = async (players, budget, fixtures, gw, horizon, opts = {}) => {
+  const pool = VG.filterPool(players, opts);
+  const made = await VG.optimizeDraftILP(pool, budget, fixtures, gw, horizon, opts);
+  made.mode = "wildcard";
+  made.chip = "Wildcard";
+  return made;
+};
+
 VG.STRATEGIES = {
   balanced: { name: "Balanced", desc: "Maximize total xP within budget", icon: "⚖️" },
   premium: { name: "Premium Heavy", desc: "Stack elite players, accept weaker bench", icon: "💎" },
@@ -2217,9 +2268,34 @@ VG.optimizeStrategies = (players, budget = 100, fixtures = [], startGW = 1, nGWs
   return results;
 };
 
-VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGWs) => {
+// User-tunable transfer constraints (FFHub "transfer preferences" idea).
+// Each field is optional; omit to leave unrestricted. Fields:
+//   maxTransfers {number}     hard cap on how many trades to make total
+//   maxPrice     {number}     don't buy anyone priced above this (£m)
+//   minPrice     {number}     don't buy anyone priced below this (£m)
+//   avoidTeams   [teamId]     never buy into these teams
+//   targetTeams  [teamId]     only buy from these teams (empty = any)
+//   avoidPositions [posId]    never buy this position
+//   minEO / maxEO {percent}   only buy players within this EO band
+//   minXP {number}            only consider upgrades whose total xP exceeds
+//                             the incumbent by at least this much
+VG.buildDefaultConstraints = () => ({});
+VG.validTransfer = (p, c) => {
+  if (!c) return true;
+  if (c.maxPrice != null && p.price > c.maxPrice) return false;
+  if (c.minPrice != null && p.price < c.minPrice) return false;
+  if (c.avoidTeams && c.avoidTeams.length && c.avoidTeams.includes(p.teamId)) return false;
+  if (c.targetTeams && c.targetTeams.length && !c.targetTeams.includes(p.teamId)) return false;
+  if (c.avoidPositions && c.avoidPositions.length && c.avoidPositions.includes(p.positionId)) return false;
+  if (c.minEO != null && (p.eo || 0) < c.minEO) return false;
+  if (c.maxEO != null && (p.eo || 0) > c.maxEO) return false;
+  return true;
+};
+
+VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGWs, constraints) => {
   startGW = startGW || 1;
   nGWs = nGWs || 5;
+  constraints = constraints || {};
 
   const currentIds = new Set(currentSquad.map(p => p.element));
   const candidates = [];
@@ -2232,9 +2308,10 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGW
     const pos = cXP.positionId;
     const upgrades = players.filter(p =>
       p.id !== pid && !currentIds.has(p.id) && VG.isAvailable(p) &&
+      VG.validTransfer(p, constraints) &&
       p.positionId === pos &&
       p.price <= cPrice + bank + 0.1 &&
-      p.totalXP > cXP.totalXP + 1.0
+      p.totalXP > cXP.totalXP + (constraints.minXP != null ? constraints.minXP : 1.0)
     ).sort((a, b) => (b.totalXP - b.price) - (a.totalXP - a.price));
 
     if (upgrades.length > 0) {
@@ -2258,15 +2335,56 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGW
 
   candidates.sort((a, b) => b.netGain - a.netGain);
 
-  // Phase 1: Only use free transfers (no hits)
+  // Phase 0: FORCED replacement — when a current-squad player is unavailable
+  // (injured, suspended, left the league), ALWAYS recommend a same-position
+  // replacement that fits the budget, even if the XP gain is negative. This
+  // prevents dead players from lingering in the squad with zero transfers
+  // recommended. Runs before the value-upgrade pass so forced moves are always
+  // prioritised over speculative upgrades.
   const outPlayers = [];
   const inPlayers = [];
   let spent = 0;
-  const usedIds = new Set();      // incoming ids already selected
-  const soldIds = new Set();      // outgoing ids already sold
+  const usedIds = new Set();
+  const soldIds = new Set();
+  const cap = constraints.maxTransfers != null
+    ? Math.min(freeTransfers, constraints.maxTransfers)
+    : freeTransfers;
+  const hitDetails = [];
+
+  for (const sp of currentSquad) {
+    if (outPlayers.length >= cap) break;
+    const pid = sp.element;
+    if (soldIds.has(pid)) continue;
+    const cXP = players.find(p => p.id === pid);
+    if (!cXP) continue;
+    if (VG.isAvailable(cXP)) continue; // only force-move unavailable players
+    const cPrice = (sp.selling_price || sp.now_cost || 0) / 10;
+    const pos = cXP.positionId;
+    const replacements = players.filter(p =>
+      p.id !== pid && !currentIds.has(p.id) && !usedIds.has(p.id) &&
+      VG.isAvailable(p) &&
+      VG.validTransfer(p, constraints) &&
+      p.positionId === pos &&
+      p.price <= cPrice + bank + 0.1
+    ).sort((a, b) => (b.totalXP - b.price) - (a.totalXP - a.price));
+    if (replacements.length > 0) {
+      const best = replacements[0];
+      const cost = +(best.price - cPrice).toFixed(1);
+      const gain = +(best.totalXP - cXP.totalXP).toFixed(1);
+      outPlayers.push({ id: pid, name: sp.web_name || "?", position: VG.POSITIONS[pos], price: cPrice, totalXP: cXP.totalXP });
+      inPlayers.push({ id: best.id, name: best.name, position: best.position, price: best.price, totalXP: best.totalXP });
+      spent += cost;
+      usedIds.add(best.id);
+      soldIds.add(pid);
+      hitDetails.push({ name: best.name, breakEvenGWs: 0, gwAvgGain: gain, forced: true });
+    }
+  }
+
+  // Phase 1: Value upgrades — only use free transfers (no hits) beyond the
+  // forced replacements already made. Respect the user's hard cap.
 
   for (const c of candidates) {
-    if (outPlayers.length >= freeTransfers) break;
+    if (outPlayers.length >= cap) break;
     if (usedIds.has(c.in.id)) continue;
     if (spent + c.cost > bank + 0.1) continue;
     outPlayers.push(c.out);
@@ -2288,8 +2406,8 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGW
   }
 
   let hitTransfers = 0;
-  const hitDetails = [];
   for (const c of hitCandidates) {
+    if (outPlayers.length >= cap) break;
     if (spent + c.cost > bank + 0.1) continue;
     outPlayers.push(c.out);
     inPlayers.push(c.in);
@@ -2301,14 +2419,21 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGW
   }
 
   const hits = hitTransfers * 4;
+  const forcedDetails = hitDetails.filter(h => h.forced);
+  const hitOnlyDetails = hitDetails.filter(h => !h.forced);
 
   return {
     mode: "transfer", transfersIn: inPlayers, transfersOut: outPlayers,
     hitCost: hits, recommendedTransfers: outPlayers.length,
     freeTransfersUsed: Math.min(outPlayers.length, freeTransfers),
     hitDetails,
-    hitWarning: hits > 0
-      ? `${hitTransfers} hit(s) = -${hits} pts. Break-even: ${hitDetails.map(h => `${h.name} in ~${h.breakEvenGWs} GWs (${h.gwAvgGain} pts/GW)`).join('; ')}.`
+    hitWarning: forcedDetails.length > 0 || hitOnlyDetails.length > 0
+      ? (forcedDetails.length > 0
+          ? `🚨 Forced out: ${forcedDetails.map(h => h.name).join(', ')} (unavailable — replaced to avoid blank).`
+          : '') +
+        (hits > 0
+          ? ` ${hitTransfers} hit(s) = -${hits} pts. Break-even: ${hitOnlyDetails.map(h => `${h.name} in ~${h.breakEvenGWs} GWs (${h.gwAvgGain} pts/GW)`).join('; ')}.`
+          : '')
       : null
   };
 };
@@ -2371,6 +2496,13 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
         else if (capGWXP >= 9.0 && capFDR <= 3) tcScore = 82;
       }
     }
+
+    // ── TC guard: never recommend TC on a broken squad ──
+    // If any player in the starting XI or bench is unavailable (injured,
+    // suspended, left the league) and hasn't been transferred out, zero the
+    // TC score — the squad needs surgery before chips make sense.
+    const brokenCount = squad.filter(p => !VG.isAvailable(p)).length;
+    if (brokenCount > 0) tcScore = 0;
 
     // ── BB Score ──
     // BB is ONLY good on DGW when bench players also have doubles.

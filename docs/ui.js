@@ -108,6 +108,42 @@ VG.run = async () => {
 
     const allXP = VG.computeAllXP(gw, horizon, VG.allFixtures);
 
+    // Populate the "avoid teams" datalist from team short-codes (built once).
+    const fillTeamCodes = () => {
+      const dl = el("teamCodes");
+      if (!dl || dl.childElementCount > 0) return;
+      Object.values(VG.teams || {}).forEach(t => {
+        const opt = document.createElement("option");
+        opt.value = t.short_name;
+        dl.appendChild(opt);
+      });
+    };
+    fillTeamCodes();
+
+    // Translate the sidebar "Advanced" inputs into a constraints object that
+    // shapes both the transfer optimizer and the chip team generators. Team
+    // codes (e.g. "MCI") are resolved to numeric IDs because validTransfer
+    // compares against p.teamId (numeric).
+    const codeToId = (code) => {
+      if (!code) return null;
+      const t = Object.values(VG.teams || {}).find(t => t.short_name === code);
+      return t ? t.id : null;
+    };
+    const buildConstraints = () => ({
+      maxTransfers: el("maxTransfers").value ? parseInt(el("maxTransfers").value) : null,
+      maxPrice: el("maxBuyPrice").value ? parseFloat(el("maxBuyPrice").value) : null,
+      minEO: el("minEO").value ? parseFloat(el("minEO").value) : null,
+      avoidTeams: el("avoidTeams").value
+        ? el("avoidTeams").value.split(",").map(s => codeToId(s.trim())).filter(Number)
+        : []
+    });
+    const constraints = buildConstraints();
+
+    // Handler: whether the user asked for a Free Hit (single-GW optimal team)
+    // or Wildcard (full horizon rebuild) via the Chip Generator dropdown.
+    const chipMode = el("chipMode").value;
+    const budgetChip = bankOverride !== null ? bankOverride : 100;
+
     // Draft builder shared by the no-team path AND the fallback when a real
     // squad can't be loaded (e.g. GW1 picks don't exist until the deadline
     // passes — the API 404s). Keeps "team ID + GW1" working all week.
@@ -128,7 +164,37 @@ VG.run = async () => {
     };
 
     let result;
-    if (teamId <= 0) {
+    // Chip generators (Free Hit / Wildcard) take priority over the normal
+    // transfer/draft flow — they rebuild an optimal team, not incremental trades.
+    // They only need the player pool + bank, so a squad fails to load → use the
+    // default budget rather than erroring out (robust for pre-deadline GWs).
+    const loadChipBank = async () => {
+      if (bankOverride !== null) return bankOverride;
+      if (teamId <= 0) return 100;
+      try {
+        const d = await VG.loadSquad(teamId, gw);
+        VG.detectPrimaryLeague(d.info);
+        return (d.info.last_deadline_bank || 0) / 10;
+      } catch (e) {
+        console.warn("[VG] chip mode: squad load failed, using default bank", e && e.message);
+        return 100;
+      }
+    };
+    if (chipMode === "free_hit") {
+      const bank = await loadChipBank();
+      const made = await VG.generateFreeHit(allXP, bank, VG.allFixtures, gw, 1, { constraints });
+      const chips = VG.evaluateChips(made.squad, made.gwPicks, VG.allFixtures);
+      result = { ...made, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0,
+        gwTotalXP: made.gwPicks?.[0]?.gwTotalXP || 0, gotCap: made.gotCap, gwPicks: made.gwPicks,
+        squad: made.squad, mode: "free_hit", chip: "Free Hit" };
+    } else if (chipMode === "wildcard") {
+      const bank = await loadChipBank();
+      const made = await VG.generateWildcard(allXP, bank, VG.allFixtures, gw, horizon, { constraints });
+      const chips = VG.evaluateChips(made.squad, made.gwPicks, VG.allFixtures);
+      result = { ...made, chipAdvice: chips, transfersIn: [], transfersOut: [], hitCost: 0,
+        gwTotalXP: made.gwPicks?.[0]?.gwTotalXP || 0, gotCap: made.gotCap, gwPicks: made.gwPicks,
+        squad: made.squad, mode: "wildcard", chip: "Wildcard" };
+    } else if (teamId <= 0) {
       result = await buildDraft();
     } else {
       try {
@@ -137,7 +203,7 @@ VG.run = async () => {
         const currentSquad = squadData.picks.picks;
         const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
         const freeTransfers = parseInt(el("freeTransfers").value);
-        const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, gw, 5);
+        const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, gw, 5, constraints);
         const transferOutIds = new Set(transferResult.transfersOut.map(p => p.id));
         const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
         const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
@@ -204,6 +270,20 @@ VG.run = async () => {
       html += `<div style="margin:14px 0;padding:12px;border:1px solid rgba(251,191,36,0.4);border-radius:12px;background:rgba(251,191,36,0.08);">
         <div style="font-size:0.78rem;font-weight:700;color:#fbbf24;margin-bottom:4px;">⚠️ This is an OPTIMAL DRAFT, not your actual squad</div>
         <div style="font-size:0.72rem;color:#e2e8f0;">There are no FPL picks on record for GW${VG.esc(String(gw))} yet (the deadline hasn't passed / FPL hasn't published them), so we couldn't load your real team for that week. The squad below is the optimizer's recommended line-up from scratch. To analyze your <b>actual</b> squad, select a GW whose deadline has passed (e.g. GW1).</div>
+      </div>`;
+    }
+
+    // Chip-team banner: a Free Hit / Wildcard rebuild is a projected squad, not
+    // the user's current team — make that unmistakable so it's never read as a
+    // real squad or a done transfer.
+    if (result.mode === "free_hit" || result.mode === "wildcard") {
+      const chipName = result.mode === "free_hit" ? "FREE HIT" : "WILDCARD";
+      const chipDesc = result.mode === "free_hit"
+        ? `This is a projected FREE HIT team built for GW${VG.esc(String(gw))} only — single-gameweek optimisation, no team value built, squad reverts after the GW.`
+        : `This is a projected WILDCARD rebuild optimised across the next ${VG.esc(String(horizon))} GWs. When you activate your wildcard you can replicate this squad.`;
+      html += `<div style="margin:14px 0;padding:12px;border:1px solid rgba(251,191,36,0.4);border-radius:12px;background:rgba(251,191,36,0.08);">
+        <div style="font-size:0.78rem;font-weight:700;color:#fbbf24;margin-bottom:4px;">🎯 ${chipName} team — projected, not your current squad</div>
+        <div style="font-size:0.72rem;color:#e2e8f0;">${chipDesc}</div>
       </div>`;
     }
 
@@ -305,7 +385,7 @@ VG.run = async () => {
     html += VG.render.rateMyTeam(result, VG.allXP, VG.allFixtures, gw);
 
     // Transfer Roadmap: per-GW fixture grid + recommendations
-    if (result.mode === "draft" && result.squad?.length >= 11) {
+    if ((result.mode === "draft" || result.mode === "free_hit" || result.mode === "wildcard") && result.squad?.length >= 11) {
       const roadmap = VG.computeTransferRoadmap(result.squad, allXP, VG.allFixtures, parseInt(el("gameweek").value), 5);
       if (roadmap && roadmap.length > 0) {
         html += '<div class="section-title" style="margin-top:24px;">Transfer Roadmap <span style="color:#475569;font-size:0.65rem;font-weight:400;margin-left:4px;">fixture outlook + swap suggestions</span></div>';

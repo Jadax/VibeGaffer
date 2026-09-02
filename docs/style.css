@@ -46,6 +46,10 @@ a { color: #00ff87; text-decoration: none; }
 .sidebar input:focus, .sidebar select:focus { border-color: #00ff87; box-shadow: 0 0 0 3px rgba(0,255,135,0.08); }
 .sidebar select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2364748b'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
 .sidebar select option { background: #111827; color: #e2e8f0; }
+.sidebar-more { margin-top: 12px; border: 1px dashed rgba(255,255,255,0.08); border-radius: 10px; padding: 8px 10px; }
+.sidebar-more summary { color: #64748b; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; cursor: pointer; outline: none; }
+.sidebar-more summary:hover { color: #e2e8f0; }
+.sidebar-more input[type="text"] { margin-bottom: 4px; }
 .sidebar button { width: 100%; margin-top: 16px; background: linear-gradient(135deg, #00ff87, #00cc6a); color: #06060e; border: none; border-radius: 12px; padding: 12px; font-weight: 800; font-size: 0.85rem; cursor: pointer; transition: all 0.2s; letter-spacing: 0.3px; }
 .sidebar button:hover { transform: translateY(-1px); box-shadow: 0 8px 25px rgba(0,255,135,0.25); }
 .sidebar button:active { transform: translateY(0); }

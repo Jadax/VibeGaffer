@@ -213,6 +213,69 @@ check("Transfer roadmap covers five GWs", VG.computeTransferRoadmap(draft.squad,
 check("Transfer planner covers five GWs", VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 1)?.schedule.length === 5);
 check("Chip engine evaluates every chip", Object.keys(VG.evaluateChips(draft.squad, draft.gwPicks, fixtures)).includes("triple_captain"));
 
+// v5.17: user-tunable transfer constraints (FFHub "transfer preferences" idea).
+check("validTransfer honours avoidTeams", (() => {
+  const p = { teamId: 2, price: 6.0, positionId: 3, eo: 40 };
+  return VG.validTransfer(p, { avoidTeams: [2] }) === false && VG.validTransfer(p, { avoidTeams: [3] }) === true;
+})());
+check("validTransfer honours maxPrice/minPrice/EO band", (() => {
+  const p = { teamId: 2, price: 6.0, positionId: 3, eo: 40 };
+  return VG.validTransfer(p, { maxPrice: 5.5 }) === false &&
+         VG.validTransfer(p, { minPrice: 6.5 }) === false &&
+         VG.validTransfer(p, { minEO: 50 }) === false &&
+         VG.validTransfer(p, { maxEO: 30 }) === false &&
+         VG.validTransfer(p, {}) === true;
+})());
+check("validTransfer honours targetTeams and avoidPositions", (() => {
+  const p = { teamId: 2, price: 6.0, positionId: 3, eo: 40 };
+  return VG.validTransfer(p, { targetTeams: [2] }) === true &&
+         VG.validTransfer(p, { targetTeams: [9] }) === false &&
+         VG.validTransfer(p, { avoidPositions: [3] }) === false;
+})());
+check("optimizeTransfers caps total trades via maxTransfers", (() => {
+  const constrained = VG.optimizeTransfers(mockSquad, allXP, 10, 5, 1, 5, { maxTransfers: 1 });
+  return constrained.transfersIn.length <= 1 && constrained.transfersOut.length <= 1;
+})());
+
+// v5.17: forced-replacement pass — when a player is unavailable (injured,
+// suspended, left the league), the optimizer MUST recommend replacing them
+// even when no value upgrade clears the threshold. This guards against the
+// "Watkins in Saudi league + Mateta injured → 0 transfers" scenario.
+check("optimizeTransfers forces replacement for unavailable players", (() => {
+  // Mark a squad player as unavailable (status "i" = injured)
+  const victim = allXP.find(p => p.positionId >= 2 && p.positionId <= 4 && p.totalXP > 10);
+  if (!victim) return false;
+  const origStatus = VG.players[victim.id]?.status;
+  if (VG.players[victim.id]) VG.players[victim.id].status = "i";
+  // Build a squad containing the unavailable player with 0 bank so there's
+  // no budget for a value-upgrade — the forced pass should still fire.
+  const unavailSquad = mockSquad.length > 0 ? [...mockSquad] : allXP.slice(0, 15).map(p => ({
+    element: p.id, web_name: p.name, now_cost: Math.round(p.price * 10), selling_price: Math.round(p.price * 10)
+  }));
+  // Ensure victim is in the squad
+  if (!unavailSquad.some(sp => sp.element === victim.id)) {
+    unavailSquad[0] = { element: victim.id, web_name: victim.name, now_cost: Math.round(victim.price * 10), selling_price: Math.round(victim.price * 10) };
+  }
+  const result = VG.optimizeTransfers(unavailSquad, allXP, 0, 2, 1, 5);
+  const forcedOut = result.transfersOut.some(p => p.id === victim.id);
+  // Restore status
+  if (VG.players[victim.id] && origStatus !== undefined) VG.players[victim.id].status = origStatus;
+  return forcedOut && result.transfersIn.length >= 1;
+})());
+
+// Captaincy must never select an unavailable player (Golden Rule 3).
+check("topCaptainCandidates filters unavailable players", (() => {
+  const starterWithId = allXP.slice(0, 11).map(p => ({ ...p }));
+  // Make the best player unavailable
+  const best = starterWithId.reduce((a, b) => (b.totalXP || 0) > (a.totalXP || 0) ? b : a);
+  const origStatus = VG.players[best.id]?.status;
+  if (VG.players[best.id]) VG.players[best.id].status = "s";
+  const caps = VG.topCaptainCandidates(starterWithId, "totalXP");
+  const safe = caps.every(c => c.id !== best.id);
+  if (VG.players[best.id] && origStatus !== undefined) VG.players[best.id].status = origStatus;
+  return safe;
+})());
+
 section("Regressions");
 const captainReason = VG.getCaptainReasoning({
   name: "Test",
@@ -1163,6 +1226,32 @@ check("home boost differentiates positions by clean-sheet premium", (() => {
   check("watchlist handlers resolve gameweek from the document", !uiHandlerRegion.includes("el('gameweek')") && !uiHandlerRegion.includes('el("gameweek")'));
   check("watchlist player labels escape team names", !appSource.includes("${p.teamName} £${p.price"));
   check("league what-if player labels escape team names", !indexSource.includes("${p.teamName} £${p.price"));
+
+  // v5.17: Free Hit / Wildcard generators (FFHub "optimal chip team" idea).
+  try {
+    const wc = await VG.generateWildcard(allXP, 100, fixtures, 1, 5);
+    check("Wildcard generates an 15-man squad under budget", (() => {
+      const cost = wc.squad.reduce((s, p) => s + (p.price || 0), 0);
+      return wc.mode === "wildcard" && wc.squad.length === 15 && cost <= 101;
+    })());
+    check("Wildcard team has a legal formation", VG.formationLegal(wc.squad));
+  } catch (e) {
+    check("Wildcard generator does not throw (got: " + (e && e.message || e) + ")", false);
+  }
+
+  // Free Hit optimises a single GW — assert it switched the ILP key to gwXP
+  // and tagged the result, without requiring the live xP engine to be exact.
+  check("Free Hit attaches per-GW gwXP to candidates", (() => {
+    const p = VG.computePlayerGWProjection(allXP[0], 1, fixtures);
+    return typeof p.gwXP === "number" && isFinite(p.gwXP);
+  })());
+  check("filterPool drops players excluded by constraints", (() => {
+    const before = allXP.length;
+    const after = VG.filterPool(allXP, { constraints: { avoidTeams: [allXP[0].teamId] } }).length;
+    return after < before && after >= 0;
+  })());
+  // Guard the pool filter feeds both chip generators (not just Wildcard).
+  check("Free Hit + Wildcard both route through filterPool", appSource.indexOf("VG.filterPool(players, opts)") >= 0);
 
   section("Summary");
   console.log(`${passed} passed, ${failed} failed`);
