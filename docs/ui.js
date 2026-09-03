@@ -386,15 +386,28 @@ VG.run = async () => {
       // Chip Opportunity Timeline: per-GW score bars
       const gwScores = result.chipAdvice.gwScores;
       if (gwScores && gwScores.length > 1) {
+        // Anchor each "PLAY" recommendation to its specific GW: collect the
+        // bestGW of every chip that is currently recommended, so the timeline
+        // highlights ONLY that week (not every week the player is captained).
+        const recBestGWs = [];
+        [result.chipAdvice.triple_captain, result.chipAdvice.bench_boost, result.chipAdvice.wildcard, result.chipAdvice.free_hit]
+          .forEach(c => { if (c && c.recommend && c.bestGW != null) recBestGWs.push(c.bestGW); });
         html += '<div style="margin-top:16px;font-size:0.72rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Chip Opportunity Timeline</div>';
         html += '<div style="display:grid;grid-template-columns:repeat(' + gwScores.length + ',1fr);gap:6px;margin-top:8px;">';
         gwScores.forEach(gs => {
           const isDGW = gs.isDGW;
           const isBGW = gs.isBGW;
           const gwLabel = 'GW' + gs.gw;
-          const dgwTag = isDGW ? '<span style="color:#fbbf24;font-size:0.55rem;">DGW</span>' : isBGW ? '<span style="color:#ef4444;font-size:0.55rem;">BGW</span>' : '';
-          html += `<div style="background:${isDGW ? 'rgba(251,191,36,0.08)' : isBGW ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.02)'};border-radius:6px;padding:8px 6px;text-align:center;">`;
-          html += `<div style="font-weight:700;color:#e2e8f0;font-size:0.7rem;">${gwLabel}</div>`;
+          // Only the recommended weeks get highlighted (green glow, matching the
+          // active chip card) — leave every other GW subtle so the target week
+          // is unmistakable.
+          const isRecommended = recBestGWs.includes(gs.gw);
+          const dgwTag = isDGW ? '<span style="color:#fbbf24;font-size:0.55rem;">DGW</span>' : isBGW ? '<span style="color:#ef4444;font-size:0.55rem;">BGW</span>' : isRecommended ? '<span style="color:#00ff87;font-weight:800;font-size:0.55rem;">PLAY</span>' : '';
+          const cellStyle = isRecommended
+            ? 'background:rgba(0,255,135,0.10);border:1px solid rgba(0,255,135,0.45);box-shadow:0 0 12px rgba(0,255,135,0.18);'
+            : `background:${isDGW ? 'rgba(251,191,36,0.08)' : isBGW ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.02)'};border:1px solid transparent;`;
+          html += `<div style="${cellStyle}border-radius:6px;padding:8px 6px;text-align:center;">`;
+          html += `<div style="font-weight:700;color:${isRecommended ? '#00ff87' : '#e2e8f0'};font-size:0.7rem;">${gwLabel}</div>`;
           html += dgwTag;
           // TC bar
           const tcH = Math.max((gs.tcScore / 100) * 40, 2);

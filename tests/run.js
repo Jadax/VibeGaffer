@@ -1046,12 +1046,29 @@ check("congestion multiplier defaults to no penalty with no fixtures", VG.conges
 check("heavy rotators are flagged in the set", VG.HEAVY_ROTATORS.has("MCI") && VG.HEAVY_ROTATORS.has("ARS"));
 check("congestion multiplier is <= 1.0 for any team/gw", VG.congestionMultiplier(fixtures, 1, 1) <= 1.0 + 0.01);
 
-// Three-phase early-season confidence
+// Three-phase early-season confidence: with a healthy sample, mid-season
+// (GW >= 6) has higher dataConfidence than the capped GW1-3 window, so a fully
+// established player should project more output later in the season. Synthetic
+// (not live-data id 1, which has no games and trips the ep_next level anchor)
+// so the confidence channel genuinely drives the comparison.
+const estFid = 999992;
+VG.players[estFid] = {
+  id: estFid, element_type: 4, minutes: 850, starts: 10, goals_scored: 4,
+  assists: 2, clean_sheets: 0, saves: 0, bonus: 12, yellow_cards: 1,
+  red_cards: 0, own_goals: 0, penalties_missed: 0, points_per_game: "5.5",
+  form: "6.0", bps: 120, influence: "200.0", creativity: "120.0", threat: "180.0",
+  expected_goals: "4.5", expected_assists: "2.2", expected_goal_involvements: "6.7",
+  expected_goals_conceded: "0.0", expected_goals_per_90: "0.48",
+  expected_assists_per_90: "0.23", clean_sheets_per_90: "0.0",
+  defensive_contribution_per_90: "0.0", ep_next: "5.5", value_form: "0.1",
+  team: 2, now_cost: 85, code: estFid, status: "a", chance_of_playing_next_round: 100
+};
 VG._projGW = 1;
-const gw1Res = VG.computeFixtureXP(1, 2, true, 2);
+const gw1Res = VG.computeFixtureXP(estFid, 10, true, 2);
 VG._projGW = 10;
-const gw10Res = VG.computeFixtureXP(1, 2, true, 2);
+const gw10Res = VG.computeFixtureXP(estFid, 10, true, 2);
 VG._projGW = null;
+delete VG.players[estFid];
 check("early-season xP is more conservative (lower or equal) than mid-season", gw1Res.xp <= gw10Res.xp + 0.5);
 
 // VC blank discount: a VC with high blank risk reduces insurance value
@@ -1098,19 +1115,30 @@ check("fixtureGapDays is a function", typeof VG.fixtureGapDays === "function");
 // DEF at 47 xP while Haaland sat at rank 118.
 section("Small-sample robustness: shrinkage, caps, ep anchor");
 (() => {
-  const hauler = Object.values(VG.players).find(p =>
-    p.element_type === 2 && (p.minutes || 0) > 0 && (p.minutes || 0) <= 90 &&
-    (parseFloat(p.expected_goals || "0") >= 1.0 || (p.goals_scored || 0) >= 1));
-  if (hauler) {
-    VG._projGW = 1;
-    const r = VG.computeFixtureXP(hauler.id, 10, true, 2);
-    VG._projGW = null;
-    check("one-game hauler stays under the positional goal cap", r.goalProb <= 0.35 + 1e-9);
-    check("one-game hauler xP is sane (under 6)", r.xp < 6);
-  } else {
-    check("one-game hauler stays under the positional goal cap", false);
-    check("one-game hauler xP is sane (under 6)", false);
-  }
+  // Deterministic synthetic one-game DEF hauler: 1 goal + 1.4 xG from a single
+  // 90-minute game. Without shrinkage this would extrapolate to ~1.4 xG/90 and
+  // hit a goal-prob ceiling every fixture; the Bayesian priors must pull it back
+  // under the positional cap. Synthetic (not a live-data search) so the check
+  // always runs regardless of the current data state.
+  const fid = 999991;
+  VG.players[fid] = {
+    id: fid, element_type: 2, minutes: 90, starts: 1, goals_scored: 1,
+    assists: 0, clean_sheets: 0, saves: 0, bonus: 3, yellow_cards: 0,
+    red_cards: 0, own_goals: 0, penalties_missed: 0, points_per_game: "9.0",
+    form: "9.0", bps: 30, influence: "80.0", creativity: "20.0", threat: "60.0",
+    expected_goals: "1.4", expected_assists: "0.0", expected_goal_involvements: "1.4",
+    expected_goals_conceded: "1.0", expected_goals_per_90: "1.4",
+    expected_assists_per_90: "0.0", clean_sheets_per_90: "0.0",
+    defensive_contribution_per_90: "2.0", ep_next: "3.0", value_form: "0.0",
+    team: 2, now_cost: 45, code: fid, status: "a",
+    chance_of_playing_next_round: 100
+  };
+  VG._projGW = 1;
+  const r = VG.computeFixtureXP(fid, 10, true, 2);
+  VG._projGW = null;
+  delete VG.players[fid];
+  check("one-game hauler stays under the positional goal cap", r.goalProb <= 0.35 + 1e-9);
+  check("one-game hauler xP is sane (under 6)", r.xp < 6);
   // A 1/1 starter must read as a near-weekly starter (the old max(games,5)
   // floor divided 1 start by 5 and projected Haaland at 40 xMins).
   const starter = Object.values(VG.players).find(p => (p.starts || 0) === 1 && (p.minutes || 0) >= 60 && (p.element_type || 0) !== 1);
