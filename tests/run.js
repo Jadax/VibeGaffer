@@ -213,6 +213,19 @@ check("Transfer roadmap covers five GWs", VG.computeTransferRoadmap(draft.squad,
 check("Transfer planner covers five GWs", VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 1)?.schedule.length === 5);
 check("Chip engine evaluates every chip", Object.keys(VG.evaluateChips(draft.squad, draft.gwPicks, fixtures)).includes("triple_captain"));
 
+// v5.17.5: chip advice must never claim a Double Gameweek that isn't there.
+// A captain with a big SINGLE fixture can trigger TC via the non-DGW
+// exception, so the tip/reason must say so rather than "Double Gameweek".
+const nonDgwPicks = [{ gw: 1, gotCap: [{ id: 1, name: "Test Mgr", gwXP: 9.2, gwFDR: 2, teamId: 1 }], bench: [], gwBenchXP: 0 }];
+const tcNonDgw = VG.evaluateChips(draft.squad, nonDgwPicks, fixtures).triple_captain;
+check("non-DGW TC recommendation still fires on an elite single fixture", tcNonDgw.recommend);
+check("non-DGW TC tip never claims a double gameweek", !/Double Gameweek/i.test(tcNonDgw.tip));
+check("non-DGW TC reason marks the single fixture", /single fixture/i.test(tcNonDgw.reason));
+const tcDgwFixtures = fixtures.map(f => f.event === 1 ? { ...f, id: f.id + 99999 } : f).concat(fixtures.filter(f => f.event === 1));
+const tcDgwPicks = [{ gw: 1, gotCap: [{ id: 1, name: "Test Mgr", gwXP: 6.0, gwFDR: 2, teamId: 1 }], bench: [], gwBenchXP: 0 }];
+const tcDgw = VG.evaluateChips(draft.squad, tcDgwPicks, tcDgwFixtures).triple_captain;
+check("DGW TC recommendation claims a double gameweek", tcDgw.recommend && /Double Gameweek/i.test(tcDgw.tip));
+
 // v5.17: user-tunable transfer constraints (FFHub "transfer preferences" idea).
 check("validTransfer honours avoidTeams", (() => {
   const p = { teamId: 2, price: 6.0, positionId: 3, eo: 40 };

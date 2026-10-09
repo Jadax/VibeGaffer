@@ -2597,17 +2597,20 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
   const WC_THRESHOLD = 50;
   const FH_THRESHOLD = 35;
 
+  const tcRec = tcBest.tcScore >= TC_THRESHOLD;
   return {
     triple_captain: {
-      recommend: tcBest.tcScore >= TC_THRESHOLD,
+      recommend: tcRec,
       bestGW: tcBest.gw,
       score: tcBest.tcScore,
-      reason: tcBest.tcScore >= TC_THRESHOLD
-        ? `GW${tcBest.gw}: ${tcBest.capName} ${tcBest.capIsDGW ? "(DGW!) " : ""}xP ${tcBest.capGWXP.toFixed(1)} · FDR ${tcBest.capFDR}`
+      reason: tcRec
+        ? `GW${tcBest.gw}: ${tcBest.capName} ${tcBest.capIsDGW ? "(DGW!) " : "(single fixture) "}xP ${tcBest.capGWXP.toFixed(1)} · FDR ${tcBest.capFDR}`
         : `No DGW trigger, save for a Double Gameweek`,
-      tip: tcBest.tcScore >= TC_THRESHOLD
-        ? "Double Gameweek captain, high ceiling play"
-        : "TC doubles your captain's points. Only play when your captain has TWO fixtures (DGW) against weak opponents. Classic timing: GW36-37."
+      tip: !tcRec
+        ? "TC doubles your captain's points. Only play when your captain has TWO fixtures (DGW) against weak opponents. Classic timing: GW36-37."
+        : tcBest.capIsDGW
+          ? "Double Gameweek captain, high ceiling play"
+          : "Your captain has a big SINGLE fixture (no double) — aggressive; ideally hold TC for a true DGW."
     },
     bench_boost: {
       recommend: bbBest.bbScore >= BB_THRESHOLD,
@@ -2638,9 +2641,11 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
       reason: fhBest.fhScore >= FH_THRESHOLD
         ? `GW${fhBest.gw}: ${fhBest.isBGW ? "Blank GW, many teams out" : `DGW with ${fhBest.dgwTeams?.length || 0} double teams`}`
         : `No BGW/DGW trigger, save for a Blank Gameweek`,
-      tip: fhBest.fhScore >= FH_THRESHOLD
-        ? "Blank Gameweek, use FH to field 11 without hits"
-        : "FH lets you pick any 15 players for one week. Best on BGWs. Also powerful in GW38 for differential sprint to win mini-league."
+      tip: fhBest.fhScore < FH_THRESHOLD
+        ? "FH lets you pick any 15 players for one week. Best on BGWs. Also powerful in GW38 for differential sprint to win mini-league."
+        : fhBest.isBGW
+          ? "Blank Gameweek, use FH to field 11 without hits"
+          : `Double Gameweek — load up on the ${fhBest.dgwTeams?.length || 0} doubling teams`
     },
     gwScores
   };
