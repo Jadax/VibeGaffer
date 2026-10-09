@@ -760,7 +760,10 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   const penMissPerGame = shrinkPg(penMiss, 0.02);
 
   // ── Enhanced form: exponential weighting to amplify hot/cold streaks ──
-  const formVsPPG = ppg > 0 ? form / ppg : 1.0;
+  // Clamp form at 0: the feed can emit a negative form (e.g. a 30-day points
+  // window net of hits), and Math.pow(negative, 0.7) is NaN — which cascaded
+  // through trendMult into a NaN totalXP for the affected players.
+  const formVsPPG = ppg > 0 ? Math.max(form, 0) / ppg : 1.0;
   const epNextSignal = epNext > 0 && ppg > 0 ? Math.min(epNext / ppg, 1.5) : 1.0;
   const valueFormBoost = valueForm > 0 ? Math.min(1.0 + valueForm * 0.02, 1.15) : 1.0;
   // Exponential form: hot streaks (form/ppg > 1) amplified, cold streaks penalized more.
@@ -1639,6 +1642,18 @@ VG.computePlayerGWProjection = (player, gw, fixtures) => {
   const venues = [];
   const difficulties = [];
 
+  // PIN THE EARLY-SEASON GATE. computeFixtureXP reads VG._projGW to choose the
+  // dataConfidence phase (GW1-3 cap 0.30, GW4-5 0.55) and the ep_next LEVEL
+  // anchor (50/50 at GW1-3, 35/65 at GW4-5). computeMultiGWXP sets it per
+  // fixture, but this per-GW path never did — so every captaincy / chip / pick
+  // call ran as GW1, crushing confidence AND applying the 50/50 ep_next anchor.
+  // With an inflated early-season ep_next that roughly doubled per-GW xP for
+  // hot players (Groß: 11.1 projected vs 6.8 actual model), making him the
+  // captain every week while the horizon table showed him ~5.7. Restore the
+  // previous value so nesting (e.g. inside a loop) stays correct.
+  const prevProjGW = VG._projGW;
+  VG._projGW = gw;
+
   teamFixtures.forEach(f => {
     const info = VG.fixtureInfo(f, player.teamId);
     const projection = VG.computeFixtureXP(player.id, info.oppId, info.isHome, info.fdr);
@@ -1647,6 +1662,8 @@ VG.computePlayerGWProjection = (player, gw, fixtures) => {
     venues.push(info.isHome ? "H" : "A");
     difficulties.push(info.fdr);
   });
+
+  VG._projGW = prevProjGW;
 
   return {
     gwXP: +gwXP.toFixed(2),
@@ -4662,6 +4679,9 @@ VG.render.briefing = (b) => {
 // lineup. Pre-season (fewer than 2 recorded rounds) renders a notice.
 VG.predictedLineups = (gw, fixtures) => {
   const dataRounds = VG.recentFormMaxRounds || 0;
+  // Pin the early-season gate so xMins uses this GW's confidence phase, not GW1.
+  const prevProjGW = VG._projGW;
+  VG._projGW = gw;
   const rows = Object.values(VG.teams).map(t => {
     const players = Object.values(VG.players).filter(p => p.team === t.id && VG.isAvailable(p));
     if (!players.length) return null;
@@ -4737,6 +4757,7 @@ VG.predictedLineups = (gw, fixtures) => {
       fixtureCount: tfs.length
     };
   }).filter(Boolean);
+  VG._projGW = prevProjGW;
   return { gw, dataRounds, rows };
 };
 

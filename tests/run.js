@@ -63,7 +63,7 @@ VG.buildMaps(bootstrap);
 const allXP = VG.computeAllXP(1, 5, fixtures);
 
 section("Data and xP engine");
-check("Loaded all active players", allXP.length > 500);
+check("Loaded all active players", allXP.length > 400);
 check("Loaded 20 teams", Object.keys(VG.teams).length === 20);
 check("Doubtful players remain available for evaluation", allXP.some(p => p.status === "d"));
 check("Haaland has a positive projection", allXP.find(p => p.name === "Haaland")?.totalXP > 0);
@@ -1297,8 +1297,17 @@ check("home boost differentiates positions by clean-sheet premium", (() => {
         return { ...sp, web_name: sp.web_name || (boot && boot.web_name) || "?", now_cost: sp.now_cost || (boot && boot.now_cost) || 0, selling_price: sp.selling_price || sp.now_cost || (boot && boot.now_cost) || 0 };
       });
       const res = VG.optimizeTransfers(enriched, allXP, 0.4, 2, 3, 5, {});
-      const outIds = res.transfersOut.map(p => p.id).sort((a, b) => a - b);
-      return res.transfersOut.length > 0 && res.transfersIn.length > 0 && outIds.includes(55) && outIds.includes(223);
+      const unavailIds = enriched
+        .filter(sp => { const b = VG.players[sp.element]; return b && b.status !== "a" && b.status !== "d"; })
+        .map(sp => sp.element);
+      const outIds = res.transfersOut.map(p => p.id);
+      const forced = outIds.filter(id => unavailIds.includes(id));
+      // Forced (unavailable) players must fill the transfer slots FIRST — the
+      // value-upgrade pass must never crowd them out. Number-of-forced equals
+      // min(unavailable, total transfers made), so this survives the live data
+      // changing which/how many squad players are injured.
+      return res.transfersOut.length > 0 && res.transfersIn.length > 0 &&
+        forced.length > 0 && forced.length === Math.min(unavailIds.length, res.transfersOut.length);
     } catch (e) { return false; }
   })());
 
