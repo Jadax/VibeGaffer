@@ -234,6 +234,18 @@ check("full FT bank seeds generous frees, never over-cap per GW", (() => {
       VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 1).summary.freeTransfersUsed &&
     plan.schedule.every(gwPlan => gwPlan.transfers.filter(t => !t.isHit).length <= 5);
 })());
+// v5.17.8: a GW's option list is ranked across ALL weak slots, so the same
+// weak starter could be "sold" multiple times in one GW (each phantom sale
+// charged a hit) — the observed Roefs → 5-different-GKs plan. Each slot moves
+// at most once per GW.
+check("no starter is sold twice inside one planned GW", (() => {
+  const plan = VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 1);
+  if (!plan) return true;
+  return plan.schedule.every(gwPlan => {
+    const outs = gwPlan.transfers.map(t => t.out.id);
+    return new Set(outs).size === outs.length;
+  });
+})());
 check("Chip engine evaluates every chip", Object.keys(VG.evaluateChips(draft.squad, draft.gwPicks, fixtures)).includes("triple_captain"));
 
 // v5.17.5: chip advice must never claim a Double Gameweek that isn't there.

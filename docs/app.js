@@ -2986,6 +2986,7 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeNow) 
     let gwHitCost = 0;
     for (const opt of transferOpts) {
       if (gwTransfer.transfers.length >= 5) break; // Max 5 transfers per GW
+      if (!currentSquadIds.has(opt.out.id)) continue; // Slot already moved this GW
       if (opt.cost > remainingBank + 0.1) continue;
       if (usedIds.has(opt.in.id)) continue;
       if (currentSquadIds.has(opt.in.id)) continue;
