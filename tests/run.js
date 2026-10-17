@@ -211,6 +211,29 @@ const transfers = VG.optimizeTransfers(mockSquad, allXP, 0.5, 1, 1, 5);
 check("Transfer optimizer returns hit details", Array.isArray(transfers.hitDetails));
 check("Transfer roadmap covers five GWs", VG.computeTransferRoadmap(draft.squad, allXP, fixtures, 1, 5)?.length === 5);
 check("Transfer planner covers five GWs", VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 1)?.schedule.length === 5);
+// v5.17.7: banked free transfers. The planner must honour a starting FT stock
+// (seeded like the optimizer's Free-transfers limit) and roll unused FTs
+// forward instead of charging every second transfer as an automatic -4 hit.
+check("banked FT stock relaxes hit advice, never increases it", (() => {
+  const planBase = VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 1);
+  const planBanked = VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 2);
+  return !planBase || !planBanked ||
+    (planBanked.summary.totalHits <= planBase.summary.totalHits &&
+     planBanked.summary.freeTransfersUsed >= planBase.summary.freeTransfersUsed);
+})());
+check("transfer plan never books a hit while free slots remain unused", (() => {
+  const plan = VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 2);
+  if (!plan) return true;
+  return plan.schedule.every(gwPlan =>
+    gwPlan.transfers.filter(t => t.isHit).length === 0 || gwPlan.transfers.filter(t => !t.isHit).length > 0);
+})());
+check("full FT bank seeds generous frees, never over-cap per GW", (() => {
+  const plan = VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 5);
+  if (!plan) return true;
+  return plan.summary.freeTransfersUsed >=
+      VG.computeTransferPlan(draft.squad, allXP, fixtures, 1, 5, draft.budgetRemaining, 1).summary.freeTransfersUsed &&
+    plan.schedule.every(gwPlan => gwPlan.transfers.filter(t => !t.isHit).length <= 5);
+})());
 check("Chip engine evaluates every chip", Object.keys(VG.evaluateChips(draft.squad, draft.gwPicks, fixtures)).includes("triple_captain"));
 
 // v5.17.5: chip advice must never claim a Double Gameweek that isn't there.

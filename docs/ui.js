@@ -934,7 +934,10 @@ VG.preloadTabs = async (gw) => {
       const bank = VG.currentResult.budgetRemaining || 0;
       const gw = parseInt(el('gameweek').value);
       const horizon = parseInt(el('horizon').value);
-      const plan = VG.computeTransferPlan(squad, VG.allXP, VG.allFixtures, gw, horizon, bank);
+      // Seed the plan with the user's Free-transfers limit (0 = auto). The
+      // planner rolls unused FTs forward, so this is a bank, not a per-GW cap.
+      const ftLimit = parseInt(el("freeTransfers").value) || 0;
+      const plan = VG.computeTransferPlan(squad, VG.allXP, VG.allFixtures, gw, horizon, bank, ftLimit > 0 ? ftLimit : 1);
       if (plan && plan.schedule.length > 0) {
         let ph = '';
         // Summary card
@@ -955,7 +958,7 @@ VG.preloadTabs = async (gw) => {
           const border = gwPlan.hitCost > 0 ? '#ef4444' : '#00ff87';
           ph += `<div style="margin:10px 0;padding:12px 14px;background:rgba(30,41,59,0.5);border-radius:8px;border-left:3px solid ${border};">`;
           ph += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><span style="color:#94a3b8;font-weight:600;">GW${gwPlan.gw}</span>`;
-          ph += `<span style="font-size:0.68rem;color:#64748b;">${gwPlan.squadXP} xP · ${gwPlan.transfers.length} transfer${gwPlan.transfers.length > 1 ? 's' : ''}${gwPlan.hitCost > 0 ? ' · <span style="color:#ef4444;">-4 hit</span>' : ' · <span style="color:#00ff87;">Free</span>'}</span></div>`;
+          ph += `<span style="font-size:0.68rem;color:#64748b;">${gwPlan.squadXP} xP · ${gwPlan.transfers.length} transfer${gwPlan.transfers.length > 1 ? 's' : ''}${gwPlan.hitCost > 0 ? ` · <span style="color:#ef4444;">-${gwPlan.hitCost} hit${gwPlan.hitCost > 4 ? 's' : ''}</span>` : ' · <span style="color:#00ff87;">Free</span>'}</span></div>`;
           gwPlan.transfers.forEach(t => {
             const hitTag = t.isHit ? ' <span style="color:#ef4444;font-size:0.65rem;">(HIT)</span>' : '';
             ph += `<div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:0.75rem;">`;

@@ -2890,10 +2890,16 @@ VG.computeTransferRoadmap = (squad, allXP, fixtures, startGW, nGWs) => {
 // Simulates squad across N GWs, identifies weakest players each week,
 // finds best replacements, and schedules transfers week-by-week.
 // Only recommends hits if cumulative xP gain exceeds hit cost.
-VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank) => {
+VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeNow) => {
   if (!squad || squad.length < 11 || !allXP || allXP.length === 0 || !fixtures || fixtures.length === 0) return null;
 
   bank = bank || 0;
+  // Banked free transfers (FPL roll rule): unused FTs carry forward, capped at
+  // 5, and the user may already hold banked transfers when the plan starts.
+  // The old planner granted exactly 1 free per GW and charged everything else
+  // as a -4 hit — under-using the bank and over-recommending hits. freeNow
+  // (the same "Free transfers" limit the optimizer honours) seeds GW[0]'s bank.
+  let ftBank = Math.max(1, Math.min(5, parseInt(freeNow) || 1));
 
   // Build per-GW xP maps for all players
   const allXPMap = {};
@@ -2973,10 +2979,10 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank) => {
     // Sort by cumulative xP gain (best first)
     transferOpts.sort((a, b) => b.cumGain - a.cumGain);
 
-    // Apply transfers: one free transfer is always available per GW (matches FPL
-    // rollover behaviour of 1 FT/week); any further transfer this GW is a hit.
-    const freeLeft = 1;
-
+    // Apply transfers: free transfers come from the rolling bank (seeded by
+    // the user's stock and refilled +1 each GW, capped at 5) — anything beyond
+    // is a hit, only recommended when the cumulative gain exceeds 4 pts.
+    const freeLeft = ftBank;
     let gwHitCost = 0;
     for (const opt of transferOpts) {
       if (gwTransfer.transfers.length >= 5) break; // Max 5 transfers per GW
@@ -3006,6 +3012,9 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank) => {
     }
 
     gwTransfer.hitCost = gwHitCost;
+    // Roll anything unspent into the next GW's bank (+ its fresh FT), cap 5.
+    const freesUsedThisGW = gwTransfer.transfers.filter(t => !t.isHit).length;
+    ftBank = Math.min(5, Math.max(0, freeLeft - freesUsedThisGW) + 1);
     schedule.push(gwTransfer);
   }
 
