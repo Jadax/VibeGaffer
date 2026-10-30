@@ -223,7 +223,15 @@ VG.run = async () => {
         const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
         const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
         const fullIds = [...retainedIds, ...transferInIds];
-        const allSquad = allXP.filter(p => fullIds.includes(p.id)).sort((a, b) => b.totalXP - a.totalXP);
+        // allXP only holds available players, so a retained injured player
+        // (kept because the free-transfer cap ran out) used to vanish here and
+        // the squad rendered as 14. Build those entries directly instead.
+        const inPool = new Set(allXP.map(p => p.id));
+        const allSquad = [
+          ...allXP.filter(p => fullIds.includes(p.id)),
+          ...fullIds.filter(id => !inPool.has(id) && VG.players[id])
+            .map(id => VG.playerXPEntry(id, gw, horizon, VG.allFixtures))
+        ].sort((a, b) => b.totalXP - a.totalXP);
         // Compute per-GW picks for transfer squad
         const gwPicks = [];
         const horizonGWs = [...new Set(VG.allFixtures.map(f => f.event))]

@@ -1375,6 +1375,65 @@ check("home boost differentiates positions by clean-sheet premium", (() => {
   // Guard the pool filter feeds both chip generators (not just Wildcard).
   check("Free Hit + Wildcard both route through filterPool", appSource.indexOf("VG.filterPool(players, opts)") >= 0);
 
+  section("v5.17.9 Availability gates output, injured players stay in squad");
+
+  // A 0%-chance player used to project goals/CS/bonus because the fitness
+  // flag only reached minsProb (appearance/DEFCON/cards). Toggle the flag on a
+  // real fit outfielder and compare. Pin GW10 so the early-season ep_next
+  // anchor (which would blend in his unchanged ep_next) stays out of it.
+  {
+    const fit = allXP.find(p => p.positionId === 4 && VG.teamFixtures(fixtures, 10, p.teamId).length === 1)
+      || allXP.find(p => p.positionId === 3 && VG.teamFixtures(fixtures, 10, p.teamId).length === 1);
+    const raw = VG.players[fit.id];
+    const saved = { chance: raw.chance_of_playing_next_round, status: raw.status };
+    const fx = VG.teamFixtures(fixtures, 10, fit.teamId)[0];
+    const info = VG.fixtureInfo(fx, fit.teamId);
+    const savedGW = VG._projGW;
+    VG._projGW = 10;
+    try {
+      raw.chance_of_playing_next_round = null; raw.status = "a";
+      const healthy = VG.computeFixtureXP(fit.id, info.oppId, info.isHome, info.fdr);
+      raw.chance_of_playing_next_round = 100;
+      const flagged100 = VG.computeFixtureXP(fit.id, info.oppId, info.isHome, info.fdr);
+      raw.chance_of_playing_next_round = 50; raw.status = "d";
+      const half = VG.computeFixtureXP(fit.id, info.oppId, info.isHome, info.fdr);
+      raw.chance_of_playing_next_round = 0; raw.status = "i";
+      const out = VG.computeFixtureXP(fit.id, info.oppId, info.isHome, info.fdr);
+      check("a 100%-flagged player projects exactly like an unflagged one", Math.abs(healthy.xp - flagged100.xp) < 1e-9);
+      check("a 0%-chance player projects no goals, assists, CS or bonus",
+        out.xpComponents.xpGoals === 0 && out.xpComponents.xpAssists === 0 && out.xpComponents.xpCS === 0 && out.xpComponents.xpBonus === 0);
+      check("a 0%-chance player falls to the projection floor", out.xp <= 0.1 + 1e-9);
+      check("a 50% doubt lands strictly between out and fit", half.xp > out.xp && half.xp < healthy.xp);
+    } finally {
+      raw.chance_of_playing_next_round = saved.chance; raw.status = saved.status;
+      VG._projGW = savedGW;
+    }
+  }
+
+  // Two unavailable players, one free transfer: the optimizer forces out the
+  // first and must report the second instead of letting it vanish. The UI
+  // rebuilds that retained player with VG.playerXPEntry (allXP excludes him).
+  {
+    const [a, b] = [mockSquad[2].element, mockSquad[7].element];
+    const savedA = { s: VG.players[a].status, c: VG.players[a].chance_of_playing_next_round };
+    const savedB = { s: VG.players[b].status, c: VG.players[b].chance_of_playing_next_round };
+    try {
+      VG.players[a].status = "i"; VG.players[a].chance_of_playing_next_round = 0;
+      VG.players[b].status = "i"; VG.players[b].chance_of_playing_next_round = 0;
+      const res = VG.optimizeTransfers(mockSquad, allXP, 5.0, 1, 10, 5, {});
+      const forcedOut = res.transfersOut.map(p => p.id);
+      check("one free transfer forces out exactly one of two injured players", forcedOut.length === 1 && (forcedOut[0] === a || forcedOut[0] === b));
+      check("the injured player the cap couldn't cover is reported", res.stillUnavailable.length === 1 && /Still unavailable/.test(res.hitWarning || ""));
+      const left = forcedOut[0] === a ? b : a;
+      const entry = VG.playerXPEntry(left, 10, 5, fixtures);
+      check("playerXPEntry builds an allXP-shaped entry for an injured player", entry.id === left && typeof entry.positionId === "number" && isFinite(entry.totalXP) && isFinite(entry.xpPerPrice));
+    } finally {
+      VG.players[a].status = savedA.s; VG.players[a].chance_of_playing_next_round = savedA.c;
+      VG.players[b].status = savedB.s; VG.players[b].chance_of_playing_next_round = savedB.c;
+    }
+  }
+  check("transfer-mode squad keeps retained players missing from allXP", fs.readFileSync(path.join(root, "docs", "ui.js"), "utf8").includes("VG.playerXPEntry(id, gw, horizon, VG.allFixtures)"));
+
   section("Summary");
   console.log(`${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

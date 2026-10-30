@@ -942,12 +942,16 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   }
 
   // ── xP calculation per fixture ──
+  // `availability` (the FPL fitness flag) already reaches appearance, DEFCON
+  // and cards through minsProb. The output rates below are per-appearance, so
+  // they need it too, or a 0%-chance player still projects goals/CS/bonus.
+  // Fully fit players have availability 1, so their numbers don't move.
   const xpAppearance = minsProb * APPEARANCE_PTS;
-  const xpCS = projCS * (CS_PTS[pos] || 0);
-  const xpGoals = projGoals * (GOAL_PTS[pos] || 4);
-  const xpAssists = projAssists * ASSIST_PTS;
-  const xpBonus = projBonus * 1.5;
-  const xpSaves = pos === 1 ? Math.min(savesPerGame / 3.5, 1.0) * 3 * rateConf : 0;
+  const xpCS = projCS * (CS_PTS[pos] || 0) * availability;
+  const xpGoals = projGoals * (GOAL_PTS[pos] || 4) * availability;
+  const xpAssists = projAssists * ASSIST_PTS * availability;
+  const xpBonus = projBonus * 1.5 * availability;
+  const xpSaves = pos === 1 ? Math.min(savesPerGame / 3.5, 1.0) * 3 * rateConf * availability : 0;
   const xpDEFCON = defconXP;
   const xpNegative = minsProb * (yellowsPerGame * 1 + redsPerGame * 3 + ownGoalsPerGame * 2 + penMissPerGame * 2);
 
@@ -1605,15 +1609,22 @@ VG.computeMultiGWXP = (pid, startGW, nGWs, fixtures) => {
   };
 };
 
+// One allXP-shaped entry for a single player. Shared by computeAllXP (the
+// available pool) and the transfer-mode squad builder, which needs entries for
+// retained players computeAllXP deliberately excludes (injured/suspended).
+VG.playerXPEntry = (pid, startGW, nGWs, fixtures) => {
+  const xp = VG.computeMultiGWXP(pid, startGW, nGWs, fixtures);
+  xp.info.xpPerPrice = +(xp.totalXP / Math.max(xp.info.price, 4.0)).toFixed(2);
+  xp.info.xpComponents = xp.xpComponents;
+  xp.info.setPiece = VG.setPieceRole(pid);
+  return xp.info;
+};
+
 VG.computeAllXP = (startGW, nGWs, fixtures) => {
   const results = [];
   Object.values(VG.players).forEach(p => {
     if ((p.status !== "a" && p.status !== "d") || p.now_cost <= 0) return;
-    const xp = VG.computeMultiGWXP(p.id, startGW, nGWs, fixtures);
-    xp.info.xpPerPrice = +(xp.totalXP / Math.max(xp.info.price, 4.0)).toFixed(2);
-    xp.info.xpComponents = xp.xpComponents;
-    xp.info.setPiece = VG.setPieceRole(p.id);
-    results.push(xp.info);
+    results.push(VG.playerXPEntry(p.id, startGW, nGWs, fixtures));
   });
   results.sort((a, b) => b.totalXP - a.totalXP);
   // Effective ownership pass — needs the sorted full pool for captain-share model.
@@ -2378,7 +2389,7 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGW
     let cXP = players.find(p => p.id === pid);
     if (!cXP) {
       const boot = VG.players[pid];
-      if (!boot || (boot.status === "a" || boot.status === "d")) continue; // genuinely unknown or available
+      if (VG.isAvailable({ id: pid })) continue; // genuinely unknown or available
       cXP = {
         id: pid, name: sp.web_name || boot.web_name || "?", teamId: boot.team,
         positionId: boot.element_type, price: (sp.selling_price || sp.now_cost || 0) / 10,
@@ -2450,19 +2461,24 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGW
   const forcedDetails = hitDetails.filter(h => h.forced);
   const hitOnlyDetails = hitDetails.filter(h => !h.forced);
 
+  // Unavailable players the transfer cap couldn't cover. They stay in the
+  // squad (the caller keeps them as 0-minute entries), so say so plainly
+  // rather than leaving the user to discover a dead slot.
+  const stillUnavailable = currentSquad
+    .filter(sp => !soldIds.has(sp.element) && !VG.isAvailable({ id: sp.element }))
+    .map(sp => sp.web_name || VG.playerName(VG.players[sp.element]) || "?");
+
+  const parts = [];
+  if (forcedDetails.length > 0) parts.push(`🚨 Forced: ${forcedDetails.map(h => h.name + ' → ' + (h.inName || '?')).join('; ')} (unavailable, replaced to avoid a blank).`);
+  if (stillUnavailable.length > 0) parts.push(`⚠ Still unavailable: ${stillUnavailable.join(', ')}. Out of free transfers, so bench them or take a -4 to move them on.`);
+  if (hits > 0) parts.push(`${hitTransfers} hit(s) = -${hits} pts. Break-even: ${hitOnlyDetails.map(h => `${h.name} in ~${h.breakEvenGWs} GWs (${h.gwAvgGain} pts/GW)`).join('; ')}.`);
+
   return {
     mode: "transfer", transfersIn: inPlayers, transfersOut: outPlayers,
     hitCost: hits, recommendedTransfers: outPlayers.length,
     freeTransfersUsed: Math.min(outPlayers.length, freeTransfers),
-    hitDetails,
-    hitWarning: forcedDetails.length > 0 || hitOnlyDetails.length > 0
-      ? (forcedDetails.length > 0
-          ? `🚨 Forced: ${forcedDetails.map(h => h.name + ' → ' + (h.inName || '?')).join('; ')} (unavailable — replaced to avoid blank).`
-          : '') +
-        (hits > 0
-          ? ` ${hitTransfers} hit(s) = -${hits} pts. Break-even: ${hitOnlyDetails.map(h => `${h.name} in ~${h.breakEvenGWs} GWs (${h.gwAvgGain} pts/GW)`).join('; ')}.`
-          : '')
-      : null
+    hitDetails, stillUnavailable,
+    hitWarning: parts.length > 0 ? parts.join(' ') : null
   };
 };
 
