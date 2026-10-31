@@ -218,7 +218,9 @@ VG.run = async () => {
         });
         const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
         const freeTransfers = parseInt(el("freeTransfers").value);
-        const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, gw, 5, constraints);
+        // nGWs must be the horizon allXP was projected over: break-even divides
+        // the horizon-total gain by it (5 here overstated gains ~2.4x at 12).
+        const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, gw, horizon, constraints);
         const transferOutIds = new Set(transferResult.transfersOut.map(p => p.id));
         const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
         const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
@@ -362,16 +364,18 @@ VG.run = async () => {
       if (result.transfersIn?.length && result.transfersOut?.length) {
         const outXP = result.transfersOut.reduce((s, p) => s + (p.totalXP || 0), 0);
         const inXP = result.transfersIn.reduce((s, p) => s + (p.totalXP || 0), 0);
-        const ri = VG.estimateRankImpact(inXP - outXP, { nGWs: 5 });
+        // Net of hits, over the horizon the transfers were optimised for.
+        const ri = VG.estimateRankImpact(inXP - outXP - (result.hitCost || 0), { nGWs: horizon });
         if (ri.rankDelta !== 0) {
           const col = ri.rankDelta < 0 ? "#00ff87" : "#ef4444";
-          html += `<div style="text-align:center;font-size:0.72rem;margin-top:6px;color:${col};">≈ projected rank ${ri.direction === 'gain' ? 'improvement' : 'loss'} of ${Math.abs(ri.rankDelta).toLocaleString()} (${ri.pts > 0 ? '+' : ''}${ri.pts} xP over 5 GW), estimate</div>`;
+          html += `<div style="text-align:center;font-size:0.72rem;margin-top:6px;color:${col};">≈ projected rank ${ri.direction === 'gain' ? 'improvement' : 'loss'} of ${Math.abs(ri.rankDelta).toLocaleString()} (${ri.pts > 0 ? '+' : ''}${ri.pts} xP over ${VG.esc(String(horizon))} GW), estimate</div>`;
         }
       }
       if (result.hitCost > 0) {
         html += `<div style="text-align:center;color:#ef4444;font-size:0.75rem;font-weight:600;margin-top:8px;">Hit Cost: -${result.hitCost} pts</div>`;
         if (result.hitDetails?.length > 0) {
-          result.hitDetails.forEach(h => {
+          // Forced moves are already listed in the warning; break-even only means something for paid hits.
+          result.hitDetails.filter(h => !h.forced).forEach(h => {
             html += `<div style="text-align:center;color:#fbbf24;font-size:0.7rem;margin-top:2px;">↳ ${VG.esc(h.name)}: breaks even in ~${h.breakEvenGWs} GWs (${h.gwAvgGain} pts/GW avg)</div>`;
           });
         }

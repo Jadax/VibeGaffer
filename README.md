@@ -1,4 +1,4 @@
-# VibeGaffer v5.17.8
+# VibeGaffer v6.0.0
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
@@ -65,7 +65,7 @@ The original architecture was Python Backend (FastAPI) + Streamlit Frontend. It 
 
 ---
 
-## Features (v5.14.0)
+## Features (v6.0.0)
 
 ### Squad Optimization (ILP + Deterministic Greedy Fallback, Injury-Aware)
 
@@ -99,21 +99,19 @@ Three strategies run simultaneously, best wins:
 | **Premium Heavy** | Stack elite players (1.3x totalXP weight), accept weaker bench |
 | **Best Value** | Cap at £8m, maximize xP/£m |
 
-### xP Engine (v4.0)
+### xP Engine (v6.0, match model)
 
-Position-specific, opponent-aware, multi-signal expected points projection:
+Each fixture is modelled as a football match first, then turned into FPL points channel by channel:
 
-- **Position-specific team strength**: Attackers face attack difficulty, defenders face defense difficulty
-- **Opponent defense wiring**: CS probability and goal probability adjusted by opponent's actual defensive record
-- **FPL pre-computed rates**: Uses `expected_goals_per_90`, `expected_assists_per_90` from API
-- **BPS for bonus**: Raw Bonus Points System score as primary bonus predictor
-- **Position-specific ICT**: GK/DEF use influence; MID uses influence+creativity; FWD uses threat+creativity
-- **Enhanced form**: Blends form/ppg trend (60%) + FPL ep_next (25%) + value_form (15%)
-- **Exponential form weighting**: Hot streaks amplified (1.3x power), cold streaks dampened (0.7x power)
-- **DEFCON calibration**: Defensive contributions calibrated to real 2025/26 data (CBs ~1.4 pts/game)
-- **Captain ceiling bonus**: FWD 1.15x, premium MID 1.18x, budget MID 1.08x
-- **Home advantage**: 1.15x multiplier
-- **Bookmaker odds adjustment** (v5.1): Implied win probabilities from 1X2 odds boost favorite attack (0.88-1.20x), penalize underdog defense, adjust clean sheet probability based on expected scoring
+- **Team goals model**: attack and defence indices per team from this season's results (65%) blended with Understat non-penalty xG (35%) plus a penalty allowance, shrunk toward average while the sample is small. Home and away scoring factors come from the same results, so home advantage is measured, not hardcoded.
+- **Market recalibration**: when bookmaker or Understat 1X2 forecasts exist, the goal split is nudged (50%) so the implied win/draw/loss matches the market.
+- **Minutes model**: P(start) from starts over team matches played, shrunk toward a role prior, with a recency blend from the last five GWs, availability (chance of playing) and fixture congestion. Gives P(start), P(60+), P(plays) and expected minutes.
+- **Scoring channels**: goals and assists scale with expected minutes and the team's attacking expectation; clean sheets and goals-conceded deductions come from a negative binomial on goals against times P(60); saves, DEFCON and bonus use shrunk per-player rates with proper threshold maths (E[floor(saves/3)], Poisson tail for the DEFCON threshold).
+- **Early-season anchor**: GW1-5 blend in FPL's own ep_next for established players; new signings keep a 50/50 path.
+- **Captain ceiling**: FWD and premium MID (8.5m+) get a small ceiling bonus, which the backtest supports.
+- All tuning constants live in `VG.MODEL`, so the backtest can sweep them without code changes.
+
+**Validated by walk-forward backtest (GW1-8, 2026/27)**: rank correlation 0.50 vs 0.42 for FPL's ep_next; a free-hit team picked each week would have scored 465 (average manager 461, ep_next 391, old engine 394); 4-GW horizon correlation 0.58 with projected level within 5-13% of actual.
 
 ### Captain Rotation Planner
 
@@ -355,13 +353,14 @@ VibeGaffer/
 
 For each player + fixture combination:
 
-1. **Mins probability**: Start-rate model using last season data (GK: nailed/backup binary, outfield: startRate * (1 - subRisk)), confidence regression toward league average
-2. **Clean sheet probability**: `baseCS[pos] * defMult * defStrMult * csPer90 * oppDefFactor`
-3. **Goal probability**: `baseGoals[pos] * attackMult * attStrMult * goalsPer90 * oppDefFactor`
-4. **Assist probability**: `baseAssists[pos] * attackMult * creativity * assistsPer90 * oppDefFactor`
-5. **Bonus probability**: `BPSweight * bonusPer90 * minsProb`
-6. **DEFCON**: `defConPer90 * mins/90 * defMult * teamStr`
-7. **Captain ceiling bonus**: FWD 1.15x, premium MID 1.18x, budget MID 1.08x
+1. **Team lambdas** (`VG.fixtureLambdas`): expected goals for and against from `VG.teamRates()` (attack/defence indices, league mean, home/away factors), recalibrated to market odds when available
+2. **Minutes** (`VG.minutesModel`): P(start), minutes per start, cameo chance, P(60), P(plays), xMins
+3. **Goals / assists**: shrunk per-90 rates x xMins/90 x the team's attacking factor for this fixture
+4. **Clean sheet / goals conceded**: negative binomial on goals against, times P(60)
+5. **Saves**: E[floor(saves/3)] from a Poisson on the keeper's shrunk save rate
+6. **DEFCON**: probability of reaching the threshold (DEF 10, MID/FWD 12) from a Poisson with a dispersion mixture, counted once as expected points
+7. **Bonus, cards**: shrunk per-90 rates scaled by minutes
+8. **Captain ceiling bonus**: FWD and premium MID (8.5m+)
 
 ### Multi-GW Aggregation
 
@@ -395,6 +394,20 @@ curl -o docs/data/fixtures.json "https://fantasy.premierleague.com/api/fixtures/
 ```bash
 npm test
 ```
+
+### Backtest the Engine
+
+The data bot commits `docs/data` several times a day, so git history is a record of what the engine would have seen before each deadline. The backtest replays the current engine on those snapshots and scores it against real results:
+
+```bash
+node tools/backtest.js 1 8
+```
+
+```bash
+node tools/calibrate.js
+```
+
+`tools/sweep.sh` reruns the backtest for several `VG.MODEL` overrides, for example `bash tools/sweep.sh '{}' '{"congestion":false}'`. Results are cached in `tools/.cache` (gitignored).
 
 ---
 
@@ -452,6 +465,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v6.0.0 | - | Engine rebuilt as a match model after the GW9 review (advisor squad scored 26). Team goals model from results + Understat xG with market recalibration, explicit minutes model (P(start), P(60), xMins), per-channel scoring with negative-binomial clean sheets and goals conceded, proper saves/DEFCON threshold maths. Walk-forward backtest tooling (`tools/`). Backtest GW1-8: rank correlation 0.26 to 0.50 (ep_next 0.42), free-hit team 394 to 465 (average manager 461). Transfer fixes: hits were never advised (hit phase shared the free-transfer cap), dead players now take hit slots before fit ones, optimizer uses the chosen horizon (was fixed at 5), Wildcard trigger counts players unlikely to play, Understat post-match odds no longer read as forecasts. Tests 348 to 363. |
 | v5.16.0 | — | Fresh-season small-sample model rebuild (the GW1 45-pointer post-mortem): Bayesian shrinkage of every season-aggregate rate toward positional priors (per-90 xG/xA K=12, per-game CS/bonus/saves/cards K=10, DEFCON K=4, start-rate toward role priors), positional goal/assist caps replace the global 0.85, clean-sheet probability is a weighted average (not additive) capped at 0.55, rate-vs-minutes confidence split, early-season ep_next level anchor, captain-ceiling bonus reinstated, sub-cameo bench priors. GW1 backtest: correlation 0.413, projected top-10 all legitimately ownable; the draft now captains Haaland and its value picks included the GW1 haulers. Tests 300 → 307. |
 | v5.15.0 | — | Full-codebase correctness review. Model-output fixes: DEFCON no longer double-counted (defenders/mids were inflated ~2 xP/fixture), heavy-rotator congestion penalty actually fires now (numeric-id vs short-name lookup bug), blank-gameweek teams actually detected (planner/chip calendar), briefing chip hint renders (chip identity from object key), live-GW bench points no longer double-counted on auto-subs, transfer plan no longer ignores injured starters. Plus: allXP xP-order preserved (Compare sort no longer mutates the shared array), fetchTeamRank reads the real entry fields (GW points were permanently 0), _projGW stale-gate leak cleared, recency starts-rate divides by games on record, retry budget resets on success, live refresh timer leak fixed, ticker/planner FDR colours unified, MC percentile helper deduplicated. Tests 286 → 300. |
 | v5.14.0 | — | Pre-GW1 robustness: European fixture congestion risk (gap-days + heavy-rotator penalty on minutes), three-phase early-season confidence model (GW1-3/4-5/6+), VC blank-risk discount, deadline countdown timer, chip hint bug fix, FT dropdown 1–5, scatter tooltips, Rate My Team efficiency score (mean xP / CV), position-differentiated home boost (DEF 1.18x, MID/FWD 1.15x, GK 1.12x). Tests 274 → 286. |

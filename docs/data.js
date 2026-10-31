@@ -251,6 +251,9 @@ VG.applyHistoryPriors = (bootstrap, priors) => {
     }
     if (Number(p.minutes || 0) > 0 || Number(p.starts || 0) > 0) return;
     if (Number(prior.minutes || 0) < 90) return;
+    // Mark it: these are last season's 38-match totals, which the minutes
+    // model must not read as this season's start record.
+    p._priorSeason = true;
     Object.entries(prior).forEach(([key, value]) => {
       if (key === "team_code") return;
       if (p[key] === undefined || Number(p[key] || 0) === 0) p[key] = value;

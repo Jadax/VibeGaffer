@@ -60,6 +60,7 @@ const promotedTeamFixture = {
 VG.buildMaps(promotedTeamFixture);
 check("Promoted-team fallback uses the API team rating", VG.teams[99].strength_overall_home === 930 && VG.teams[99].strength_attack_away === 890);
 VG.buildMaps(bootstrap);
+VG.allFixtures = fixtures; // mirror VG.init: the team model reads the loaded fixture list
 const allXP = VG.computeAllXP(1, 5, fixtures);
 
 section("Data and xP engine");
@@ -822,7 +823,10 @@ if (ctxPlayer) {
   const strongClub = Object.values(VG.teams).find(t => t.id !== ctxPlayer.team && t.id !== (ctxFixture ? (ctxFixture.team_h === ctxPlayer.team ? ctxFixture.team_a : ctxFixture.team_h) : -1));
   const weakClub = Object.values(VG.teams).find(t => t.id !== ctxPlayer.team && t.id !== strongClub.id);
   const ctxClubs = [ctxTeam, strongClub, weakClub].filter(Boolean);
-  const savedCtx = { clubs: ctxClubs.map(t => ({ t, home: t.strength_attack_home, away: t.strength_attack_away })), prior: ctxPlayer.priorTeamCode, starts: ctxPlayer.starts, minutes: ctxPlayer.minutes };
+  // v6: club context reads the team model's attack indices (VG.teamRates),
+  // not the FPL strength fields (which ship as 0 in-season).
+  const TR = VG.teamRates();
+  const savedCtx = { clubs: ctxClubs.map(t => ({ t, att: TR.teams[t.id].att })), prior: ctxPlayer.priorTeamCode, starts: ctxPlayer.starts, minutes: ctxPlayer.minutes };
   // Pin the projection gate to a mid-season GW AND a full-confidence sample:
   // these direct computeFixtureXP calls assert EXACT multiplier ratios, which
   // only hold when dataConfidence is 1.0 (GW6+ disables the three-phase cap,
@@ -840,9 +844,10 @@ if (ctxPlayer) {
     // attack values, so the uniform 1015 below is only a test scaffold.
     const originalGoal = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr).goalProb;
 
-    ctxClubs.forEach(t => { t.strength_attack_home = 1015; t.strength_attack_away = 1015; });
-    strongClub.strength_attack_home = 1150; strongClub.strength_attack_away = 1150;
-    weakClub.strength_attack_home = 900; weakClub.strength_attack_away = 900;
+    // Only the OLD clubs' indices move (they aren't in this fixture, so its
+    // cached lambdas are untouched); the player's own club keeps its index.
+    TR.teams[strongClub.id].att = 1.30;
+    TR.teams[weakClub.id].att = 0.80;
     const baselineGoal = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr).goalProb;
     ctxPlayer.priorTeamCode = String(strongClub.code);
     const fromStrong = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr);
@@ -852,23 +857,25 @@ if (ctxPlayer) {
     check("moving from a weaker club boosts the projection", fromWeak.goalProb > fromStrong.goalProb);
     check("moving from a stronger club dampens the projection", fromStrong.goalProb < baselineGoal);
     // Both scenarios share every other term, so the goal-prob ratio equals the
-    // club-strength multiplier ratio exactly: +115 vs -135 on the 1700 scale.
-    const multRatio = (1 + (1015 - 900) / 1700) / (1 + (1015 - 1150) / 1700);
+    // club multiplier ratio exactly: clamp(1 + (newAtt - oldAtt) * 0.5).
+    const ownAtt = TR.teams[ctxTeam.id].att;
+    const cm = old => Math.min(1.20, Math.max(0.80, 1 + (ownAtt - old) * 0.5));
+    const multRatio = cm(0.80) / cm(1.30);
     check("context swing follows the attack-strength model", Math.abs(fromWeak.goalProb / fromStrong.goalProb - multRatio) < 1e-6);
 
     // Clamp: an extreme downgrade/upgrade must cap at ±20%. The baseline has
     // no move (transferConf = 1.0), so the clamped scenario's ratio includes
     // its own 0.92 confidence dampen: 1.20 * 0.92 exactly.
     const weakClub2 = Object.values(VG.teams).find(t => t.id !== ctxPlayer.team && t.id !== strongClub.id && t.id !== weakClub.id);
-    savedCtx.clubs.push({ t: weakClub2, home: weakClub2.strength_attack_home, away: weakClub2.strength_attack_away });
-    weakClub2.strength_attack_home = 200; weakClub2.strength_attack_away = 200;
+    savedCtx.clubs.push({ t: weakClub2, att: TR.teams[weakClub2.id].att });
+    TR.teams[weakClub2.id].att = 0.10;
     ctxPlayer.priorTeamCode = String(weakClub2.code);
     const fromExtreme = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr);
     check("context multiplier is clamped at +20%", Math.abs(fromExtreme.goalProb / baselineGoal - 1.20 * 0.92) < 1e-6);
 
     // Restore original club strengths by value (NOT delete — undefined strengths
     // would NaN every later projection for these clubs) and the prior code.
-    savedCtx.clubs.forEach(({ t, home, away }) => { t.strength_attack_home = home; t.strength_attack_away = away; });
+    savedCtx.clubs.forEach(({ t, att }) => { TR.teams[t.id].att = att; });
     ctxPlayer.priorTeamCode = savedCtx.prior;
     const restoredGoal = VG.computeFixtureXP(ctxPlayer.id, ctxOpp, ctxHome, ctxFdr).goalProb;
     check("restoring prior + strengths restores the baseline projection", restoredGoal === originalGoal);
@@ -1143,15 +1150,19 @@ check("scatter chart has tooltip callback", appSource.includes("tooltip: { callb
 // Efficiency score appears in rate-my-team output
 check("rate-my-team includes efficiency score", rmt && rmt.components.some(c => c.label === "Efficiency" && typeof c.score === "number"));
 
-// Position-differentiated home boost: DEF gets higher boost than FWD
-check("home boost is higher for defenders than forwards", (() => {
-  // Extract homeBoost from app.js source for pos=2 vs pos=4
-  const src = appSource;
-  const idx = src.indexOf("const homeBoost = pos === 2");
-  if (idx < 0) return false;
-  const snippet = src.slice(idx, idx + 200);
-  // DEF (pos===2) should use 1.18, FWD default 1.15
-  return snippet.includes("1.18") && snippet.includes("1.15");
+// Home advantage (v6): derived from this season's results inside the team
+// goals model; it raises goals for and clean-sheet odds alike. (Which gains
+// more in relative terms depends on the team: CS lift ~ exp(0.18 x xGA).)
+check("home advantage comes from the team goals model (home > 1 > away)", (() => {
+  const tr = VG.teamRates();
+  return tr.home > 1 && tr.away < 1 && tr.mu > 0.8 && tr.mu < 2.2;
+})());
+check("home advantage raises both goal expectation and clean-sheet odds", (() => {
+  const ids = Object.keys(VG.teams).map(Number);
+  const [t, o] = [ids[0], ids[1]];
+  const h = VG.fixtureLambdas(t, o, true), a = VG.fixtureLambdas(t, o, false);
+  const cs = l => VG._negBinPmf(l.ga, VG.MODEL.gaDispersion, 0)[0];
+  return h.gf > a.gf && h.ga < a.ga && cs(h) > cs(a);
 })());
 
 // fixtureGapDays is a function
@@ -1187,16 +1198,16 @@ section("Small-sample robustness: shrinkage, caps, ep anchor");
   delete VG.players[fid];
   check("one-game hauler stays under the positional goal cap", r.goalProb <= 0.35 + 1e-9);
   check("one-game hauler xP is sane (under 6)", r.xp < 6);
-  // A 1/1 starter must read as a near-weekly starter (the old max(games,5)
-  // floor divided 1 start by 5 and projected Haaland at 40 xMins).
-  const starter = Object.values(VG.players).find(p => (p.starts || 0) === 1 && (p.minutes || 0) >= 60 && (p.element_type || 0) !== 1);
-  if (starter) {
-    VG._projGW = 1;
-    const r = VG.computeFixtureXP(starter.id, 10, true, 2);
-    VG._projGW = null;
-    check("a 1/1 starter projects near-weekly minutes (xMins >= 55)", r.xMins >= 55);
-  } else {
-    check("a 1/1 starter projects near-weekly minutes (xMins >= 55)", false);
+  // Start rate is starts / matches the TEAM has played (v6). An every-game
+  // starter reads as nailed; 1 start in many team games is a rotation
+  // player — v5 divided by the player's own starts and read both as ~0.8.
+  {
+    const tid = 2, tg = VG.minutesModel({ element_type: 3, team: tid, minutes: 0, starts: 0 }).teamGames;
+    const base = { element_type: 3, team: tid, status: "a", chance_of_playing_next_round: 100, now_cost: 60 };
+    const nailed = VG.minutesModel({ ...base, starts: tg, minutes: 88 * tg });
+    const fringe = VG.minutesModel({ ...base, starts: 1, minutes: 90 });
+    check("an every-game starter projects near-full minutes (xMins >= 70)", tg >= 5 && nailed.xMins >= 70);
+    check("1 start in many team games reads as a rotation player (xMins < 45)", fringe.xMins < 45);
   }
   // A sub-cameo (0 starts) must not read as a rotation candidate.
   const cameo = Object.values(VG.players).find(p => (p.starts || 0) === 0 && (p.minutes || 0) > 0 && (p.minutes || 0) < 30 && (p.element_type || 0) !== 1);
@@ -1278,10 +1289,11 @@ check("live table excludes promoted players from the bench rows", appSource.incl
 check("team rank reads the entry payload's summary fields", appSource.includes("info.summary_event_points") && !appSource.includes("const hist = info.history"));
 check("comparison select sorts a copy of allXP (xP order preserved)", indexSource.includes("[...allXP].sort((a, b) => a.name.localeCompare(b.name))"));
 check("run retry budget resets after a successful run", /VG\._runRetries = 0;\s*VG\.preloadTabs\(gw\)/.test(indexSource));
-check("home boost differentiates positions by clean-sheet premium", (() => {
-  const src = appSource;
-  const idx = src.indexOf("const homeBoost = pos === 2 ? 1.18 : pos === 1 ? 1.12 : 1.15");
-  return idx >= 0;
+check("goals conceded cost defenders points but not midfielders", (() => {
+  const def = allXP.find(p => p.positionId === 2 && p.xMins > 60), mid = allXP.find(p => p.positionId === 3 && p.xMins > 60);
+  const fx = id => fixtures.find(f => f.event === 10 && (f.team_h === VG.players[id].team || f.team_a === VG.players[id].team));
+  const run = id => { const f = fx(id), home = f.team_h === VG.players[id].team; return VG.computeFixtureXP(id, home ? f.team_a : f.team_h, home, 3); };
+  return run(def.id).concededXP > 0 && run(mid.id).concededXP === 0;
 })());
 
 (async () => {
@@ -1337,14 +1349,21 @@ check("home boost differentiates positions by clean-sheet premium", (() => {
         .map(sp => sp.element);
       const outIds = res.transfersOut.map(p => p.id);
       const forced = outIds.filter(id => unavailIds.includes(id));
-      // Forced (unavailable) players must fill the transfer slots FIRST — the
-      // value-upgrade pass must never crowd them out. Number-of-forced equals
-      // min(unavailable, total transfers made), so this survives the live data
-      // changing which/how many squad players are injured.
+      // Forced (unavailable) players must fill the FREE transfer slots first;
+      // the value-upgrade pass must never crowd them out. Hits beyond that are
+      // ranked on gain, so a fit-player upgrade can legitimately beat a dead
+      // bench player there. Survives the live data changing who is injured.
+      const freeOuts = outIds.slice(0, 2);
       return res.transfersOut.length > 0 && res.transfersIn.length > 0 &&
-        forced.length > 0 && forced.length === Math.min(unavailIds.length, res.transfersOut.length);
+        freeOuts.filter(id => unavailIds.includes(id)).length === Math.min(unavailIds.length, freeOuts.length) &&
+        forced.length >= Math.min(unavailIds.length, 2);
     } catch (e) { return false; }
   })());
+
+  // v6.0: hits used to share the free-transfer cap, so the hit phase never ran.
+  check("hit phase has its own cap above the free transfers", /const hitCap = [^;]*freeTransfers \+ 2/.test(appSource) && /outPlayers\.length >= hitCap/.test(appSource));
+  check("dead players missing from allXP compete for hit slots at 0 xP", /if \(!cXP && VG\.players\[pid\] && !VG\.isAvailable\(\{ id: pid \}\)\) \{\s*cXP = \{ id: pid, positionId: VG\.players\[pid\]\.element_type, totalXP: 0 \}/.test(appSource));
+  check("transfer optimizer uses the chosen horizon, not a fixed 5", /VG\.optimizeTransfers\(currentSquad, allXP, bank, freeTransfers, gw, horizon, constraints\)/.test(uiSource));
 
   // v5.17: forced replacement for players NOT in allXP (injured/left-league).
   check("forced pass builds a bootstrap stub for players missing from allXP", /if \(!cXP\) \{\s*const boot = VG\.players\[pid\]/.test(appSource));
@@ -1374,6 +1393,42 @@ check("home boost differentiates positions by clean-sheet premium", (() => {
   })());
   // Guard the pool filter feeds both chip generators (not just Wildcard).
   check("Free Hit + Wildcard both route through filterPool", appSource.indexOf("VG.filterPool(players, opts)") >= 0);
+
+  section("v6 match model (backtest-calibrated, tools/backtest.js)");
+  {
+    const tr = VG.teamRates();
+    const atts = Object.values(tr.teams).map(t => t.att), defs = Object.values(tr.teams).map(t => t.def);
+    const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+    check("team attack/defence indices centre on the league average", Math.abs(avg(atts) - 1) < 0.15 && Math.abs(avg(defs) - 1) < 0.15);
+    check("team indices actually separate teams (not flat)", Math.max(...atts) - Math.min(...atts) > 0.3);
+    check("negative binomial gives more clean sheets than Poisson at the same mean", VG._negBinPmf(1.39, 11, 0)[0] > Math.exp(-1.39));
+    check("1 point per 3 saves is a Poisson floor, not saves/3.5*3", Math.abs(VG._poissonFloorDiv(3, 3) - 0.6646) < 0.002);
+    // A first-choice keeper making 3 saves/90 earns well under 1 save point a
+    // game (v5 paid ~2.6 and put 13 keepers in the GW8 top 25).
+    const gk = allXP.filter(p => p.positionId === 1).sort((a, b) => b.xMins - a.xMins)[0];
+    const gf = fixtures.find(f => f.event === 10 && (f.team_h === gk.teamId || f.team_a === gk.teamId));
+    const gkRes = VG.computeFixtureXP(gk.id, gf.team_h === gk.teamId ? gf.team_a : gf.team_h, gf.team_h === gk.teamId, 3);
+    check("keeper save points stay realistic (< 1 per game)", gkRes.xpComponents.xpSaves < 1);
+    // Bonus averaged ~1 point per player per game in v5 (5-7x reality).
+    const bonusAvg = avg(allXP.filter(p => p.xMins > 60).slice(0, 200).map(p => {
+      const f = fixtures.find(x => x.event === 10 && (x.team_h === p.teamId || x.team_a === p.teamId));
+      return f ? VG.computeFixtureXP(p.id, f.team_h === p.teamId ? f.team_a : f.team_h, f.team_h === p.teamId, 3).xpComponents.xpBonus : 0;
+    }));
+    check("projected bonus averages a realistic < 0.6 per regular starter", bonusAvg > 0.05 && bonusAvg < 0.6);
+    // A player carrying last season's totals (applyHistoryPriors) but with no
+    // minutes this season is NOT a 30-start regular mid-season.
+    const tid = 2;
+    const ghost = VG.minutesModel({ element_type: 3, team: tid, minutes: 2500, starts: 30, _priorSeason: true, status: "a" });
+    check("prior-season totals don't read as this season's start record", ghost.pStart < 0.35);
+    check("backup keepers (0 starts this season) almost never start", VG.minutesModel({ element_type: 1, team: tid, minutes: 0, starts: 0, status: "a" }).pStart < 0.1);
+    // Understat isResult entries are post-match outcome odds, not forecasts.
+    const savedUs = VG.understat, savedOdds = VG.oddsData;
+    VG.oddsData = null;
+    VG.understat = { fixtures: [{ home: "MCI", away: "ARS", datetime: "2026-08-21 19:30:00", isResult: true, forecast: { w: "0.9", d: "0.05", l: "0.05" } }] };
+    check("post-match Understat results are not used as forecasts", VG._matchWinProbs(mci, ars) === null);
+    VG.understat = savedUs; VG.oddsData = savedOdds;
+    check("calibrated engine constants are exposed on VG.MODEL", VG.MODEL && VG.MODEL.gaDispersion > 0 && VG.MODEL.rolePrior && VG.MODEL.bonus90);
+  }
 
   section("v5.17.9 Availability gates output, injured players stay in squad");
 

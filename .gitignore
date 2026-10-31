@@ -6,3 +6,4 @@ __pycache__/
 .claude/
 .playwright-mcp/
 .wrangler/
+tools/.cache/
