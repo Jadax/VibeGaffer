@@ -1,0 +1,154 @@
+{
+ "gw": 3,
+ "entry": 2769173,
+ "advice": {
+  "points": 44,
+  "hitCost": 0,
+  "chip": "wildcard",
+  "transfers": [
+   [
+    "Wieffer",
+    "Ajayi"
+   ],
+   [
+    "Watkins",
+    "João Pedro"
+   ]
+  ],
+  "captain": "B.Fernandes",
+  "captainPoints": 2,
+  "chipsAdvised": [
+   "wildcard"
+  ]
+ },
+ "manager": {
+  "points": 30,
+  "hitCost": 0,
+  "chip": null,
+  "captain": "Saka"
+ },
+ "top200": {
+  "points": 58.77,
+  "captain": "Haaland",
+  "chips": {
+   "freehit": 0.33,
+   "wildcard": 0.14,
+   "3xc": 0.45
+  }
+ },
+ "average": 51,
+ "rho": 0.529,
+ "noShows": [],
+ "cards": [
+  {
+   "id": 279,
+   "name": "Ajayi",
+   "yc": 1,
+   "rc": 0
+  },
+  {
+   "id": 154,
+   "name": "Palmer",
+   "yc": 1,
+   "rc": 0
+  },
+  {
+   "id": 565,
+   "name": "M.Sangaré",
+   "yc": 1,
+   "rc": 0
+  },
+  {
+   "id": 165,
+   "name": "João Pedro",
+   "yc": 1,
+   "rc": 0
+  }
+ ],
+ "missedHauls": [
+  {
+   "id": 204,
+   "name": "Mitchell",
+   "pts": 15,
+   "projRank": 208,
+   "proj": 1.6
+  },
+  {
+   "id": 330,
+   "name": "Bogle",
+   "pts": 14,
+   "projRank": 100,
+   "proj": 2.8
+  },
+  {
+   "id": 379,
+   "name": "Isak",
+   "pts": 13,
+   "projRank": 9,
+   "proj": 7.2
+  },
+  {
+   "id": 453,
+   "name": "Barnes",
+   "pts": 12,
+   "projRank": 124,
+   "proj": 2.5
+  },
+  {
+   "id": 504,
+   "name": "Vuskovic",
+   "pts": 12,
+   "projRank": 89,
+   "proj": 3
+  },
+  {
+   "id": 98,
+   "name": "Janelt",
+   "pts": 11,
+   "projRank": 57,
+   "proj": 4
+  },
+  {
+   "id": 367,
+   "name": "Gakpo",
+   "pts": 11,
+   "projRank": 17,
+   "proj": 6.2
+  },
+  {
+   "id": 15,
+   "name": "Ødegaard",
+   "pts": 10,
+   "projRank": 32,
+   "proj": 5.4
+  }
+ ],
+ "channel": {
+  "GK": {
+   "proj": 1.5,
+   "actual": 1.8
+  },
+  "DEF": {
+   "proj": 2.5,
+   "actual": 2.8
+  },
+  "MID": {
+   "proj": 2.8,
+   "actual": 2.6
+  },
+  "FWD": {
+   "proj": 2.6,
+   "actual": 2.2
+  }
+ },
+ "priceHit": {
+  "calls": 71,
+  "right": 5
+ },
+ "lessons": [
+  "Captain B.Fernandes (2) vs the top 200's Haaland (9, 97%).",
+  "Cards in the advised XI: Ajayi, Palmer, M.Sangaré, João Pedro.",
+  "Hauls the model did not see: Mitchell 15 (ranked 208), Bogle 14 (ranked 100), Barnes 12 (ranked 124), Vuskovic 12 (ranked 89).",
+  "Price calls weak: 5 of 71 right."
+ ]
+}

@@ -385,7 +385,7 @@ check("Shared XI picker is used by every optimizer", appSource.split("VG.pickBes
 check("Pitch xP/GW respects the selected horizon", !appSource.includes("p.totalXP / 12"));
 check("Compare tab matches players by id, not name", !indexSource.includes("x.name === name") && indexSource.includes("x.id === parseInt(o.value)"));
 check("Transfer mode reports a real squad value", !indexSource.includes("totalCost: 0, budgetRemaining: bank"));
-check("Transfer mode honours the xP horizon", indexSource.includes("g >= gw && g < gw + horizon"));
+check("Transfer mode honours the xP horizon", appSource.includes("g >= gw && g < gw + horizon"));
 check("HiGHS loading flag is cleared on success", /VG\._highsReady = highs;\s*\n\s*VG\._highsLoading = false;/.test(appSource));
 check("Optimize does not refetch bootstrap when already loaded", indexSource.includes("if (!VG.bootstrapData || !VG.players)"));
 check("HiGHS is read from the global it actually publishes", appSource.includes("window.Module || window.Highs"));
@@ -1329,9 +1329,10 @@ check("goals conceded cost defenders points but not midfielders", (() => {
   // the forced-replacement pass computes selling_price=0 and can never afford
   // a replacement, so transfers vanish entirely (the real "no transfers shown"
   // bug the user reported).
-  check("buildFromSquad enriches picks with prices/names from VG.players",
-    /const currentSquad = squadData\.picks\.picks\.map\(sp => \{/.test(uiSource) &&
-    /selling_price: sp\.selling_price \|\| sp\.now_cost \|\| \(boot && boot\.now_cost\)/.test(uiSource));
+  check("planSquad enriches picks with prices/names from VG.players",
+    /const currentSquad = picks\.map\(sp => \{/.test(appSource) &&
+    /selling_price: sp\.selling_price \|\| sp\.now_cost \|\| \(boot && boot\.now_cost\)/.test(appSource));
+  check("web transfer mode plans through the shared VG.planSquad", /VG\.planSquad\(squadData\.picks\.picks, allXP, bank, freeTransfers, gw, horizon, constraints, VG\.chipWindowFromHistory\(squadData\.history, gw\)\)/.test(uiSource));
   // Functional reproduction of the exact live bug: element-only picks (as the
   // API returns them) must still yield the forced Watkins/Mateta replacements.
   check("forced transfers survive element-only picks after price enrichment", (() => {
@@ -1360,10 +1361,21 @@ check("goals conceded cost defenders points but not midfielders", (() => {
     } catch (e) { return false; }
   })());
 
+  // v6.1: VG.planSquad is the one planning path for the web app and the
+  // FPL Copilot userscript. Element-only picks must come back as a full plan.
+  check("planSquad returns a 15-man squad with an 11 + 4 lineup and captains", (() => {
+    try {
+      const ids = [82, 4, 269, 203, 130, 12, 481, 516, 375, 411, 55, 529, 498, 103, 223];
+      const plan = VG.planSquad(ids.map((el, i) => ({ element: el, position: i + 1, multiplier: 1 })), allXP, 0.4, 2, 3, 5, {});
+      return plan.squad.length === 15 && plan.starting.length === 11 && plan.bench.length === 4 &&
+        plan.gotCap.length === 2 && plan.gwPicks.length === 5 && !!plan.chipAdvice.wildcard;
+    } catch (e) { return false; }
+  })());
+
   // v6.0: hits used to share the free-transfer cap, so the hit phase never ran.
   check("hit phase has its own cap above the free transfers", /const hitCap = [^;]*freeTransfers \+ 2/.test(appSource) && /outPlayers\.length >= hitCap/.test(appSource));
   check("dead players missing from allXP compete for hit slots at 0 xP", /if \(!cXP && VG\.players\[pid\] && !VG\.isAvailable\(\{ id: pid \}\)\) \{\s*cXP = \{ id: pid, positionId: VG\.players\[pid\]\.element_type, totalXP: 0 \}/.test(appSource));
-  check("transfer optimizer uses the chosen horizon, not a fixed 5", /VG\.optimizeTransfers\(currentSquad, allXP, bank, freeTransfers, gw, horizon, constraints\)/.test(uiSource));
+  check("transfer optimizer uses the chosen horizon, not a fixed 5", /VG\.optimizeTransfers\(currentSquad, allXP, bank, freeTransfers, gw, horizon, constraints\)/.test(appSource));
 
   // v5.17: forced replacement for players NOT in allXP (injured/left-league).
   check("forced pass builds a bootstrap stub for players missing from allXP", /if \(!cXP\) \{\s*const boot = VG\.players\[pid\]/.test(appSource));
@@ -1487,7 +1499,78 @@ check("goals conceded cost defenders points but not midfielders", (() => {
       VG.players[b].status = savedB.s; VG.players[b].chance_of_playing_next_round = savedB.c;
     }
   }
-  check("transfer-mode squad keeps retained players missing from allXP", fs.readFileSync(path.join(root, "docs", "ui.js"), "utf8").includes("VG.playerXPEntry(id, gw, horizon, VG.allFixtures)"));
+  check("transfer-mode squad keeps retained players missing from allXP", appSource.includes("VG.playerXPEntry(id, gw, horizon, VG.allFixtures)"));
+
+  section("v6.1 self-tuning + FPL Copilot");
+  // model-params.json may tune known constants but never add keys or change types.
+  {
+    const saved = JSON.parse(JSON.stringify(VG.MODEL));
+    const realFetch = global.fetch;
+    global.fetch = async () => ({ ok: true, json: async () => ({ params: { startK: 7, evil: 1, teamK: "9", rolePrior: { started: 0 } } }) });
+    try {
+      await VG.loadModelParams();
+      check("model params apply known numeric keys", VG.MODEL.startK === 7);
+      check("model params ignore unknown keys, wrong types and objects",
+        !("evil" in VG.MODEL) && VG.MODEL.teamK === saved.teamK && VG.MODEL.rolePrior.started === saved.rolePrior.started);
+    } finally {
+      global.fetch = realFetch;
+      Object.keys(VG.MODEL).forEach(k => { if (!(k in saved)) delete VG.MODEL[k]; });
+      Object.assign(VG.MODEL, saved);
+    }
+  }
+  check("app loads tuned params before the first projection", /await VG\.loadModelParams\(\)/.test(uiSource));
+  check("autotune only publishes params that also hold up on the latest GWs", /bestScore > baseFit \+ 0\.005 && newVal >= baseVal/.test(fs.readFileSync(path.join(root, "tools", "autotune.js"), "utf8")));
+  {
+    const { execFileSync } = require("child_process");
+    let fresh = true;
+    try { execFileSync(process.execPath, [path.join(root, "tools", "build-copilot.js"), "--check"], { stdio: "pipe" }); } catch (e) { fresh = false; }
+    check("FPL Copilot userscript is rebuilt from the current engine (npm run build:copilot)", fresh);
+    const userscript = fs.readFileSync(path.join(root, "docs", "copilot", "fpl-copilot.user.js"), "utf8");
+    const pkgVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+    check("FPL Copilot @version matches package.json", userscript.includes(`// @version      ${pkgVersion}`));
+    let parses = true;
+    try { new Function(userscript); } catch (e) { parses = false; }
+    check("FPL Copilot userscript parses", parses);
+    check("FPL Copilot buttons always ask before transfers or chips", /const ask = \(auto, text\) => auto \|\| window\.confirm\(text\)/.test(userscript) && (userscript.match(/!ask\(/g) || []).length === 3);
+    check("FPL Copilot autopilot transfers and chips are off until switched on", /autoTransfers: false, autoChips: false, autoWindowH: 12/.test(userscript));
+    check("FPL Copilot autopilot acts at most once per GW on transfers and chips", /!isDone\(gw, 'transfers'\)/.test(userscript) && /!isDone\(gw, 'chip'\)/.test(userscript));
+    check("FPL Copilot weekly run makes no change without one confirmation", /if \(!window\.confirm\(`Weekly run for GW/.test(userscript));
+    check("FPL Copilot weekly run covers result, top managers, prices, news, players, plan and changes", ["result", "top", "prices", "news", "players", "plan", "apply"].every(k => userscript.includes(`await step('${k}'`)));
+    check("FPL Copilot keeps an active team chip when saving a lineup", /const chip = teamChip \? TEAM_CHIP_API\[teamChip\] : activeTeamChip\(team\)/.test(userscript));
+  }
+
+  // v6.1: chips expire at GW19 / GW38. Without a double gameweek ahead the
+  // planner must still place them, and never two chips in one week.
+  {
+    const pl = VG.planSquad([82, 4, 269, 203, 130, 12, 481, 516, 375, 411, 55, 529, 498, 103, 223].map((el, i) => ({ element: el, position: i + 1 })), allXP, 0.4, 1, 3, 5, {}, { windowEnd: 7, chipsAvailable: ["wildcard", "free_hit", "bench_boost", "triple_captain"] });
+    const ca = pl.chipAdvice;
+    const weeks = ["wildcard", "free_hit", "bench_boost", "triple_captain"].filter(k => ca[k].recommend).map(k => ca[k].bestGW);
+    check("chip planner never stacks two chips in one gameweek", new Set(weeks).size === weeks.length);
+    check("chip planner keeps every chip inside its expiry window", weeks.every(g => g <= 7));
+    check("with the window closing, every unplayed chip gets a week", weeks.length === 4);
+    const used = VG.chipWindowFromHistory({ chips: [{ name: "3xc", event: 7 }, { name: "wildcard", event: 25 }] }, 10);
+    check("chip history: first-half chip counted as played, second-half one ignored", used.windowEnd === 19 && !used.chipsAvailable.includes("triple_captain") && used.chipsAvailable.includes("wildcard"));
+    const played = VG.planSquad([82, 4, 269, 203, 130, 12, 481, 516, 375, 411, 55, 529, 498, 103, 223].map((el, i) => ({ element: el, position: i + 1 })), allXP, 0.4, 1, 3, 5, {}, { windowEnd: 7, chipsAvailable: [] }).chipAdvice;
+    check("played chips are never recommended again in the same half", ["wildcard", "free_hit", "bench_boost", "triple_captain"].every(k => !played[k].recommend));
+  }
+
+  // v6.1: top-manager signal. Bounded, and absent data leaves projections alone.
+  {
+    const pid = allXP[0].id, opp = VG.fixtureInfo(VG.teamFixtures(fixtures, 3, allXP[0].teamId)[0] || {}, allXP[0].teamId);
+    const savedElite = VG.elite, savedGW = VG._projGW;
+    VG._projGW = 3;
+    try {
+      VG.elite = null;
+      const off = VG.computeFixtureXP(pid, opp.oppId, opp.isHome, opp.fdr).xp;
+      VG.elite = { n: 200, players: { [pid]: { own: 1, start: 1, cap: 1 } } };
+      const on = VG.computeFixtureXP(pid, opp.oppId, opp.isHome, opp.fdr).xp;
+      VG.elite = { n: 200, players: {} };
+      const none = VG.computeFixtureXP(pid, opp.oppId, opp.isHome, opp.fdr).xp;
+      check("elite signal lifts a player every top manager starts, capped at +25%", on > off && on <= off * 1.25 + 0.01);
+      check("elite signal trims an unpicked player by at most 10%", none < off && none >= off * 0.9 - 0.01);
+    } finally { VG.elite = savedElite; VG._projGW = savedGW; }
+  }
+  check("backtest feeds the engine only the PREVIOUS GW's elite picks", /elite-gw\$\{gw - 1\}\.json/.test(fs.readFileSync(path.join(root, "tools", "backtest-worker.js"), "utf8")));
 
   section("Summary");
   console.log(`${passed} passed, ${failed} failed`);

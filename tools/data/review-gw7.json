@@ -1,0 +1,136 @@
+{
+ "gw": 7,
+ "entry": 2769173,
+ "advice": {
+  "points": 47,
+  "hitCost": 0,
+  "chip": null,
+  "transfers": [
+   [
+    "Bentancur",
+    "Barnes"
+   ]
+  ],
+  "captain": "Haaland",
+  "captainPoints": 13,
+  "chipsAdvised": []
+ },
+ "manager": {
+  "points": 36,
+  "hitCost": 0,
+  "chip": null,
+  "captain": "Saka"
+ },
+ "top200": {
+  "points": 83.31,
+  "captain": "Haaland",
+  "chips": {
+   "3xc": 0.4,
+   "wildcard": 0.015,
+   "bboost": 0.05,
+   "freehit": 0.01
+  }
+ },
+ "average": 59,
+ "rho": 0.5429999999999999,
+ "noShows": [],
+ "cards": [
+  {
+   "id": 269,
+   "name": "Sessegnon",
+   "yc": 0,
+   "rc": 1
+  },
+  {
+   "id": 124,
+   "name": "Groß",
+   "yc": 1,
+   "rc": 0
+  }
+ ],
+ "missedHauls": [
+  {
+   "id": 156,
+   "name": "Neto",
+   "pts": 15,
+   "projRank": 100,
+   "proj": 2.9
+  },
+  {
+   "id": 129,
+   "name": "Ayari",
+   "pts": 13,
+   "projRank": 101,
+   "proj": 2.9
+  },
+  {
+   "id": 411,
+   "name": "Haaland",
+   "pts": 13,
+   "projRank": 1,
+   "proj": 9.4
+  },
+  {
+   "id": 79,
+   "name": "Evanilson",
+   "pts": 12,
+   "projRank": 32,
+   "proj": 4.1
+  },
+  {
+   "id": 138,
+   "name": "Kostoulas",
+   "pts": 12,
+   "projRank": 21,
+   "proj": 4.4
+  },
+  {
+   "id": 53,
+   "name": "Manzambi",
+   "pts": 11,
+   "projRank": 159,
+   "proj": 2.3
+  },
+  {
+   "id": 148,
+   "name": "Hato",
+   "pts": 11,
+   "projRank": 227,
+   "proj": 1.6
+  },
+  {
+   "id": 261,
+   "name": "Iwobi",
+   "pts": 11,
+   "projRank": 51,
+   "proj": 3.5
+  }
+ ],
+ "channel": {
+  "GK": {
+   "proj": 1.6,
+   "actual": 1.8
+  },
+  "DEF": {
+   "proj": 2.3,
+   "actual": 2.5
+  },
+  "MID": {
+   "proj": 2.3,
+   "actual": 2.3
+  },
+  "FWD": {
+   "proj": 2.7,
+   "actual": 3.3
+  }
+ },
+ "priceHit": {
+  "calls": 36,
+  "right": 3
+ },
+ "lessons": [
+  "Cards in the advised XI: Sessegnon (red), Groß.",
+  "Hauls the model did not see: Neto 15 (ranked 100), Ayari 13 (ranked 101), Manzambi 11 (ranked 159), Hato 11 (ranked 227).",
+  "Price calls weak: 3 of 36 right."
+ ]
+}

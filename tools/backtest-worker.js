@@ -34,6 +34,9 @@ if (process.env.VG_MODEL) Object.assign(VG.MODEL, JSON.parse(process.env.VG_MODE
 
 (async () => {
   // Mirror VG.init's load order, awaiting the optional loaders the UI awaits in VG.run.
+  // The exact ILP when the optional `highs` package is installed (CI does
+  // `npm i --no-save highs`), so team scores match what the app picks.
+  try { VG._highsReady = await require(process.env.HIGHS_MODULE || "highs")({}); } catch (e) { VG._highsReady = null; }
   VG.bootstrapData = await VG.loadBootstrap();
   VG.applyHistoryPriors(VG.bootstrapData, await VG.loadHistoryPriors());
   VG.buildMaps(VG.bootstrapData);
@@ -42,6 +45,9 @@ if (process.env.VG_MODEL) Object.assign(VG.MODEL, JSON.parse(process.env.VG_MODE
   await VG.loadUnderstat();
   await VG.loadSetPieceData();
   await VG.loadRecentForm();
+  // Top managers' picks from the GW before (what was known at the deadline).
+  const eliteFile = path.join(root, "tools", "data", `elite-gw${gw - 1}.json`);
+  VG.elite = fs.existsSync(eliteFile) ? JSON.parse(fs.readFileSync(eliteFile, "utf8")) : null;
 
   const allXP = VG.computeAllXP(gw, horizon, VG.allFixtures);
   const out = allXP.map(p => {
@@ -95,12 +101,39 @@ if (process.env.VG_MODEL) Object.assign(VG.MODEL, JSON.parse(process.env.VG_MODE
       const score = fn(o);
       return { ...byId[o.id], totalXP: score, score, xpPerPrice: score / Math.max(o.price, 4) };
     });
-    const draft = VG.optimizeDraft(pool, 100, VG.allFixtures, gw, 1);
+    const draft = VG._highsReady ? await VG.optimizeDraftILP(pool, 100, VG.allFixtures, gw, 1) : VG.optimizeDraft(pool, 100, VG.allFixtures, gw, 1);
     const squad = draft.squad.map(p => ({ ...p, score: pool.find(q => q.id === p.id).score }));
     const xi = VG.pickBestXI(squad, "score");
     const cap = VG.topCaptainCandidates(xi.starting, "score")[0];
     selections[name] = { squad: squad.map(p => p.id), xi: xi.starting.map(p => p.id), captain: cap && cap.id, cost: draft.totalCost };
   }
 
-  process.stdout.write(JSON.stringify({ gw, currentGW: VG.currentGW, n: out.length, players: out, selections }));
+  // Review mode (tools/review.js): the advice the engine gives a real squad
+  // at this deadline. ADVICE = {picks, bank, ft, chips: {windowEnd, chipsAvailable}}.
+  let advice = null;
+  if (process.env.ADVICE) {
+    const a = JSON.parse(process.env.ADVICE);
+    const plan = VG.planSquad(a.picks, allXP, a.bank, a.ft, gw, horizon, { maxTransfers: a.ft }, a.chips);
+    const ids = l => l.map(p => p.id);
+    advice = {
+      transfersOut: ids(plan.transfersOut), transfersIn: ids(plan.transfersIn), hitCost: plan.hitCost || 0,
+      xi: ids(plan.starting), bench: ids(plan.bench),
+      captain: plan.gotCap[0] && plan.gotCap[0].id, vice: plan.gotCap[1] && plan.gotCap[1].id,
+      chips: Object.fromEntries(Object.entries(plan.chipAdvice).filter(([k]) => k !== "gwScores").map(([k, v]) => [k, { recommend: !!v.recommend, bestGW: v.bestGW, reason: v.reason }])),
+      chipSquad: null
+    };
+    const chip = ["wildcard", "free_hit"].find(k => plan.chipAdvice[k].recommend && plan.chipAdvice[k].bestGW === gw);
+    if (chip) {
+      const budget = a.picks.reduce((s, p) => s + (p.selling_price || (VG.players[p.element] || {}).now_cost || 0), 0) / 10 + a.bank;
+      const made = chip === "wildcard"
+        ? await VG.generateWildcard(allXP, budget, VG.allFixtures, gw, horizon)
+        : await VG.generateFreeHit(allXP, budget, VG.allFixtures, gw, 1);
+      const p2 = VG.planSquad(made.squad.map((p, i) => ({ element: p.id, position: i + 1 })), allXP, 0, 0, gw, horizon, { maxTransfers: 0 });
+      advice.chipSquad = { chip, squad: ids(made.squad), xi: ids(p2.starting), bench: ids(p2.bench), captain: p2.gotCap[0] && p2.gotCap[0].id, vice: p2.gotCap[1] && p2.gotCap[1].id };
+    }
+  }
+  // Price calls from the deadline snapshot, checked later against real moves.
+  const prices = VG.predictPriceChanges(VG.bootstrapData).map(m => ({ id: m.id, risk: m.risk }));
+
+  process.stdout.write(JSON.stringify({ gw, currentGW: VG.currentGW, n: out.length, players: out, selections, advice, prices }));
 })().catch(e => { quiet("worker failed:", e && e.stack || e); process.exit(1); });

@@ -213,6 +213,38 @@ VG.loadSetPieceData = async () => {
 // "started well in September, benched since" — this closes that gap.
 // Empty (or entirely absent, e.g. pre-season before GW1) is a normal state:
 // VG.computeFixtureXP falls back to the season-aggregate model untouched.
+// Model constants re-fitted weekly by tools/autotune.js against every
+// finished GW. Only known VG.MODEL keys of the same type are taken, so the
+// file can tune the engine but never add to it. Missing file = built-in values.
+VG.loadModelParams = async () => {
+  VG.modelParamsLoaded = true;
+  try {
+    const r = await fetch("data/model-params.json", { cache: "no-cache" });
+    const j = r.ok ? await r.json() : null;
+    if (j && j.params) {
+      Object.entries(j.params).forEach(([k, v]) => {
+        if (k in VG.MODEL && typeof v === typeof VG.MODEL[k] && typeof v !== "object") VG.MODEL[k] = v;
+      });
+      VG.modelParams = j;
+      return j;
+    }
+  } catch (e) { console.warn("[VG] Model params unavailable (optional):", e.message); }
+  return null;
+};
+
+// What the top 200 managers own, start and captain in the latest GW whose
+// deadline has passed (tools/fetch-elite.js, weekly). Optional signal.
+VG.loadElite = async () => {
+  VG.eliteLoaded = true;
+  try {
+    const r = await fetch("data/elite.json", { cache: "no-cache" });
+    const j = r.ok ? await r.json() : null;
+    if (j && j.players && j.n > 0) { VG.elite = j; return j; }
+  } catch (e) { console.warn("[VG] Elite data unavailable (optional):", e.message); }
+  VG.elite = null;
+  return null;
+};
+
 VG.loadRecentForm = async () => {
   VG.recentFormLoaded = true;
   try {
@@ -267,7 +299,10 @@ VG.loadSquad = async (tid, gw) => {
     VG.fetch(VG.FPL + "/entry/" + tid + "/", "team"),
     VG.fetch(VG.FPL + "/entry/" + tid + "/event/" + gw + "/picks/", "picks")
   ]);
-  return { info, picks };
+  // Chips already played (optional): drives the chip-expiry planner.
+  let history = null;
+  try { history = await VG.fetch(VG.FPL + "/entry/" + tid + "/history/", "history"); } catch (e) { /* advice falls back to "all chips unplayed" */ }
+  return { info, picks, history };
 };
 
 // The user's "primary" classic mini-league, auto-detected from their entry so

@@ -40,14 +40,14 @@ async function bootstrapNow() {
 
 // Actual points per player for a finished GW: { id: { pts, mins } }.
 async function actuals(gw) {
-  const f = path.join(cache, `live2-gw${gw}.json`);
+  const f = path.join(cache, `live3-gw${gw}.json`);
   if (fs.existsSync(f)) return f;
   const j = await getJSON(`https://fantasy.premierleague.com/api/event/${gw}/live/`);
   const map = {};
   j.elements.forEach(e => {
     const s = e.stats;
     map[e.id] = { pts: s.total_points, mins: s.minutes, starts: s.starts, g: s.goals_scored, a: s.assists,
-      cs: s.clean_sheets, gc: s.goals_conceded, saves: s.saves, bonus: s.bonus, dc: s.defensive_contribution, yc: s.yellow_cards };
+      cs: s.clean_sheets, gc: s.goals_conceded, saves: s.saves, bonus: s.bonus, dc: s.defensive_contribution, yc: s.yellow_cards, rc: s.red_cards };
   });
   fs.writeFileSync(f, JSON.stringify(map));
   return f;
@@ -91,7 +91,9 @@ const spearman = (x, y) => pearson(rank(x), rank(y));
 const topK = (rows, key, k) => [...rows].sort((a, b) => b[key] - a[key]).slice(0, k);
 const teamPoints = (sel, act) => sel.xi.reduce((s, id) => s + ((act[id] && act[id].pts) || 0), 0) + ((act[sel.captain] && act[sel.captain].pts) || 0);
 
-(async () => {
+module.exports = { getJSON, bootstrapNow, actuals, snapshot, git, spearman, mean };
+
+if (require.main === module) (async () => {
   const [fromGW, toGW, horizon] = [parseInt(process.argv[2] || "2"), parseInt(process.argv[3] || "8"), process.argv[4] || "6"];
   const boot = await bootstrapNow();
   const rows = [], perGW = [];

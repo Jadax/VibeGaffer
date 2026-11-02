@@ -1,0 +1,157 @@
+{
+ "gw": 8,
+ "entry": 2769173,
+ "advice": {
+  "points": 57,
+  "hitCost": 0,
+  "chip": null,
+  "transfers": [
+   [
+    "Sessegnon",
+    "Konsa"
+   ]
+  ],
+  "captain": "Haaland",
+  "captainPoints": 8,
+  "chipsAdvised": []
+ },
+ "manager": {
+  "points": 43,
+  "hitCost": 0,
+  "chip": null,
+  "captain": "Saka"
+ },
+ "top200": {
+  "points": 58.52,
+  "captain": "Haaland",
+  "chips": {
+   "bboost": 0.015,
+   "3xc": 0.005,
+   "wildcard": 0.01,
+   "freehit": 0.005
+  }
+ },
+ "average": 45,
+ "rho": 0.433,
+ "noShows": [
+  {
+   "id": 498,
+   "name": "Senesi",
+   "flagged": false,
+   "xMins": 27
+  },
+  {
+   "id": 165,
+   "name": "João Pedro",
+   "flagged": false,
+   "xMins": 68
+  }
+ ],
+ "cards": [
+  {
+   "id": 330,
+   "name": "Bogle",
+   "yc": 1,
+   "rc": 0
+  },
+  {
+   "id": 203,
+   "name": "Canvot",
+   "yc": 1,
+   "rc": 0
+  },
+  {
+   "id": 481,
+   "name": "Anderson",
+   "yc": 1,
+   "rc": 0
+  }
+ ],
+ "missedHauls": [
+  {
+   "id": 4,
+   "name": "Gabriel",
+   "pts": 17,
+   "projRank": 12,
+   "proj": 5.1
+  },
+  {
+   "id": 31,
+   "name": "Konsa",
+   "pts": 14,
+   "projRank": 8,
+   "proj": 5.4
+  },
+  {
+   "id": 166,
+   "name": "N.Jackson",
+   "pts": 13,
+   "projRank": 89,
+   "proj": 3
+  },
+  {
+   "id": 60,
+   "name": "Hill",
+   "pts": 11,
+   "projRank": 80,
+   "proj": 3.1
+  },
+  {
+   "id": 264,
+   "name": "Bobb",
+   "pts": 11,
+   "projRank": 106,
+   "proj": 2.9
+  },
+  {
+   "id": 514,
+   "name": "Tel",
+   "pts": 11,
+   "projRank": 265,
+   "proj": 1
+  },
+  {
+   "id": 593,
+   "name": "Dedić",
+   "pts": 11,
+   "projRank": 198,
+   "proj": 1.8
+  },
+  {
+   "id": 10,
+   "name": "White",
+   "pts": 10,
+   "projRank": 76,
+   "proj": 3.2
+  }
+ ],
+ "channel": {
+  "GK": {
+   "proj": 1.5,
+   "actual": 2.2
+  },
+  "DEF": {
+   "proj": 2.4,
+   "actual": 2.9
+  },
+  "MID": {
+   "proj": 2.1,
+   "actual": 2.3
+  },
+  "FWD": {
+   "proj": 2.5,
+   "actual": 2.6
+  }
+ },
+ "priceHit": {
+  "calls": 33,
+  "right": 9
+ },
+ "lessons": [
+  "2 advised starters did not play: Senesi, João Pedro.",
+  "Cards in the advised XI: Bogle, Canvot, Anderson.",
+  "Hauls the model did not see: N.Jackson 13 (ranked 89), Hill 11 (ranked 80), Bobb 11 (ranked 106), Tel 11 (ranked 265), Dedić 11 (ranked 198), White 10 (ranked 76).",
+  "GK under-projected: 1.5 vs 2.2 per player.",
+  "Price calls weak: 9 of 33 right."
+ ]
+}

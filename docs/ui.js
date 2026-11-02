@@ -44,6 +44,8 @@ VG.init = async () => {
     VG.applyHistoryPriors(VG.bootstrapData, await VG.loadHistoryPriors());
     VG.buildMaps(VG.bootstrapData);
     VG.allFixtures = await VG.loadFixtures();
+    await VG.loadModelParams(); // weekly re-fitted constants; must land before any projection
+    await VG.loadElite(); // top-manager picks feed the projection, so also before any
     VG.loadOdds(); // Optional , loads in background, non-blocking
     VG.loadUnderstat(); // Optional , loads in background, non-blocking
     VG.loadSetPieceData(); // Optional , bundled set-piece takers (non-blocking)
@@ -93,6 +95,8 @@ VG.run = async () => {
     if (!VG.understatLoaded) await VG.loadUnderstat();
     if (!VG.setPieces.teams || !Object.keys(VG.setPieces.teams).length) await VG.loadSetPieceData();
     if (!VG.recentFormLoaded) await VG.loadRecentForm();
+    if (!VG.modelParamsLoaded) await VG.loadModelParams();
+    if (!VG.eliteLoaded) await VG.loadElite();
 
     const gw = parseInt(el("gameweek").value);
     let horizon = parseInt(el("horizon").value);
@@ -202,57 +206,10 @@ VG.run = async () => {
       // path (picks 404 pre-deadline → we use the last available GW's squad).
       const buildFromSquad = (squadData) => {
         VG.detectPrimaryLeague(squadData.info);
-        // The FPL picks API returns only element/position/multiplier — NO price
-        // or name. The transfer optimizer reads selling_price/now_cost to
-        // compute affordability, so enrich each pick from the bootstrap or the
-        // forced-replacement pass computes cPrice=0 and can never afford a
-        // replacement. (This was the real reason forced transfers vanished.)
-        const currentSquad = squadData.picks.picks.map(sp => {
-          const boot = VG.players && VG.players[sp.element];
-          return {
-            ...sp,
-            web_name: sp.web_name || (boot && boot.web_name) || "?",
-            now_cost: sp.now_cost || (boot && boot.now_cost) || 0,
-            selling_price: sp.selling_price || sp.now_cost || (boot && boot.now_cost) || 0
-          };
-        });
         const bank = bankOverride !== null ? bankOverride : (squadData.info.last_deadline_bank || 0) / 10;
         const freeTransfers = parseInt(el("freeTransfers").value);
-        // nGWs must be the horizon allXP was projected over: break-even divides
-        // the horizon-total gain by it (5 here overstated gains ~2.4x at 12).
-        const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, gw, horizon, constraints);
-        const transferOutIds = new Set(transferResult.transfersOut.map(p => p.id));
-        const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
-        const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
-        const fullIds = [...retainedIds, ...transferInIds];
-        // allXP only holds available players, so a retained injured player
-        // (kept because the free-transfer cap ran out) used to vanish here and
-        // the squad rendered as 14. Build those entries directly instead.
-        const inPool = new Set(allXP.map(p => p.id));
-        const allSquad = [
-          ...allXP.filter(p => fullIds.includes(p.id)),
-          ...fullIds.filter(id => !inPool.has(id) && VG.players[id])
-            .map(id => VG.playerXPEntry(id, gw, horizon, VG.allFixtures))
-        ].sort((a, b) => b.totalXP - a.totalXP);
-        // Compute per-GW picks for transfer squad
-        const gwPicks = [];
-        const horizonGWs = [...new Set(VG.allFixtures.map(f => f.event))]
-          .sort((a, b) => a - b)
-          .filter(g => g >= gw && g < gw + horizon);
-        horizonGWs.forEach(g => gwPicks.push(VG.computePerGWPicks(allSquad, g, VG.allFixtures)));
-        const starting11 = gwPicks[0]?.starting || allSquad.slice(0, 11);
-        const bench4 = gwPicks[0]?.bench || allSquad.slice(11, 15);
-        const gotCap = gwPicks[0]?.gotCap || VG.topCaptainCandidates(starting11, "totalXP");
-        const chips = VG.evaluateChips(allSquad, gwPicks, VG.allFixtures);
-        return {
-          ...transferResult, chipAdvice: chips, starting: starting11, bench: bench4,
-          totalCost: +allSquad.reduce((s, p) => s + (p.price || 0), 0).toFixed(1),
-          budgetRemaining: bank, formation: gwPicks[0]?.formation || { DEF: 4, MID: 4, FWD: 2 },
-          totalXP: +gwPicks.reduce((s, g) => s + g.gwTotalXP, 0).toFixed(1),
-          gwTotalXP: gwPicks[0]?.gwTotalXP || 0,
-          mode: "transfer", gotCap, gwPicks, squad: allSquad,
-          fallbackGW: squadData.fallbackGW || null
-        };
+        const plan = VG.planSquad(squadData.picks.picks, allXP, bank, freeTransfers, gw, horizon, constraints, VG.chipWindowFromHistory(squadData.history, gw));
+        return { ...plan, fallbackGW: squadData.fallbackGW || null };
       };
 
       try {

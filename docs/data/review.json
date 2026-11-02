@@ -1,0 +1,166 @@
+{
+ "updated": "2026-11-02",
+ "entry": 2769173,
+ "totals": {
+  "advice": 371,
+  "manager": 317,
+  "top200": 557.4,
+  "average": 411
+ },
+ "weeks": [
+  {
+   "gw": 2,
+   "advice": 69,
+   "manager": 54,
+   "top200": 116.88,
+   "average": 81,
+   "captain": "Haaland",
+   "chip": "bench_boost",
+   "transfers": [
+    [
+     "Watkins",
+     "João Pedro"
+    ]
+   ],
+   "lessons": [
+    "2 advised starters did not play: Senesi, Mateta.",
+    "Captain Haaland (13) vs the top 200's B.Fernandes (23, 86%).",
+    "Cards in the advised XI: Anderson.",
+    "Hauls the model did not see: Cherki 14 (ranked 198), Gibbs-White 13 (ranked 84), Scott 12 (ranked 90).",
+    "MID under-projected: 1.9 vs 2.7 per player.",
+    "Price calls weak: 3 of 41 right."
+   ]
+  },
+  {
+   "gw": 3,
+   "advice": 44,
+   "manager": 30,
+   "top200": 58.77,
+   "average": 51,
+   "captain": "B.Fernandes",
+   "chip": "wildcard",
+   "transfers": [
+    [
+     "Wieffer",
+     "Ajayi"
+    ],
+    [
+     "Watkins",
+     "João Pedro"
+    ]
+   ],
+   "lessons": [
+    "Captain B.Fernandes (2) vs the top 200's Haaland (9, 97%).",
+    "Cards in the advised XI: Ajayi, Palmer, M.Sangaré, João Pedro.",
+    "Hauls the model did not see: Mitchell 15 (ranked 208), Bogle 14 (ranked 100), Barnes 12 (ranked 124), Vuskovic 12 (ranked 89).",
+    "Price calls weak: 5 of 71 right."
+   ]
+  },
+  {
+   "gw": 4,
+   "advice": 64,
+   "manager": 59,
+   "top200": 99.99,
+   "average": 69,
+   "captain": "Haaland",
+   "chip": null,
+   "transfers": [
+    [
+     "Wieffer",
+     "Calafiori"
+    ]
+   ],
+   "lessons": [
+    "3 advised starters did not play: Canvot, Senesi, Wilson.",
+    "Captain Haaland (9) vs the top 200's Palmer (5, 54%).",
+    "Cards in the advised XI: Gabriel.",
+    "Hauls the model did not see: Davis 14 (ranked 102), Belloumi 13 (ranked 84), Dunk 12 (ranked 89).",
+    "GK under-projected: 1.6 vs 2.2 per player.",
+    "Price calls weak: 5 of 61 right."
+   ]
+  },
+  {
+   "gw": 5,
+   "advice": 43,
+   "manager": 41,
+   "top200": 57.26,
+   "average": 48,
+   "captain": "Haaland",
+   "chip": "triple_captain",
+   "transfers": [
+    [
+     "Mendy",
+     "Calafiori"
+    ]
+   ],
+   "lessons": [
+    "3 advised starters did not play: Senesi, João Pedro (was flagged), Wilson.",
+    "Hauls the model did not see: Brobbey 17 (ranked 175), Dasilva 15 (ranked 191), Schuster 14 (ranked 214), Manzambi 13 (ranked 346).",
+    "Price calls weak: 11 of 55 right."
+   ]
+  },
+  {
+   "gw": 6,
+   "advice": 47,
+   "manager": 54,
+   "top200": 82.63,
+   "average": 58,
+   "captain": "Haaland",
+   "chip": null,
+   "transfers": [
+    [
+     "Dasilva",
+     "Groß"
+    ]
+   ],
+   "lessons": [
+    "Cards in the advised XI: Bentancur (red).",
+    "Hauls the model did not see: Henderson 18 (ranked 265), Doku 12 (ranked 295), Cherif 12 (ranked 315), O'Shea 11 (ranked 72), McGinn 10 (ranked 71).",
+    "FWD under-projected: 2.6 vs 3.4 per player.",
+    "Price calls weak: 5 of 48 right."
+   ]
+  },
+  {
+   "gw": 7,
+   "advice": 47,
+   "manager": 36,
+   "top200": 83.31,
+   "average": 59,
+   "captain": "Haaland",
+   "chip": null,
+   "transfers": [
+    [
+     "Bentancur",
+     "Barnes"
+    ]
+   ],
+   "lessons": [
+    "Cards in the advised XI: Sessegnon (red), Groß.",
+    "Hauls the model did not see: Neto 15 (ranked 100), Ayari 13 (ranked 101), Manzambi 11 (ranked 159), Hato 11 (ranked 227).",
+    "Price calls weak: 3 of 36 right."
+   ]
+  },
+  {
+   "gw": 8,
+   "advice": 57,
+   "manager": 43,
+   "top200": 58.52,
+   "average": 45,
+   "captain": "Haaland",
+   "chip": null,
+   "transfers": [
+    [
+     "Sessegnon",
+     "Konsa"
+    ]
+   ],
+   "lessons": [
+    "2 advised starters did not play: Senesi, João Pedro.",
+    "Cards in the advised XI: Bogle, Canvot, Anderson.",
+    "Hauls the model did not see: N.Jackson 13 (ranked 89), Hill 11 (ranked 80), Bobb 11 (ranked 106), Tel 11 (ranked 265), Dedić 11 (ranked 198), White 10 (ranked 76).",
+    "GK under-projected: 1.5 vs 2.2 per player.",
+    "Price calls weak: 9 of 33 right."
+   ]
+  }
+ ]
+}

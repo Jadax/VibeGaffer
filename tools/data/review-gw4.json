@@ -1,0 +1,152 @@
+{
+ "gw": 4,
+ "entry": 2769173,
+ "advice": {
+  "points": 64,
+  "hitCost": 0,
+  "chip": null,
+  "transfers": [
+   [
+    "Wieffer",
+    "Calafiori"
+   ]
+  ],
+  "captain": "Haaland",
+  "captainPoints": 9,
+  "chipsAdvised": []
+ },
+ "manager": {
+  "points": 59,
+  "hitCost": 0,
+  "chip": null,
+  "captain": "Haaland"
+ },
+ "top200": {
+  "points": 99.99,
+  "captain": "Palmer",
+  "chips": {
+   "wildcard": 0.565,
+   "bboost": 0.03,
+   "freehit": 0.015,
+   "3xc": 0.035
+  }
+ },
+ "average": 69,
+ "rho": 0.527,
+ "noShows": [
+  {
+   "id": 203,
+   "name": "Canvot",
+   "flagged": false,
+   "xMins": 80
+  },
+  {
+   "id": 498,
+   "name": "Senesi",
+   "flagged": false,
+   "xMins": 39
+  },
+  {
+   "id": 108,
+   "name": "Wilson",
+   "flagged": false,
+   "xMins": 10
+  }
+ ],
+ "cards": [
+  {
+   "id": 4,
+   "name": "Gabriel",
+   "yc": 1,
+   "rc": 0
+  }
+ ],
+ "missedHauls": [
+  {
+   "id": 124,
+   "name": "Groß",
+   "pts": 17,
+   "projRank": 13,
+   "proj": 5.6
+  },
+  {
+   "id": 94,
+   "name": "Schade",
+   "pts": 15,
+   "projRank": 27,
+   "proj": 4.7
+  },
+  {
+   "id": 330,
+   "name": "Bogle",
+   "pts": 15,
+   "projRank": 22,
+   "proj": 4.9
+  },
+  {
+   "id": 1,
+   "name": "Raya",
+   "pts": 14,
+   "projRank": 25,
+   "proj": 4.7
+  },
+  {
+   "id": 305,
+   "name": "Davis",
+   "pts": 14,
+   "projRank": 102,
+   "proj": 3
+  },
+  {
+   "id": 286,
+   "name": "Belloumi",
+   "pts": 13,
+   "projRank": 84,
+   "proj": 3.2
+  },
+  {
+   "id": 116,
+   "name": "Dunk",
+   "pts": 12,
+   "projRank": 89,
+   "proj": 3.1
+  },
+  {
+   "id": 165,
+   "name": "João Pedro",
+   "pts": 12,
+   "projRank": 4,
+   "proj": 7.4
+  }
+ ],
+ "channel": {
+  "GK": {
+   "proj": 1.6,
+   "actual": 2.2
+  },
+  "DEF": {
+   "proj": 2.5,
+   "actual": 2.5
+  },
+  "MID": {
+   "proj": 2.6,
+   "actual": 2.6
+  },
+  "FWD": {
+   "proj": 2.7,
+   "actual": 3
+  }
+ },
+ "priceHit": {
+  "calls": 61,
+  "right": 5
+ },
+ "lessons": [
+  "3 advised starters did not play: Canvot, Senesi, Wilson.",
+  "Captain Haaland (9) vs the top 200's Palmer (5, 54%).",
+  "Cards in the advised XI: Gabriel.",
+  "Hauls the model did not see: Davis 14 (ranked 102), Belloumi 13 (ranked 84), Dunk 12 (ranked 89).",
+  "GK under-projected: 1.6 vs 2.2 per player.",
+  "Price calls weak: 5 of 61 right."
+ ]
+}

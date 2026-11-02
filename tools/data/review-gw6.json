@@ -1,0 +1,129 @@
+{
+ "gw": 6,
+ "entry": 2769173,
+ "advice": {
+  "points": 47,
+  "hitCost": 0,
+  "chip": null,
+  "transfers": [
+   [
+    "Dasilva",
+    "Groß"
+   ]
+  ],
+  "captain": "Haaland",
+  "captainPoints": 6,
+  "chipsAdvised": []
+ },
+ "manager": {
+  "points": 54,
+  "hitCost": 0,
+  "chip": null,
+  "captain": "Groß"
+ },
+ "top200": {
+  "points": 82.63,
+  "captain": "Haaland",
+  "chips": {
+   "wildcard": 0.025,
+   "bboost": 0.01
+  }
+ },
+ "average": 58,
+ "rho": 0.45799999999999996,
+ "noShows": [],
+ "cards": [
+  {
+   "id": 516,
+   "name": "Bentancur",
+   "yc": 0,
+   "rc": 1
+  }
+ ],
+ "missedHauls": [
+  {
+   "id": 101,
+   "name": "Henderson",
+   "pts": 18,
+   "projRank": 265,
+   "proj": 1.1
+  },
+  {
+   "id": 115,
+   "name": "De Cuyper",
+   "pts": 15,
+   "projRank": 25,
+   "proj": 4.2
+  },
+  {
+   "id": 236,
+   "name": "Dewsbury-Hall",
+   "pts": 13,
+   "projRank": 23,
+   "proj": 4.2
+  },
+  {
+   "id": 165,
+   "name": "João Pedro",
+   "pts": 12,
+   "projRank": 18,
+   "proj": 4.6
+  },
+  {
+   "id": 400,
+   "name": "Doku",
+   "pts": 12,
+   "projRank": 295,
+   "proj": 0.7
+  },
+  {
+   "id": 599,
+   "name": "Cherif",
+   "pts": 12,
+   "projRank": 315,
+   "proj": 0.6
+  },
+  {
+   "id": 304,
+   "name": "O'Shea",
+   "pts": 11,
+   "projRank": 72,
+   "proj": 3.1
+  },
+  {
+   "id": 45,
+   "name": "McGinn",
+   "pts": 10,
+   "projRank": 71,
+   "proj": 3.1
+  }
+ ],
+ "channel": {
+  "GK": {
+   "proj": 1.6,
+   "actual": 1.3
+  },
+  "DEF": {
+   "proj": 2.5,
+   "actual": 2.2
+  },
+  "MID": {
+   "proj": 2.4,
+   "actual": 2.9
+  },
+  "FWD": {
+   "proj": 2.6,
+   "actual": 3.4
+  }
+ },
+ "priceHit": {
+  "calls": 48,
+  "right": 5
+ },
+ "lessons": [
+  "Cards in the advised XI: Bentancur (red).",
+  "Hauls the model did not see: Henderson 18 (ranked 265), Doku 12 (ranked 295), Cherif 12 (ranked 315), O'Shea 11 (ranked 72), McGinn 10 (ranked 71).",
+  "FWD under-projected: 2.6 vs 3.4 per player.",
+  "Price calls weak: 5 of 48 right."
+ ]
+}

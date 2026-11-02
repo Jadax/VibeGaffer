@@ -568,7 +568,7 @@ VG._matchWinProbs = (teamId, oppTeamId) => {
 // tools/calibrate.js can check each channel against real stats.
 VG.MODEL = {
   startK: 3,                   // pseudo-matches of prior on the start rate
-  rolePrior: { started: 0.75, featured: 0.25, none: 0.08, gk: 0.70, gkNone: 0.03, returning: 0.25 },
+  rolePrior: { started: 0.75, featured: 0.25, none: 0.08, gk: 0.95, gkNone: 0.03, returning: 0.25 },
   preseasonPrior: 0.35, preseasonK: 8,
   mpsPrior: 80, mpsK: 2,       // minutes per start
   cameoMins: 20, cameoPrior: 0.25, cameoPriorNone: 0.05, cameoK: 3,
@@ -585,7 +585,10 @@ VG.MODEL = {
   gaDispersion: 11,            // negative-binomial r for goals conceded (variance 1.56 vs mean 1.39 this season)
   congestion: true,            // fixture-congestion start penalty
   epAnchor: true,              // early-season (GW1-5) blend toward FPL's ep_next
-  ceiling: true                // premium captaincy ceiling multiplier
+  ceiling: true,               // premium captaincy ceiling multiplier
+  benchWeight: 0.1,            // ILP: a bench player's xP counts 10% (auto-subs only)
+  captainWeight: 1.0,          // ILP: the captain's xP counts once more
+  eliteWeight: 0.3            // top-200 managers' starting share last GW (tools/fetch-elite.js); 0 = off
 };
 
 // Team attack/defence indices (1.0 = league average) from finished results
@@ -943,7 +946,12 @@ VG.computeFixtureXP = (pid, oppTeamId, isHome, fdr) => {
   // Captain-ceiling bonus: haul-prone premiums (FWD 1.18x, MID 1.15x at
   // £8.5m+) win gameweeks and get doubled by the armband.
   const ceilingMult = !M.ceiling ? 1.0 : pos === 4 && p.now_cost >= 85 ? 1.18 : pos === 3 && p.now_cost >= 85 ? 1.15 : 1.0;
-  const totalXPFinal = Math.max(totalXP * ceilingMult, 0.1);
+  // Top managers' picks carry team news and rotation reads the stats miss.
+  // Backtest GW2-8: top-50 projected players scored 4.33 vs 4.17 with this
+  // on. Bounded so it reorders close calls without distorting xP levels.
+  const eliteShare = VG.elite && VG.elite.players && VG.elite.players[pid] ? VG.elite.players[pid].start : 0;
+  const eliteMult = VG.elite ? Math.min(1.25, Math.max(0.9, 1 + (M.eliteWeight || 0) * 3 * (eliteShare - 0.1))) : 1.0;
+  const totalXPFinal = Math.max(totalXP * ceilingMult * eliteMult, 0.1);
 
   return {
     xp: totalXPFinal,
@@ -2058,17 +2066,33 @@ VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, 
     return { mode: "draft", squad: [], starting: [], bench: [], formation: { DEF: 4, MID: 4, FWD: 2 }, totalCost: 0, budgetRemaining: budget, totalXP: 0, benchXP: 0, gotCap: [], gwPicks: [], key };
   }
 
-  // Build CPLEX .lp problem
-  // Variables: x0, x1, ..., x_{n-1} — binary (0 or 1) for each player
+  // Build CPLEX .lp problem. Per player: x = in squad, s = starts, c = captain.
+  // FPL scores the XI plus the captain twice; the bench only scores through
+  // auto-subs. Maximising the plain 15-man total valued a bench player like a
+  // starter and the captaincy at nothing, so wildcards sold Haaland for depth
+  // (GW10 review: every one of the top 200 owned and captained him).
+  const benchW = VG.MODEL.benchWeight, capW = VG.MODEL.captainWeight;
+  const coef = v => String(+v.toFixed(4));
   let lp = 'Maximize\n obj:';
   const terms = [];
   for (let i = 0; i < n; i++) {
-    const xp = players[i][key] || 0;
-    if (xp > 0) terms.push(xp + ' x' + i);
+    const xp = Math.max(players[i][key] || 0, 0);
+    if (xp <= 0) continue;
+    terms.push(coef(xp * benchW) + ' x' + i, coef(xp * (1 - benchW)) + ' s' + i, coef(xp * capW) + ' c' + i);
   }
   lp += ' ' + terms.join(' + ');
 
   lp += '\nSubject To\n';
+  // Starters come from the squad, the captain from the starters.
+  for (let i = 0; i < n; i++) lp += ' st' + i + ': s' + i + ' - x' + i + ' <= 0\n cp' + i + ': c' + i + ' - s' + i + ' <= 0\n';
+  lp += ' xi: ' + players.map((_, i) => 's' + i).join(' + ') + ' = 11\n';
+  lp += ' cap: ' + players.map((_, i) => 'c' + i).join(' + ') + ' = 1\n';
+  // A legal formation: 1 GK, 3-5 DEF, 2-5 MID, 1-3 FWD.
+  [[1, 1, 1], [2, 3, 5], [3, 2, 5], [4, 1, 3]].forEach(([pos, lo, hi]) => {
+    const v = players.map((p, i) => (p.positionId === pos ? 's' + i : null)).filter(Boolean);
+    if (!v.length) return;
+    lp += ' xmin' + pos + ': ' + v.join(' + ') + ' >= ' + lo + '\n xmax' + pos + ': ' + v.join(' + ') + ' <= ' + hi + '\n';
+  });
 
   // Constraint 1: exactly 15 players
   const allVars = [];
@@ -2108,12 +2132,9 @@ VG.optimizeDraftILP = async (players, budget = 100, fixtures = [], startGW = 1, 
 
   // Bounds + Binary
   lp += 'Bounds\n';
-  for (let i = 0; i < n; i++) lp += ' 0 <= x' + i + ' <= 1\n';
+  for (let i = 0; i < n; i++) lp += ' 0 <= x' + i + ' <= 1\n 0 <= s' + i + ' <= 1\n 0 <= c' + i + ' <= 1\n';
   lp += 'Binary\n';
-  for (let i = 0; i < n; i++) {
-    if (i > 0 && i % 20 === 0) lp += '\n';
-    lp += ' x' + i;
-  }
+  for (let i = 0; i < n; i++) lp += ' x' + i + ' s' + i + ' c' + i + '\n';
   lp += '\nEnd\n';
 
   try {
@@ -2445,8 +2466,57 @@ VG.optimizeTransfers = (currentSquad, players, bank, freeTransfers, startGW, nGW
   };
 };
 
+// Transfers + lineup + chips for a real squad. Shared by the web app's
+// transfer mode and the FPL Copilot userscript, so both give the same advice.
+// `picks` are FPL picks; the public picks endpoint returns only element ids,
+// so names and prices are filled from the bootstrap (my-team picks carry
+// real selling prices and win when present).
+VG.planSquad = (picks, allXP, bank, freeTransfers, gw, horizon, constraints, chipOpts) => {
+  const currentSquad = picks.map(sp => {
+    const boot = VG.players && VG.players[sp.element];
+    return {
+      ...sp,
+      web_name: sp.web_name || (boot && boot.web_name) || "?",
+      now_cost: sp.now_cost || (boot && boot.now_cost) || 0,
+      selling_price: sp.selling_price || sp.now_cost || (boot && boot.now_cost) || 0
+    };
+  });
+  // nGWs must be the horizon allXP was projected over: break-even divides
+  // the horizon-total gain by it (5 here overstated gains ~2.4x at 12).
+  const transferResult = VG.optimizeTransfers(currentSquad, allXP, bank, freeTransfers, gw, horizon, constraints);
+  const transferOutIds = new Set(transferResult.transfersOut.map(p => p.id));
+  const transferInIds = new Set(transferResult.transfersIn.map(p => p.id));
+  const retainedIds = currentSquad.filter(p => !transferOutIds.has(p.element)).map(p => p.element);
+  const fullIds = [...retainedIds, ...transferInIds];
+  // allXP only holds available players, so a retained injured player
+  // (kept because the free-transfer cap ran out) used to vanish here and
+  // the squad rendered as 14. Build those entries directly instead.
+  const inPool = new Set(allXP.map(p => p.id));
+  const allSquad = [
+    ...allXP.filter(p => fullIds.includes(p.id)),
+    ...fullIds.filter(id => !inPool.has(id) && VG.players[id])
+      .map(id => VG.playerXPEntry(id, gw, horizon, VG.allFixtures))
+  ].sort((a, b) => b.totalXP - a.totalXP);
+  const horizonGWs = [...new Set(VG.allFixtures.map(f => f.event))]
+    .sort((a, b) => a - b)
+    .filter(g => g >= gw && g < gw + horizon);
+  const gwPicks = horizonGWs.map(g => VG.computePerGWPicks(allSquad, g, VG.allFixtures));
+  const starting11 = gwPicks[0]?.starting || allSquad.slice(0, 11);
+  const bench4 = gwPicks[0]?.bench || allSquad.slice(11, 15);
+  const gotCap = gwPicks[0]?.gotCap || VG.topCaptainCandidates(starting11, "totalXP");
+  const chips = VG.evaluateChips(allSquad, gwPicks, VG.allFixtures, chipOpts);
+  return {
+    ...transferResult, chipAdvice: chips, starting: starting11, bench: bench4,
+    totalCost: +allSquad.reduce((s, p) => s + (p.price || 0), 0).toFixed(1),
+    budgetRemaining: bank, formation: gwPicks[0]?.formation || { DEF: 4, MID: 4, FWD: 2 },
+    totalXP: +gwPicks.reduce((s, g) => s + g.gwTotalXP, 0).toFixed(1),
+    gwTotalXP: gwPicks[0]?.gwTotalXP || 0,
+    mode: "transfer", gotCap, gwPicks, squad: allSquad
+  };
+};
+
 // ── Chip Engine: multi-GW lookahead with DGW/BGW detection ──────────────
-VG.evaluateChips = (squad, gwPicks, fixtures) => {
+VG.evaluateChips = (squad, gwPicks, fixtures, opts = {}) => {
   if (!gwPicks || gwPicks.length === 0) {
     return {
       triple_captain: { recommend: false, reason: "No GW data", bestGW: null, score: 0 },
@@ -2602,7 +2672,7 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
   const FH_THRESHOLD = 35;
 
   const tcRec = tcBest.tcScore >= TC_THRESHOLD;
-  return {
+  return VG._applyChipWindow({
     triple_captain: {
       recommend: tcRec,
       bestGW: tcBest.gw,
@@ -2652,8 +2722,87 @@ VG.evaluateChips = (squad, gwPicks, fixtures) => {
           : `Double Gameweek — load up on the ${fhBest.dgwTeams?.length || 0} doubling teams`
     },
     gwScores
-  };
+  }, gwScores, fixtures, opts);
 };
+
+// Chips come in two sets that expire: GW1-19 and GW20-38. The trigger rules
+// above wait for doubles and blanks, which often never come before GW19, so
+// on their own they hold every chip until it is lost (the user reached GW10
+// with all four unused while the #1 manager had played all four). Here each
+// chip is planned inside its window: if no double gameweek is scheduled
+// before the window closes, the chip goes to its best week in view, and it
+// becomes urgent as the window runs out. One chip per gameweek.
+// opts.chipsAvailable: chip keys still unplayed this window (unknown = all).
+// opts.windowEnd: last GW of the current window (default 19 or 38).
+VG.CHIP_WINDOW_ENDS = [19, 38];
+// Chip options from the public /entry/{id}/history/ (chips: [{name, event}]).
+VG.CHIP_KEYS = { wildcard: "wildcard", freehit: "free_hit", bboost: "bench_boost", "3xc": "triple_captain" };
+VG.chipWindowFromHistory = (history, gw) => {
+  if (!history || !Array.isArray(history.chips)) return {};
+  const windowEnd = VG.CHIP_WINDOW_ENDS.find(e => gw <= e) || 38;
+  const windowStart = windowEnd === 19 ? 1 : 20;
+  const used = new Set(history.chips.filter(c => c.event >= windowStart && c.event <= windowEnd).map(c => VG.CHIP_KEYS[c.name]));
+  return { windowEnd, chipsAvailable: Object.values(VG.CHIP_KEYS).filter(k => !used.has(k)) };
+};
+VG._applyChipWindow = (advice, gwScores, fixtures, opts = {}) => {
+  if (!gwScores.length) return advice;
+  const gw0 = gwScores[0].gw;
+  const windowEnd = opts.windowEnd || VG.CHIP_WINDOW_ENDS.find(e => gw0 <= e) || 38;
+  const available = opts.chipsAvailable ? new Set(opts.chipsAvailable) : null;
+  const keys = ["wildcard", "free_hit", "bench_boost", "triple_captain"];
+  const open = keys.filter(k => !available || available.has(k));
+  keys.filter(k => !open.includes(k)).forEach(k => {
+    advice[k] = { ...advice[k], recommend: false, bestGW: null, reason: `Already played in this half (GW${windowEnd} window)` };
+  });
+  const view = gwScores.filter(g => g.gw <= windowEnd);
+  if (!view.length || !open.length) return advice;
+
+  // Doubles anywhere in the rest of the window, from the fixture list itself.
+  let dgwAhead = false;
+  for (let g = gw0; g <= windowEnd && !dgwAhead; g++) {
+    const count = {};
+    VG.fixturesForGW(fixtures, g).forEach(f => { count[f.team_h] = (count[f.team_h] || 0) + 1; count[f.team_a] = (count[f.team_a] || 0) + 1; });
+    dgwAhead = Object.values(count).some(c => c >= 2);
+  }
+  const gwsLeft = windowEnd - gw0 + 1;
+  const urgent = gwsLeft <= open.length + 2;
+  const taken = new Set();
+  const pick = (k, value) => {
+    const ranked = [...view].sort((a, b) => value(b) - value(a)).filter(g => !taken.has(g.gw));
+    return ranked[0] || null;
+  };
+  const plan = (k, best, reason, tip) => {
+    if (!best) return;
+    taken.add(best.gw);
+    advice[k] = { ...advice[k], recommend: true, bestGW: best.gw, reason, tip, deadline: windowEnd };
+  };
+  // Chips the trigger rules already placed keep their week.
+  open.forEach(k => { if (advice[k].recommend && advice[k].bestGW) taken.add(advice[k].bestGW); });
+  const left = `${gwsLeft} GW${gwsLeft === 1 ? "" : "s"} before the GW${windowEnd} expiry`;
+
+  if (open.includes("wildcard") && !advice.wildcard.recommend && urgent) {
+    const b = pick("wildcard", g => g.wcScore - g.gw * 0.01);
+    plan("wildcard", b, `Use it or lose it: ${left}`, "An unused Wildcard is wasted. Play it in the week your squad needs the most work.");
+  }
+  if (!dgwAhead) {
+    if (open.includes("triple_captain") && !advice.triple_captain.recommend) {
+      const b = pick("triple_captain", g => g.capGWXP);
+      plan("triple_captain", b, `No double before GW${windowEnd}: best captain week in view is GW${b && b.gw}, ${b && b.capName} ${b ? b.capGWXP.toFixed(1) : ""} xP`,
+        "Triple Captain expires at the window end. Without a double gameweek, play it on your captain's best single fixture.");
+    }
+    if (open.includes("bench_boost") && !advice.bench_boost.recommend) {
+      const b = pick("bench_boost", g => g.benchXP);
+      plan("bench_boost", b, `No double before GW${windowEnd}: strongest bench week in view is GW${b && b.gw} (bench ${b ? b.benchXP.toFixed(1) : ""} xP)`,
+        "Bench Boost expires at the window end. Make sure all four bench players are nailed starters that week.");
+    }
+  }
+  if (open.includes("free_hit") && !advice.free_hit.recommend && urgent) {
+    const b = pick("free_hit", g => g.deadCount * 3 + g.badFixCount);
+    plan("free_hit", b, `Use it or lose it: ${left}`, "Play Free Hit in the week your own squad looks weakest.");
+  }
+  return advice;
+};
+
 
 // ── Team Strength Ratings (v5.4) ───────────────────────────────────────
 // Free Understat npxG/npxGA priors -> per-team attack/defence/overall
@@ -3032,17 +3181,26 @@ VG.computeTransferPlan = (squad, allXP, fixtures, startGW, nGWs, bank, freeNow) 
 // Classic community thresholds: ~10.5k net in = rise trigger.
 VG.predictPriceChanges = (liveData) => {
   if (!liveData || !liveData.elements) return [];
-  const RISE = 10500, LIKELY_RISE = 7000, FALL = 5600, LIKELY_FALL = 4000;
+  // Fitted on 80 days of real price moves (bot snapshots before/after the
+  // daily update): the old flat ±10.5k/5.6k cut-offs were right 3% of the
+  // time. A large GW net that is also a real share of the owners does about
+  // 2.5x better. It is still a risk flag, not a forecast: FPL's counter
+  // resets at each change and the public data cannot see it.
+  const RISE = 80000, LIKELY_RISE = 40000, REL = 0.05, LIKELY_REL = 0.02;
+  const managers = (VG.bootstrapData && VG.bootstrapData.total_players) || 0;
   const out = [];
   liveData.elements.forEach(el => {
     const tIn = (el.transfers_in_event ?? el.stats?.transfers_in ?? 0);
     const tOut = (el.transfers_out_event ?? el.stats?.transfers_out ?? 0);
     const net = tIn - tOut;
+    const pl = VG.players[el.id];
+    const owners = pl && managers ? (parseFloat(pl.selected_by_percent) || 0) / 100 * managers : 0;
+    const share = owners > 0 ? Math.abs(net) / owners : Infinity;
     let risk = "stable";
-    if (net >= RISE) risk = "rising";
-    else if (net >= LIKELY_RISE) risk = "likely_rise";
-    else if (net <= -FALL) risk = "falling";
-    else if (net <= -LIKELY_FALL) risk = "likely_fall";
+    if (net >= RISE && share >= REL) risk = "rising";
+    else if (net >= LIKELY_RISE && share >= LIKELY_REL) risk = "likely_rise";
+    else if (net <= -RISE && share >= REL) risk = "falling";
+    else if (net <= -LIKELY_RISE && share >= LIKELY_REL) risk = "likely_fall";
     if (risk === "stable") return;
     const p = VG.players[el.id];
     const name = p ? (p.web_name || p.second_name) : ("#" + el.id);

@@ -1,0 +1,65 @@
+name: Self-tune engine
+
+# Weekly learning loop, after each round is finished:
+#  1. read what the top 200 managers picked, captained and played (chips, hits)
+#  2. review: rebuild the engine's advice for the tracked team at every past
+#     deadline and score it against real points, the top 200 and the average,
+#     listing what went wrong (docs/data/review.json, shown in the Copilot)
+#  3. re-fit the model constants on every finished GW, keeping changes only if
+#     they also hold on the latest two (docs/data/model-params.json)
+# The app and the FPL Copilot load both files at start-up, so the engine
+# improves without a code release.
+on:
+  schedule:
+    # Tuesday and Friday mornings: after the weekend and midweek rounds have
+    # been marked finished (bonus confirmed).
+    - cron: '17 6 * * 2,5'
+  workflow_dispatch:
+
+concurrency:
+  group: autotune
+  cancel-in-progress: false
+
+jobs:
+  tune:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          # The backtest replays the docs/data snapshot committed before each
+          # deadline, so it needs the full history.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Exact ILP for squad selection, so scored teams match the app's.
+      - name: Solver
+        run: npm i --no-save highs@1.8.0
+
+      - name: Top-manager picks for finished gameweeks
+        run: node tools/fetch-elite.js 1 38 200
+
+      - name: Review last week's advice
+        run: node tools/review.js "${{ vars.FPL_ENTRY || '2769173' }}"
+
+      - name: Re-fit model constants
+        run: node tools/autotune.js
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/model-params.json docs/data/elite.json docs/data/review.json tools/data
+          git diff --staged --quiet && exit 0
+          git commit -m "data: self-tune engine from finished gameweeks [skip ci]"
+          for attempt in 1 2 3; do
+            git push && exit 0
+            git pull --rebase origin main
+          done
+          echo "Could not push after 3 attempts"
+          exit 1
