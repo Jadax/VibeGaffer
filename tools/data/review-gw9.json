@@ -1,0 +1,134 @@
+{
+ "gw": 9,
+ "entry": 2769173,
+ "advice": {
+  "points": 41,
+  "hitCost": 0,
+  "chip": null,
+  "transfers": [
+   [
+    "João Pedro",
+    "Calvert-Lewin"
+   ],
+   [
+    "Sessegnon",
+    "Konsa"
+   ]
+  ],
+  "captain": "Haaland",
+  "captainPoints": 2,
+  "chipsAdvised": []
+ },
+ "manager": {
+  "points": 39,
+  "hitCost": 0,
+  "chip": null,
+  "captain": "Haaland"
+ },
+ "top200": {
+  "points": 72.14,
+  "captain": "Haaland",
+  "chips": {
+   "wildcard": 0.07,
+   "freehit": 0.265,
+   "bboost": 0.015
+  }
+ },
+ "average": 47,
+ "rho": 0.546,
+ "noShows": [
+  {
+   "id": 498,
+   "name": "Senesi",
+   "flagged": false,
+   "xMins": 25
+  }
+ ],
+ "cards": [
+  {
+   "id": 124,
+   "name": "Groß",
+   "yc": 1,
+   "rc": 0
+  }
+ ],
+ "missedHauls": [
+  {
+   "id": 112,
+   "name": "Van Hecke",
+   "pts": 15,
+   "projRank": 14,
+   "proj": 4.3
+  },
+  {
+   "id": 295,
+   "name": "McBurnie",
+   "pts": 12,
+   "projRank": 56,
+   "proj": 3.4
+  },
+  {
+   "id": 109,
+   "name": "Verbruggen",
+   "pts": 11,
+   "projRank": 123,
+   "proj": 2.8
+  },
+  {
+   "id": 145,
+   "name": "Fofana",
+   "pts": 11,
+   "projRank": 219,
+   "proj": 1.6
+  },
+  {
+   "id": 31,
+   "name": "Konsa",
+   "pts": 10,
+   "projRank": 6,
+   "proj": 5.1
+  },
+  {
+   "id": 85,
+   "name": "Van den Berg",
+   "pts": 10,
+   "projRank": 243,
+   "proj": 1.4
+  },
+  {
+   "id": 129,
+   "name": "Ayari",
+   "pts": 10,
+   "projRank": 138,
+   "proj": 2.6
+  }
+ ],
+ "channel": {
+  "GK": {
+   "proj": 1.6,
+   "actual": 1.8
+  },
+  "DEF": {
+   "proj": 2.3,
+   "actual": 2.5
+  },
+  "MID": {
+   "proj": 2.1,
+   "actual": 2.1
+  },
+  "FWD": {
+   "proj": 2.5,
+   "actual": 2.8
+  }
+ },
+ "priceHit": {
+  "calls": 35,
+  "right": 9
+ },
+ "lessons": [
+  "1 advised starter did not play: Senesi.",
+  "Cards in the advised XI: Groß.",
+  "Hauls the model did not see: Verbruggen 11 (ranked 123), Fofana 11 (ranked 219), Van den Berg 10 (ranked 243), Ayari 10 (ranked 138).",
+  "Price calls weak: 9 of 35 right."
+ ]
+}

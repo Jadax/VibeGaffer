@@ -1,11 +1,11 @@
 {
- "updated": "2026-11-03",
+ "updated": "2026-11-10",
  "entry": 2769173,
  "totals": {
-  "advice": 371,
-  "manager": 317,
-  "top200": 557.4,
-  "average": 411
+  "advice": 459,
+  "manager": 400,
+  "top200": 708.2,
+  "average": 513
  },
  "weeks": [
   {
@@ -160,6 +160,52 @@
     "Hauls the model did not see: N.Jackson 13 (ranked 89), Hill 11 (ranked 80), Bobb 11 (ranked 106), Tel 11 (ranked 265), Dedić 11 (ranked 198), White 10 (ranked 76).",
     "GK under-projected: 1.5 vs 2.2 per player.",
     "Price calls weak: 9 of 33 right."
+   ]
+  },
+  {
+   "gw": 9,
+   "advice": 41,
+   "manager": 39,
+   "top200": 72.14,
+   "average": 47,
+   "captain": "Haaland",
+   "chip": null,
+   "transfers": [
+    [
+     "João Pedro",
+     "Calvert-Lewin"
+    ],
+    [
+     "Sessegnon",
+     "Konsa"
+    ]
+   ],
+   "lessons": [
+    "1 advised starter did not play: Senesi.",
+    "Cards in the advised XI: Groß.",
+    "Hauls the model did not see: Verbruggen 11 (ranked 123), Fofana 11 (ranked 219), Van den Berg 10 (ranked 243), Ayari 10 (ranked 138).",
+    "Price calls weak: 9 of 35 right."
+   ]
+  },
+  {
+   "gw": 10,
+   "advice": 47,
+   "manager": 44,
+   "top200": 78.67,
+   "average": 55,
+   "captain": "Haaland",
+   "chip": null,
+   "transfers": [
+    [
+     "Saka",
+     "Tavernier"
+    ]
+   ],
+   "lessons": [
+    "2 advised starters did not play: Canvot, Senesi.",
+    "Cards in the advised XI: Tavernier.",
+    "Hauls the model did not see: Alysson 16 (ranked 213), Delap 13 (ranked 127), Dorgu 11 (ranked 345).",
+    "Price calls weak: 9 of 32 right."
    ]
   }
  ]
