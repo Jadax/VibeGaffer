@@ -64,6 +64,11 @@ function lineupPoints(xi, bench, captain, vice, act, pos) {
   // Chips follow the advice's own path: once the engine has played one in a
   // half-season window it is gone for the rest of that window.
   const adviceUsed = new Set();
+  // The season as if every piece of advice had been followed: it starts from
+  // the manager's real squad and carries its own squad, bank, free transfers
+  // and chips forward. Restarting from the real squad each week (the first
+  // version) could not tell advice that was ignored from advice that failed.
+  const sim = { picks: null, bank: 0, ft: 1 };
 
   for (const ev of boot.events.filter(e => e.finished && e.id >= fromGW)) {
     const gw = ev.id;
@@ -74,10 +79,17 @@ function lineupPoints(xi, bench, captain, vice, act, pos) {
     await sleep(200);
     const windowEnd = gw <= 19 ? 19 : 38;
     if (gw === 20) adviceUsed.clear();
+    if (!sim.picks) {
+      sim.picks = prev.picks.map(p => p.element);
+      sim.bank = ((prev.entry_history || {}).bank || 0) / 10;
+      sim.ft = Math.max(1, ftBefore[gw] || 1);
+    }
+    // Selling prices are left to the worker (price at this deadline); FPL's
+    // 50% sell-on tax is ignored, a small optimistic bias in the bank.
     const adviceIn = {
-      picks: prev.picks.map(p => ({ element: p.element, position: p.position, selling_price: p.selling_price })),
-      bank: ((prev.entry_history || {}).bank || 0) / 10,
-      ft: Math.max(1, ftBefore[gw] || 1),
+      picks: sim.picks.map((element, i) => ({ element, position: i + 1 })),
+      bank: sim.bank,
+      ft: sim.ft,
       chips: { windowEnd, chipsAvailable: ["wildcard", "free_hit", "bench_boost", "triple_captain"].filter(k => !adviceUsed.has(k)) }
     };
 
@@ -106,6 +118,23 @@ function lineupPoints(xi, bench, captain, vice, act, pos) {
     }
     const chipPlayed = chipLine ? a.chipSquad.chip : teamChip;
     if (chipPlayed) adviceUsed.add(chipPlayed);
+
+    // Carry the simulated season forward. Wildcard keeps its squad, Free Hit
+    // reverts next week (FPL rules); both keep the free-transfer bank.
+    const price = id => a.prices[id] || 0;
+    if (chipPlayed === "wildcard") {
+      const budget = sim.picks.reduce((t, id) => t + price(id), 0) + sim.bank;
+      sim.picks = a.chipSquad.squad;
+      sim.bank = +(budget - sim.picks.reduce((t, id) => t + price(id), 0)).toFixed(1);
+      sim.ft = Math.min(5, sim.ft + 1);
+    } else if (chipPlayed === "free_hit") {
+      sim.ft = Math.min(5, sim.ft + 1);
+    } else {
+      const out = new Set(a.transfersOut);
+      sim.bank = +(sim.bank + a.transfersOut.reduce((t, id) => t + price(id), 0) - a.transfersIn.reduce((t, id) => t + price(id), 0)).toFixed(1);
+      sim.picks = [...sim.picks.filter(id => !out.has(id)), ...a.transfersIn];
+      sim.ft = Math.min(5, Math.max(0, sim.ft - a.transfersOut.length) + 1);
+    }
 
     // Top 200 that week.
     const eliteFile = path.join(dataDir, `elite-gw${gw}.json`);
@@ -142,6 +171,11 @@ function lineupPoints(xi, bench, captain, vice, act, pos) {
     } catch (e) { /* no later snapshot yet */ }
 
     const lessons = [];
+    // Execution: advice only scores if it is acted on.
+    const chipApi = { wildcard: "wildcard", free_hit: "freehit", bench_boost: "bboost", triple_captain: "3xc" };
+    if (chipPlayed && now.active_chip !== chipApi[chipPlayed]) lessons.push(`Advised ${chipPlayed.replace("_", " ")} was not played${now.active_chip ? ` (played ${now.active_chip} instead)` : ""}.`);
+    const realSquad = new Set(prev.picks.map(p => p.element));
+    if (!chipPlayed && a.transfersOut.length && a.transfersOut.every(id => realSquad.has(id)) && !mine.event_transfers) lessons.push(`Advised ${a.transfersOut.length} transfer${a.transfersOut.length > 1 ? "s" : ""} (${a.transfersOut.map((o, i) => name[o] + " > " + name[a.transfersIn[i]]).join(", ")}), none made.`);
     if (noShows.length) lessons.push(`${noShows.length} advised starter${noShows.length > 1 ? "s" : ""} did not play: ${noShows.map(n => n.name + (n.flagged ? " (was flagged)" : "")).join(", ")}.`);
     const capPts = (act[used.captain] || {}).pts || 0;
     if (eliteCap && +eliteCap[0] !== used.captain) {

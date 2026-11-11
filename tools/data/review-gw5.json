@@ -2,13 +2,13 @@
  "gw": 5,
  "entry": 2769173,
  "advice": {
-  "points": 43,
+  "points": 52,
   "hitCost": 0,
   "chip": "triple_captain",
   "transfers": [
    [
-    "Mendy",
-    "Calafiori"
+    "B.Fernandes",
+    "Palmer"
    ]
   ],
   "captain": "Haaland",
@@ -35,25 +35,20 @@
  "rho": 0.517,
  "noShows": [
   {
-   "id": 498,
-   "name": "Senesi",
-   "flagged": false,
-   "xMins": 32
-  },
-  {
    "id": 165,
    "name": "João Pedro",
    "flagged": true,
    "xMins": 63
-  },
-  {
-   "id": 108,
-   "name": "Wilson",
-   "flagged": false,
-   "xMins": 8
   }
  ],
- "cards": [],
+ "cards": [
+  {
+   "id": 115,
+   "name": "De Cuyper",
+   "yc": 1,
+   "rc": 0
+  }
+ ],
  "missedHauls": [
   {
    "id": 397,
@@ -135,7 +130,9 @@
   "right": 11
  },
  "lessons": [
-  "3 advised starters did not play: Senesi, João Pedro (was flagged), Wilson.",
+  "Advised triple captain was not played.",
+  "1 advised starter did not play: João Pedro (was flagged).",
+  "Cards in the advised XI: De Cuyper.",
   "Hauls the model did not see: Brobbey 17 (ranked 175), Dasilva 15 (ranked 191), Schuster 14 (ranked 214), Manzambi 13 (ranked 346).",
   "Price calls weak: 11 of 55 right."
  ]

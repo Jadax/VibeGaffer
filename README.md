@@ -1,4 +1,4 @@
-# VibeGaffer v6.1.0
+# VibeGaffer v6.2.0
 
 **FPL Optimization Engine** | Author: Tushant Sharma
 
@@ -479,6 +479,7 @@ Test coverage:
 
 | Version | Commit | Key Changes |
 |---------|--------|------------|
+| v6.2.0 | - | The weekly review now follows the advice as a real season (own squad, bank, free transfers and chips carried forward) and flags advice that was not acted on; GW2-10: following VibeGaffer 603 vs average 513. Understat outage handling: the fetcher keeps the last good file, and team strength falls back to FPL's own xG. Tests 386 to 390. |
 | v6.1.0 | - | Self-improving engine and FPL Copilot: chip-expiry planner (chips are lost at GW19/GW38), squad ILP that values the XI and captain (wildcards no longer sell Haaland), top-200 starting signal, refitted price model, GK start prior, weekly review / top-200 study / auto-tune workflow, Tampermonkey Copilot with lineup, transfer and chip autopilot. Backtest team KPI 465 to 527 (avg manager 461). Tests 363 to 384. |
 | v6.0.0 | - | Engine rebuilt as a match model after the GW9 review (advisor squad scored 26). Team goals model from results + Understat xG with market recalibration, explicit minutes model (P(start), P(60), xMins), per-channel scoring with negative-binomial clean sheets and goals conceded, proper saves/DEFCON threshold maths. Walk-forward backtest tooling (`tools/`). Backtest GW1-8: rank correlation 0.26 to 0.50 (ep_next 0.42), free-hit team 394 to 465 (average manager 461). Transfer fixes: hits were never advised (hit phase shared the free-transfer cap), dead players now take hit slots before fit ones, optimizer uses the chosen horizon (was fixed at 5), Wildcard trigger counts players unlikely to play, Understat post-match odds no longer read as forecasts. Tests 348 to 363. |
 | v5.16.0 | — | Fresh-season small-sample model rebuild (the GW1 45-pointer post-mortem): Bayesian shrinkage of every season-aggregate rate toward positional priors (per-90 xG/xA K=12, per-game CS/bonus/saves/cards K=10, DEFCON K=4, start-rate toward role priors), positional goal/assist caps replace the global 0.85, clean-sheet probability is a weighted average (not additive) capped at 0.55, rate-vs-minutes confidence split, early-season ep_next level anchor, captain-ceiling bonus reinstated, sub-cameo bench priors. GW1 backtest: correlation 0.413, projected top-10 all legitimately ownable; the draft now captains Haaland and its value picks included the GW1 haulers. Tests 300 → 307. |

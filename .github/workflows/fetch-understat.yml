@@ -277,6 +277,13 @@ jobs:
               'teams': teams,
               'fixtures': fixtures_out
           }
+          # Never replace good data with an outage: on 2 Nov 2026 Understat
+          # went into maintenance and this step wrote an empty file, which ran
+          # the engine without xG priors for two gameweeks. Keep the last good
+          # file and fail loudly instead.
+          if not players or not teams:
+              print('Understat returned no players/teams; keeping the previous understat.json')
+              raise SystemExit(1)
           with open('docs/data/understat.json', 'w', encoding='utf-8') as target:
               json.dump(out, target, separators=(',', ':'))
           foreign = sum(1 for p in players.values() if p.get('league') != 'EPL')

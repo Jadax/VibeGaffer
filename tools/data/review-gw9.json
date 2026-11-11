@@ -2,17 +2,13 @@
  "gw": 9,
  "entry": 2769173,
  "advice": {
-  "points": 41,
+  "points": 65,
   "hitCost": 0,
   "chip": null,
   "transfers": [
    [
     "João Pedro",
     "Calvert-Lewin"
-   ],
-   [
-    "Sessegnon",
-    "Konsa"
    ]
   ],
   "captain": "Haaland",
@@ -36,15 +32,26 @@
  },
  "average": 47,
  "rho": 0.546,
- "noShows": [
-  {
-   "id": 498,
-   "name": "Senesi",
-   "flagged": false,
-   "xMins": 25
-  }
- ],
+ "noShows": [],
  "cards": [
+  {
+   "id": 1,
+   "name": "Raya",
+   "yc": 1,
+   "rc": 0
+  },
+  {
+   "id": 115,
+   "name": "De Cuyper",
+   "yc": 1,
+   "rc": 0
+  },
+  {
+   "id": 427,
+   "name": "Mbeumo",
+   "yc": 1,
+   "rc": 0
+  },
   {
    "id": 124,
    "name": "Groß",
@@ -126,8 +133,7 @@
   "right": 9
  },
  "lessons": [
-  "1 advised starter did not play: Senesi.",
-  "Cards in the advised XI: Groß.",
+  "Cards in the advised XI: Raya, De Cuyper, Mbeumo, Groß.",
   "Hauls the model did not see: Verbruggen 11 (ranked 123), Fofana 11 (ranked 219), Van den Berg 10 (ranked 243), Ayari 10 (ranked 138).",
   "Price calls weak: 9 of 35 right."
  ]

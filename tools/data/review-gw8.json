@@ -2,12 +2,12 @@
  "gw": 8,
  "entry": 2769173,
  "advice": {
-  "points": 57,
+  "points": 46,
   "hitCost": 0,
   "chip": null,
   "transfers": [
    [
-    "Sessegnon",
+    "Ajayi",
     "Konsa"
    ]
   ],
@@ -35,12 +35,6 @@
  "rho": 0.433,
  "noShows": [
   {
-   "id": 498,
-   "name": "Senesi",
-   "flagged": false,
-   "xMins": 27
-  },
-  {
    "id": 165,
    "name": "João Pedro",
    "flagged": false,
@@ -49,20 +43,14 @@
  ],
  "cards": [
   {
-   "id": 330,
-   "name": "Bogle",
-   "yc": 1,
-   "rc": 0
+   "id": 154,
+   "name": "Palmer",
+   "yc": 0,
+   "rc": 1
   },
   {
-   "id": 203,
-   "name": "Canvot",
-   "yc": 1,
-   "rc": 0
-  },
-  {
-   "id": 481,
-   "name": "Anderson",
+   "id": 40,
+   "name": "Rogers",
    "yc": 1,
    "rc": 0
   }
@@ -148,8 +136,8 @@
   "right": 9
  },
  "lessons": [
-  "2 advised starters did not play: Senesi, João Pedro.",
-  "Cards in the advised XI: Bogle, Canvot, Anderson.",
+  "1 advised starter did not play: João Pedro.",
+  "Cards in the advised XI: Palmer (red), Rogers.",
   "Hauls the model did not see: N.Jackson 13 (ranked 89), Hill 11 (ranked 80), Bobb 11 (ranked 106), Tel 11 (ranked 265), Dedić 11 (ranked 198), White 10 (ranked 76).",
   "GK under-projected: 1.5 vs 2.2 per player.",
   "Price calls weak: 9 of 33 right."

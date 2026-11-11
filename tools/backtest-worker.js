@@ -43,6 +43,8 @@ if (process.env.VG_MODEL) Object.assign(VG.MODEL, JSON.parse(process.env.VG_MODE
   VG.allFixtures = await VG.loadFixtures();
   await VG.loadOdds();
   await VG.loadUnderstat();
+  // Experiment hook: VG_NO_UNDERSTAT=1 replays a week as if Understat were down.
+  if (process.env.VG_NO_UNDERSTAT) { VG.understat = null; Object.values(VG.players).forEach(p => { delete p.understat; }); }
   await VG.loadSetPieceData();
   await VG.loadRecentForm();
   // Top managers' picks from the GW before (what was known at the deadline).
@@ -131,6 +133,9 @@ if (process.env.VG_MODEL) Object.assign(VG.MODEL, JSON.parse(process.env.VG_MODE
       const p2 = VG.planSquad(made.squad.map((p, i) => ({ element: p.id, position: i + 1 })), allXP, 0, 0, gw, horizon, { maxTransfers: 0 });
       advice.chipSquad = { chip, squad: ids(made.squad), xi: ids(p2.starting), bench: ids(p2.bench), captain: p2.gotCap[0] && p2.gotCap[0].id, vice: p2.gotCap[1] && p2.gotCap[1].id };
     }
+    // Prices at this deadline, so a season simulation can keep its bank.
+    const priced = new Set([...a.picks.map(p => p.element), ...advice.transfersIn, ...(advice.chipSquad ? advice.chipSquad.squad : [])]);
+    advice.prices = Object.fromEntries([...priced].map(id => [id, ((VG.players[id] || {}).now_cost || 0) / 10]));
   }
   // Price calls from the deadline snapshot, checked later against real moves.
   const prices = VG.predictPriceChanges(VG.bootstrapData).map(m => ({ id: m.id, risk: m.risk }));

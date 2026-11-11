@@ -1221,15 +1221,17 @@ section("Small-sample robustness: shrinkage, caps, ep anchor");
     check("a sub-cameo player stays bench-level (xMins < 45)", false);
     check("a sub cameo cannot earn certain DEFCON points", false);
   }
-  // GK clean-sheet probability is capped well below the old additive 0.70.
+  // GK clean-sheet probability stays sane. (v5.16 capped it at 0.55 for the
+  // old additive model; v6's negative binomial gives elite home defences
+  // ~0.55-0.60, in line with bookmaker clean-sheet prices.)
   const gk = Object.values(VG.players).find(p => p.element_type === 1 && (p.starts || 0) > 0);
   if (gk) {
     VG._projGW = 1;
     const r = VG.computeFixtureXP(gk.id, 10, true, 1);
     VG._projGW = null;
-    check("GK clean-sheet probability caps at 0.55", r.csProb <= 0.55 + 1e-9);
+    check("GK clean-sheet probability stays below 0.70", r.csProb < 0.70);
   } else {
-    check("GK clean-sheet probability caps at 0.55", false);
+    check("GK clean-sheet probability stays below 0.70", false);
   }
   // Premium ceiling bonus is live again (documented feature lost in refactor).
   const premiumFwd = Object.values(VG.players).find(p => p.element_type === 4 && p.now_cost >= 85 && (p.minutes || 0) >= 0);
@@ -1571,6 +1573,19 @@ check("goals conceded cost defenders points but not midfielders", (() => {
     } finally { VG.elite = savedElite; VG._projGW = savedGW; }
   }
   check("backtest feeds the engine only the PREVIOUS GW's elite picks", /elite-gw\$\{gw - 1\}\.json/.test(fs.readFileSync(path.join(root, "tools", "backtest-worker.js"), "utf8")));
+
+  // v6.2: an Understat outage must not blind the team model.
+  {
+    const savedUs = VG.understat;
+    VG.understat = null; VG._teamRatesCache = null;
+    const rates = VG.teamRates();
+    const fplXG = VG._fplTeamXG(Object.fromEntries(Object.keys(VG.teams).map(id => [id, { n: 10 }])));
+    VG.understat = savedUs; VG._teamRatesCache = null;
+    check("without Understat, team xG is rebuilt from FPL's own xG", Object.keys(fplXG).length >= 15 && Object.values(fplXG).every(t => t.npxg90 > 0 && t.npxga90 > 0));
+    check("team indices still separate strong and weak teams without Understat", (() => { const a = Object.values(rates.teams).map(t => t.att); return Math.max(...a) - Math.min(...a) > 0.3; })());
+  }
+  check("Understat workflow keeps the last good file when the fetch comes back empty", /if not players or not teams:[\s\S]*?raise SystemExit\(1\)[\s\S]*?with open\('docs\/data\/understat\.json', 'w'/.test(fs.readFileSync(path.join(root, ".github", "workflows", "fetch-understat.yml"), "utf8")));
+  check("review compounds the advised season (own squad, bank, FTs, chips)", /sim\.picks = \[\.\.\.sim\.picks\.filter/.test(fs.readFileSync(path.join(root, "tools", "review.js"), "utf8")));
 
   section("Summary");
   console.log(`${passed} passed, ${failed} failed`);

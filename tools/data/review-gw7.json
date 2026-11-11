@@ -2,13 +2,13 @@
  "gw": 7,
  "entry": 2769173,
  "advice": {
-  "points": 47,
+  "points": 68,
   "hitCost": 0,
   "chip": null,
   "transfers": [
    [
-    "Bentancur",
-    "Barnes"
+    "Calvert-Lewin",
+    "Barry"
    ]
   ],
   "captain": "Haaland",
@@ -36,14 +36,26 @@
  "noShows": [],
  "cards": [
   {
-   "id": 269,
-   "name": "Sessegnon",
-   "yc": 0,
-   "rc": 1
+   "id": 391,
+   "name": "Gvardiol",
+   "yc": 1,
+   "rc": 0
   },
   {
    "id": 124,
    "name": "Groß",
+   "yc": 1,
+   "rc": 0
+  },
+  {
+   "id": 154,
+   "name": "Palmer",
+   "yc": 1,
+   "rc": 0
+  },
+  {
+   "id": 40,
+   "name": "Rogers",
    "yc": 1,
    "rc": 0
   }
@@ -129,7 +141,7 @@
   "right": 3
  },
  "lessons": [
-  "Cards in the advised XI: Sessegnon (red), Groß.",
+  "Cards in the advised XI: Gvardiol, Groß, Palmer, Rogers.",
   "Hauls the model did not see: Neto 15 (ranked 100), Ayari 13 (ranked 101), Manzambi 11 (ranked 159), Hato 11 (ranked 227).",
   "Price calls weak: 3 of 36 right."
  ]

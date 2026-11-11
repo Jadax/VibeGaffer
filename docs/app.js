@@ -594,6 +594,26 @@ VG.MODEL = {
 // Team attack/defence indices (1.0 = league average) from finished results
 // blended with Understat rolling npxG, shrunk toward average by sample size.
 // Cached on the fixtures + Understat objects it was built from.
+// Team npxG / npxGA per match from FPL's bootstrap: attack = the squad's
+// summed expected_goals per team match; defence = the first-choice keeper's
+// expected_goals_conceded per 90. Penalties (~0.10 per match) are taken out
+// so the numbers line up with Understat's non-penalty xG. `rec` = per-team
+// finished-match counts from teamRates.
+VG._fplTeamXG = (rec) => {
+  const out = {};
+  const pen = VG.MODEL.penPerMatch;
+  Object.values(VG.teams || {}).forEach(t => {
+    const n = (rec[t.id] || {}).n || 0;
+    if (n < 3) return;
+    const squad = Object.values(VG.players || {}).filter(p => p.team === t.id);
+    const xg = squad.reduce((s, p) => s + (parseFloat(p.expected_goals) || 0), 0);
+    const gk = squad.filter(p => p.element_type === 1).sort((a, b) => (b.minutes || 0) - (a.minutes || 0))[0];
+    const xga90 = gk && gk.minutes > 0 ? (parseFloat(gk.expected_goals_conceded) || 0) * 90 / gk.minutes : 0;
+    if (xg > 0 && xga90 > 0) out[t.id] = { npxg90: Math.max(0.2, xg / n - pen), npxga90: Math.max(0.2, xga90 - pen), source: "fpl" };
+  });
+  return out;
+};
+
 VG.teamRates = () => {
   const fx = VG.allFixtures || [];
   const us = VG.understat;
@@ -617,7 +637,11 @@ VG.teamRates = () => {
   const home = enough ? Math.min(1.20, Math.max(1.0, homeGoals / fin.length / mu)) : 1.10;
   const away = enough ? Math.min(1.0, Math.max(0.80, awayGoals / fin.length / mu)) : 0.90;
 
-  const usTeams = (us && us.teams) || {};
+  let usTeams = (us && us.teams) || {};
+  // Understat outage fallback (it went down 2 Nov 2026 and the empty fetch
+  // ran the engine without team xG for two gameweeks): rebuild the same
+  // npxG / npxGA per match from FPL's own Opta xG in the bootstrap.
+  if (!Object.keys(usTeams).length) usTeams = VG._fplTeamXG(rec);
   const usList = Object.values(usTeams).filter(t => t && t.npxg90 > 0);
   const muXG = usList.length ? usList.reduce((s, t) => s + t.npxg90, 0) / usList.length + M.penPerMatch : mu;
 

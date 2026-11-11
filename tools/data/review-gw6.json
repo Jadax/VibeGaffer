@@ -2,13 +2,13 @@
  "gw": 6,
  "entry": 2769173,
  "advice": {
-  "points": 47,
+  "points": 88,
   "hitCost": 0,
   "chip": null,
   "transfers": [
    [
-    "Dasilva",
-    "Groß"
+    "M.Sangaré",
+    "Rogers"
    ]
   ],
   "captain": "Haaland",
@@ -32,14 +32,7 @@
  "average": 58,
  "rho": 0.45799999999999996,
  "noShows": [],
- "cards": [
-  {
-   "id": 516,
-   "name": "Bentancur",
-   "yc": 0,
-   "rc": 1
-  }
- ],
+ "cards": [],
  "missedHauls": [
   {
    "id": 101,
@@ -121,7 +114,6 @@
   "right": 5
  },
  "lessons": [
-  "Cards in the advised XI: Bentancur (red).",
   "Hauls the model did not see: Henderson 18 (ranked 265), Doku 12 (ranked 295), Cherif 12 (ranked 315), O'Shea 11 (ranked 72), McGinn 10 (ranked 71).",
   "FWD under-projected: 2.6 vs 3.4 per player.",
   "Price calls weak: 5 of 48 right."

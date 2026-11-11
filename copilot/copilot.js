@@ -731,10 +731,10 @@
     const R = state.review;
     if (!R || !R.weeks || !R.weeks.length) return '<p class="muted">The weekly review appears after the first finished gameweek.</p>';
     const t = R.totals;
-    let h = `<p class="muted">Each finished GW, the engine's advice for team ${esc(R.entry)} is rebuilt from the data as it stood at the deadline and scored against what happened. Updated ${esc(R.updated)}.</p>`;
-    h += `<table><tr><th>Total</th><th class="n">Advice</th><th class="n">Team</th><th class="n">Top 200</th><th class="n">Avg</th></tr>
+    let h = `<p class="muted">Your season as if every VibeGaffer move had been made: it starts from team ${esc(R.entry)}'s real squad and carries its own transfers, bank and chips forward, using only data from before each deadline. Updated ${esc(R.updated)}.</p>`;
+    h += `<table><tr><th>Total</th><th class="n">Following VG</th><th class="n">You</th><th class="n">Top 200</th><th class="n">Avg</th></tr>
       <tr><td>GW${R.weeks[0].gw}-${R.weeks[R.weeks.length - 1].gw}</td><td class="n good">${t.advice}</td><td class="n">${t.manager}</td><td class="n">${Math.round(t.top200)}</td><td class="n">${t.average}</td></tr></table>`;
-    h += [...R.weeks].reverse().map(w => `<h4>GW${w.gw} · advice ${w.advice} · team ${w.manager} · top 200 ${w.top200 == null ? '-' : Math.round(w.top200)} · avg ${w.average}</h4>` +
+    h += [...R.weeks].reverse().map(w => `<h4>GW${w.gw} · following VG ${w.advice} · you ${w.manager} · top 200 ${w.top200 == null ? '-' : Math.round(w.top200)} · avg ${w.average}</h4>` +
       `<div class="muted" style="font-size:11px">Captain ${esc(w.captain)}${w.chip ? ' · ' + esc(w.chip) : ''}${w.transfers.length ? ' · ' + w.transfers.map(x => esc(x[0]) + ' &rarr; ' + esc(x[1])).join(', ') : ''}</div>` +
       (w.lessons.length ? '<ul style="margin:4px 0 0 16px;padding:0">' + w.lessons.map(l => `<li>${esc(l)}</li>`).join('') + '</ul>' : '')).join('');
     return h;

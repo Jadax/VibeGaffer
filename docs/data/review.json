@@ -1,8 +1,8 @@
 {
- "updated": "2026-11-10",
+ "updated": "2026-11-11",
  "entry": 2769173,
  "totals": {
-  "advice": 459,
+  "advice": 603,
   "manager": 400,
   "top200": 708.2,
   "average": 513
@@ -23,6 +23,7 @@
     ]
    ],
    "lessons": [
+    "Advised bench boost was not played.",
     "2 advised starters did not play: Senesi, Mateta.",
     "Captain Haaland (13) vs the top 200's B.Fernandes (23, 86%).",
     "Cards in the advised XI: Anderson.",
@@ -33,7 +34,7 @@
   },
   {
    "gw": 3,
-   "advice": 44,
+   "advice": 42,
    "manager": 30,
    "top200": 58.77,
    "average": 51,
@@ -43,22 +44,19 @@
     [
      "Wieffer",
      "Ajayi"
-    ],
-    [
-     "Watkins",
-     "João Pedro"
     ]
    ],
    "lessons": [
+    "Advised wildcard was not played.",
     "Captain B.Fernandes (2) vs the top 200's Haaland (9, 97%).",
-    "Cards in the advised XI: Ajayi, Palmer, M.Sangaré, João Pedro.",
+    "Cards in the advised XI: Ajayi, De Cuyper, M.Sangaré, Groß, João Pedro.",
     "Hauls the model did not see: Mitchell 15 (ranked 208), Bogle 14 (ranked 100), Barnes 12 (ranked 124), Vuskovic 12 (ranked 89).",
     "Price calls weak: 5 of 71 right."
    ]
   },
   {
    "gw": 4,
-   "advice": 64,
+   "advice": 107,
    "manager": 59,
    "top200": 99.99,
    "average": 69,
@@ -66,14 +64,17 @@
    "chip": null,
    "transfers": [
     [
-     "Wieffer",
-     "Calafiori"
+     "White",
+     "Gvardiol"
+    ],
+    [
+     "Yalcouyé",
+     "Slater"
     ]
    ],
    "lessons": [
-    "3 advised starters did not play: Canvot, Senesi, Wilson.",
     "Captain Haaland (9) vs the top 200's Palmer (5, 54%).",
-    "Cards in the advised XI: Gabriel.",
+    "Cards in the advised XI: Gvardiol, Calvert-Lewin.",
     "Hauls the model did not see: Davis 14 (ranked 102), Belloumi 13 (ranked 84), Dunk 12 (ranked 89).",
     "GK under-projected: 1.6 vs 2.2 per player.",
     "Price calls weak: 5 of 61 right."
@@ -81,7 +82,7 @@
   },
   {
    "gw": 5,
-   "advice": 43,
+   "advice": 52,
    "manager": 41,
    "top200": 57.26,
    "average": 48,
@@ -89,19 +90,21 @@
    "chip": "triple_captain",
    "transfers": [
     [
-     "Mendy",
-     "Calafiori"
+     "B.Fernandes",
+     "Palmer"
     ]
    ],
    "lessons": [
-    "3 advised starters did not play: Senesi, João Pedro (was flagged), Wilson.",
+    "Advised triple captain was not played.",
+    "1 advised starter did not play: João Pedro (was flagged).",
+    "Cards in the advised XI: De Cuyper.",
     "Hauls the model did not see: Brobbey 17 (ranked 175), Dasilva 15 (ranked 191), Schuster 14 (ranked 214), Manzambi 13 (ranked 346).",
     "Price calls weak: 11 of 55 right."
    ]
   },
   {
    "gw": 6,
-   "advice": 47,
+   "advice": 88,
    "manager": 54,
    "top200": 82.63,
    "average": 58,
@@ -109,12 +112,11 @@
    "chip": null,
    "transfers": [
     [
-     "Dasilva",
-     "Groß"
+     "M.Sangaré",
+     "Rogers"
     ]
    ],
    "lessons": [
-    "Cards in the advised XI: Bentancur (red).",
     "Hauls the model did not see: Henderson 18 (ranked 265), Doku 12 (ranked 295), Cherif 12 (ranked 315), O'Shea 11 (ranked 72), McGinn 10 (ranked 71).",
     "FWD under-projected: 2.6 vs 3.4 per player.",
     "Price calls weak: 5 of 48 right."
@@ -122,7 +124,7 @@
   },
   {
    "gw": 7,
-   "advice": 47,
+   "advice": 68,
    "manager": 36,
    "top200": 83.31,
    "average": 59,
@@ -130,19 +132,19 @@
    "chip": null,
    "transfers": [
     [
-     "Bentancur",
-     "Barnes"
+     "Calvert-Lewin",
+     "Barry"
     ]
    ],
    "lessons": [
-    "Cards in the advised XI: Sessegnon (red), Groß.",
+    "Cards in the advised XI: Gvardiol, Groß, Palmer, Rogers.",
     "Hauls the model did not see: Neto 15 (ranked 100), Ayari 13 (ranked 101), Manzambi 11 (ranked 159), Hato 11 (ranked 227).",
     "Price calls weak: 3 of 36 right."
    ]
   },
   {
    "gw": 8,
-   "advice": 57,
+   "advice": 46,
    "manager": 43,
    "top200": 58.52,
    "average": 45,
@@ -150,13 +152,13 @@
    "chip": null,
    "transfers": [
     [
-     "Sessegnon",
+     "Ajayi",
      "Konsa"
     ]
    ],
    "lessons": [
-    "2 advised starters did not play: Senesi, João Pedro.",
-    "Cards in the advised XI: Bogle, Canvot, Anderson.",
+    "1 advised starter did not play: João Pedro.",
+    "Cards in the advised XI: Palmer (red), Rogers.",
     "Hauls the model did not see: N.Jackson 13 (ranked 89), Hill 11 (ranked 80), Bobb 11 (ranked 106), Tel 11 (ranked 265), Dedić 11 (ranked 198), White 10 (ranked 76).",
     "GK under-projected: 1.5 vs 2.2 per player.",
     "Price calls weak: 9 of 33 right."
@@ -164,7 +166,7 @@
   },
   {
    "gw": 9,
-   "advice": 41,
+   "advice": 65,
    "manager": 39,
    "top200": 72.14,
    "average": 47,
@@ -174,22 +176,17 @@
     [
      "João Pedro",
      "Calvert-Lewin"
-    ],
-    [
-     "Sessegnon",
-     "Konsa"
     ]
    ],
    "lessons": [
-    "1 advised starter did not play: Senesi.",
-    "Cards in the advised XI: Groß.",
+    "Cards in the advised XI: Raya, De Cuyper, Mbeumo, Groß.",
     "Hauls the model did not see: Verbruggen 11 (ranked 123), Fofana 11 (ranked 219), Van den Berg 10 (ranked 243), Ayari 10 (ranked 138).",
     "Price calls weak: 9 of 35 right."
    ]
   },
   {
    "gw": 10,
-   "advice": 47,
+   "advice": 66,
    "manager": 44,
    "top200": 78.67,
    "average": 55,
@@ -197,13 +194,11 @@
    "chip": null,
    "transfers": [
     [
-     "Saka",
-     "Tavernier"
+     "Gvardiol",
+     "Van Hecke"
     ]
    ],
    "lessons": [
-    "2 advised starters did not play: Canvot, Senesi.",
-    "Cards in the advised XI: Tavernier.",
     "Hauls the model did not see: Alysson 16 (ranked 213), Delap 13 (ranked 127), Dorgu 11 (ranked 345).",
     "Price calls weak: 9 of 32 right."
    ]

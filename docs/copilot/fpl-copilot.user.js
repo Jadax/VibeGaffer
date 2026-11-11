@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FPL Copilot by VibeGaffer
 // @namespace    vibegaffer-copilot
-// @version      6.1.0
+// @version      6.2.0
 // @description  The VibeGaffer engine inside the FPL site: transfers, lineup, captain and chips for your real team, with an optional lineup autopilot.
 // @author       Tushant Sharma
 // @match        https://fantasy.premierleague.com/*
@@ -22,7 +22,7 @@
 (() => {
   'use strict';
   if (window.top !== window.self) return;
-  const VERSION = '6.1.0';
+  const VERSION = '6.2.0';
   const SITE = 'https://vibegaffer.astraiva.app';
 
   /* =========================================================================
@@ -725,6 +725,26 @@
     // Team attack/defence indices (1.0 = league average) from finished results
     // blended with Understat rolling npxG, shrunk toward average by sample size.
     // Cached on the fixtures + Understat objects it was built from.
+    // Team npxG / npxGA per match from FPL's bootstrap: attack = the squad's
+    // summed expected_goals per team match; defence = the first-choice keeper's
+    // expected_goals_conceded per 90. Penalties (~0.10 per match) are taken out
+    // so the numbers line up with Understat's non-penalty xG. `rec` = per-team
+    // finished-match counts from teamRates.
+    VG._fplTeamXG = (rec) => {
+      const out = {};
+      const pen = VG.MODEL.penPerMatch;
+      Object.values(VG.teams || {}).forEach(t => {
+        const n = (rec[t.id] || {}).n || 0;
+        if (n < 3) return;
+        const squad = Object.values(VG.players || {}).filter(p => p.team === t.id);
+        const xg = squad.reduce((s, p) => s + (parseFloat(p.expected_goals) || 0), 0);
+        const gk = squad.filter(p => p.element_type === 1).sort((a, b) => (b.minutes || 0) - (a.minutes || 0))[0];
+        const xga90 = gk && gk.minutes > 0 ? (parseFloat(gk.expected_goals_conceded) || 0) * 90 / gk.minutes : 0;
+        if (xg > 0 && xga90 > 0) out[t.id] = { npxg90: Math.max(0.2, xg / n - pen), npxga90: Math.max(0.2, xga90 - pen), source: "fpl" };
+      });
+      return out;
+    };
+
     VG.teamRates = () => {
       const fx = VG.allFixtures || [];
       const us = VG.understat;
@@ -748,7 +768,11 @@
       const home = enough ? Math.min(1.20, Math.max(1.0, homeGoals / fin.length / mu)) : 1.10;
       const away = enough ? Math.min(1.0, Math.max(0.80, awayGoals / fin.length / mu)) : 0.90;
 
-      const usTeams = (us && us.teams) || {};
+      let usTeams = (us && us.teams) || {};
+      // Understat outage fallback (it went down 2 Nov 2026 and the empty fetch
+      // ran the engine without team xG for two gameweeks): rebuild the same
+      // npxG / npxGA per match from FPL's own Opta xG in the bootstrap.
+      if (!Object.keys(usTeams).length) usTeams = VG._fplTeamXG(rec);
       const usList = Object.values(usTeams).filter(t => t && t.npxg90 > 0);
       const muXG = usList.length ? usList.reduce((s, t) => s + t.npxg90, 0) / usList.length + M.penPerMatch : mu;
 
@@ -6101,10 +6125,10 @@
     const R = state.review;
     if (!R || !R.weeks || !R.weeks.length) return '<p class="muted">The weekly review appears after the first finished gameweek.</p>';
     const t = R.totals;
-    let h = `<p class="muted">Each finished GW, the engine's advice for team ${esc(R.entry)} is rebuilt from the data as it stood at the deadline and scored against what happened. Updated ${esc(R.updated)}.</p>`;
-    h += `<table><tr><th>Total</th><th class="n">Advice</th><th class="n">Team</th><th class="n">Top 200</th><th class="n">Avg</th></tr>
+    let h = `<p class="muted">Your season as if every VibeGaffer move had been made: it starts from team ${esc(R.entry)}'s real squad and carries its own transfers, bank and chips forward, using only data from before each deadline. Updated ${esc(R.updated)}.</p>`;
+    h += `<table><tr><th>Total</th><th class="n">Following VG</th><th class="n">You</th><th class="n">Top 200</th><th class="n">Avg</th></tr>
       <tr><td>GW${R.weeks[0].gw}-${R.weeks[R.weeks.length - 1].gw}</td><td class="n good">${t.advice}</td><td class="n">${t.manager}</td><td class="n">${Math.round(t.top200)}</td><td class="n">${t.average}</td></tr></table>`;
-    h += [...R.weeks].reverse().map(w => `<h4>GW${w.gw} · advice ${w.advice} · team ${w.manager} · top 200 ${w.top200 == null ? '-' : Math.round(w.top200)} · avg ${w.average}</h4>` +
+    h += [...R.weeks].reverse().map(w => `<h4>GW${w.gw} · following VG ${w.advice} · you ${w.manager} · top 200 ${w.top200 == null ? '-' : Math.round(w.top200)} · avg ${w.average}</h4>` +
       `<div class="muted" style="font-size:11px">Captain ${esc(w.captain)}${w.chip ? ' · ' + esc(w.chip) : ''}${w.transfers.length ? ' · ' + w.transfers.map(x => esc(x[0]) + ' &rarr; ' + esc(x[1])).join(', ') : ''}</div>` +
       (w.lessons.length ? '<ul style="margin:4px 0 0 16px;padding:0">' + w.lessons.map(l => `<li>${esc(l)}</li>`).join('') + '</ul>' : '')).join('');
     return h;
