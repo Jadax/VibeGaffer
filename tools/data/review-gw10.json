@@ -2,17 +2,17 @@
  "gw": 10,
  "entry": 2769173,
  "advice": {
-  "points": 66,
+  "points": 81,
   "hitCost": 0,
   "chip": null,
   "transfers": [
    [
-    "Gvardiol",
-    "Van Hecke"
+    "Thomas",
+    "Konsa"
    ]
   ],
-  "captain": "Haaland",
-  "captainPoints": 2,
+  "captain": "Konsa",
+  "captainPoints": 8,
   "chipsAdvised": []
  },
  "manager": {
@@ -31,58 +31,65 @@
   }
  },
  "average": 55,
- "rho": 0.5579999999999999,
+ "rho": 0.557,
  "noShows": [],
- "cards": [],
+ "cards": [
+  {
+   "id": 68,
+   "name": "Tavernier",
+   "yc": 1,
+   "rc": 0
+  }
+ ],
  "missedHauls": [
   {
    "id": 52,
    "name": "Alysson",
    "pts": 16,
-   "projRank": 213,
-   "proj": 1.7
+   "projRank": 219,
+   "proj": 1.6
   },
   {
    "id": 249,
    "name": "Barry",
    "pts": 16,
-   "projRank": 16,
-   "proj": 4.6
+   "projRank": 23,
+   "proj": 4.2
   },
   {
    "id": 167,
    "name": "Delap",
    "pts": 13,
-   "projRank": 127,
-   "proj": 2.6
+   "projRank": 141,
+   "proj": 2.5
   },
   {
    "id": 366,
    "name": "Wirtz",
    "pts": 13,
-   "projRank": 42,
-   "proj": 3.7
+   "projRank": 55,
+   "proj": 3.4
   },
   {
    "id": 504,
    "name": "Vuskovic",
    "pts": 12,
-   "projRank": 23,
-   "proj": 4.2
+   "projRank": 19,
+   "proj": 4.4
   },
   {
    "id": 15,
    "name": "Ødegaard",
    "pts": 11,
-   "projRank": 33,
-   "proj": 3.9
+   "projRank": 35,
+   "proj": 3.8
   },
   {
    "id": 166,
    "name": "N.Jackson",
    "pts": 11,
-   "projRank": 14,
-   "proj": 4.9
+   "projRank": 13,
+   "proj": 5.2
   },
   {
    "id": 415,
@@ -94,19 +101,19 @@
  ],
  "channel": {
   "GK": {
-   "proj": 1.6,
+   "proj": 1.7,
    "actual": 1.7
   },
   "DEF": {
-   "proj": 2.3,
+   "proj": 2.4,
    "actual": 2.3
   },
   "MID": {
-   "proj": 2.1,
+   "proj": 2,
    "actual": 2.5
   },
   "FWD": {
-   "proj": 2.4,
+   "proj": 2.3,
    "actual": 2.7
   }
  },
@@ -115,7 +122,9 @@
   "right": 9
  },
  "lessons": [
-  "Hauls the model did not see: Alysson 16 (ranked 213), Delap 13 (ranked 127), Dorgu 11 (ranked 345).",
+  "Captain Konsa (8) vs the top 200's Haaland (2, 57%).",
+  "Cards in the advised XI: Tavernier.",
+  "Hauls the model did not see: Alysson 16 (ranked 219), Delap 13 (ranked 141), Dorgu 11 (ranked 345).",
   "Price calls weak: 9 of 32 right."
  ]
 }

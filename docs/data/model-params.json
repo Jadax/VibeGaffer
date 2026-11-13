@@ -1,12 +1,12 @@
 {
- "updated": "2026-11-10",
+ "updated": "2026-11-13",
  "gws": [
   1,
   10
  ],
  "meanRho": 0.508,
  "meanRhoEpNext": 0.435,
- "teamPoints": 656,
+ "teamPoints": 648,
  "avgManagerPoints": 563,
  "params": {}
 }

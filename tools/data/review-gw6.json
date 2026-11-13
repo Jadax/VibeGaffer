@@ -2,16 +2,16 @@
  "gw": 6,
  "entry": 2769173,
  "advice": {
-  "points": 88,
+  "points": 69,
   "hitCost": 0,
   "chip": null,
   "transfers": [
    [
-    "M.Sangaré",
-    "Rogers"
+    "Isak",
+    "Calvert-Lewin"
    ]
   ],
-  "captain": "Haaland",
+  "captain": "Groß",
   "captainPoints": 6,
   "chipsAdvised": []
  },
@@ -32,7 +32,14 @@
  "average": 58,
  "rho": 0.45799999999999996,
  "noShows": [],
- "cards": [],
+ "cards": [
+  {
+   "id": 426,
+   "name": "B.Fernandes",
+   "yc": 1,
+   "rc": 0
+  }
+ ],
  "missedHauls": [
   {
    "id": 101,
@@ -114,6 +121,8 @@
   "right": 5
  },
  "lessons": [
+  "Captain Groß (6) vs the top 200's Haaland (6, 32%).",
+  "Cards in the advised XI: B.Fernandes.",
   "Hauls the model did not see: Henderson 18 (ranked 265), Doku 12 (ranked 295), Cherif 12 (ranked 315), O'Shea 11 (ranked 72), McGinn 10 (ranked 71).",
   "FWD under-projected: 2.6 vs 3.4 per player.",
   "Price calls weak: 5 of 48 right."

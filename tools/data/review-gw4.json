@@ -2,22 +2,24 @@
  "gw": 4,
  "entry": 2769173,
  "advice": {
-  "points": 107,
+  "points": 73,
   "hitCost": 0,
-  "chip": null,
+  "chip": "triple_captain",
   "transfers": [
    [
     "White",
     "Gvardiol"
    ],
    [
-    "Yalcouyé",
-    "Slater"
+    "M.Sangaré",
+    "Groß"
    ]
   ],
-  "captain": "Haaland",
-  "captainPoints": 9,
-  "chipsAdvised": []
+  "captain": "Isak",
+  "captainPoints": 2,
+  "chipsAdvised": [
+   "triple_captain"
+  ]
  },
  "manager": {
   "points": 59,
@@ -46,8 +48,8 @@
    "rc": 0
   },
   {
-   "id": 346,
-   "name": "Calvert-Lewin",
+   "id": 277,
+   "name": "Egan",
    "yc": 1,
    "rc": 0
   }
@@ -133,8 +135,9 @@
   "right": 5
  },
  "lessons": [
-  "Captain Haaland (9) vs the top 200's Palmer (5, 54%).",
-  "Cards in the advised XI: Gvardiol, Calvert-Lewin.",
+  "Advised triple captain was not played.",
+  "Captain Isak (2) vs the top 200's Palmer (5, 54%).",
+  "Cards in the advised XI: Gvardiol, Egan.",
   "Hauls the model did not see: Davis 14 (ranked 102), Belloumi 13 (ranked 84), Dunk 12 (ranked 89).",
   "GK under-projected: 1.6 vs 2.2 per player.",
   "Price calls weak: 5 of 61 right."

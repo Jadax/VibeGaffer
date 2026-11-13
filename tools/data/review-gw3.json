@@ -2,7 +2,7 @@
  "gw": 3,
  "entry": 2769173,
  "advice": {
-  "points": 42,
+  "points": 44,
   "hitCost": 0,
   "chip": "wildcard",
   "transfers": [
@@ -43,20 +43,14 @@
    "rc": 0
   },
   {
-   "id": 115,
-   "name": "De Cuyper",
+   "id": 154,
+   "name": "Palmer",
    "yc": 1,
    "rc": 0
   },
   {
    "id": 565,
    "name": "M.Sangaré",
-   "yc": 1,
-   "rc": 0
-  },
-  {
-   "id": 124,
-   "name": "Groß",
    "yc": 1,
    "rc": 0
   },
@@ -150,7 +144,7 @@
  "lessons": [
   "Advised wildcard was not played.",
   "Captain B.Fernandes (2) vs the top 200's Haaland (9, 97%).",
-  "Cards in the advised XI: Ajayi, De Cuyper, M.Sangaré, Groß, João Pedro.",
+  "Cards in the advised XI: Ajayi, Palmer, M.Sangaré, João Pedro.",
   "Hauls the model did not see: Mitchell 15 (ranked 208), Bogle 14 (ranked 100), Barnes 12 (ranked 124), Vuskovic 12 (ranked 89).",
   "Price calls weak: 5 of 71 right."
  ]

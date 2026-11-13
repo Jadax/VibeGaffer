@@ -2,20 +2,18 @@
  "gw": 5,
  "entry": 2769173,
  "advice": {
-  "points": 52,
+  "points": 51,
   "hitCost": 0,
-  "chip": "triple_captain",
+  "chip": null,
   "transfers": [
    [
-    "B.Fernandes",
-    "Palmer"
+    "Mbeumo",
+    "Rogers"
    ]
   ],
-  "captain": "Haaland",
-  "captainPoints": 6,
-  "chipsAdvised": [
-   "triple_captain"
-  ]
+  "captain": "Isak",
+  "captainPoints": 8,
+  "chipsAdvised": []
  },
  "manager": {
   "points": 41,
@@ -43,8 +41,14 @@
  ],
  "cards": [
   {
-   "id": 115,
-   "name": "De Cuyper",
+   "id": 572,
+   "name": "Tzolakis",
+   "yc": 1,
+   "rc": 0
+  },
+  {
+   "id": 379,
+   "name": "Isak",
    "yc": 1,
    "rc": 0
   }
@@ -130,9 +134,9 @@
   "right": 11
  },
  "lessons": [
-  "Advised triple captain was not played.",
   "1 advised starter did not play: João Pedro (was flagged).",
-  "Cards in the advised XI: De Cuyper.",
+  "Captain Isak (8) vs the top 200's Haaland (6, 94%).",
+  "Cards in the advised XI: Tzolakis, Isak.",
   "Hauls the model did not see: Brobbey 17 (ranked 175), Dasilva 15 (ranked 191), Schuster 14 (ranked 214), Manzambi 13 (ranked 346).",
   "Price calls weak: 11 of 55 right."
  ]

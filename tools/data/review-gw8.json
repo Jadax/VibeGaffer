@@ -2,17 +2,17 @@
  "gw": 8,
  "entry": 2769173,
  "advice": {
-  "points": 46,
+  "points": 22,
   "hitCost": 0,
   "chip": null,
   "transfers": [
    [
-    "Ajayi",
-    "Konsa"
+    "Saka",
+    "Tavernier"
    ]
   ],
-  "captain": "Haaland",
-  "captainPoints": 8,
+  "captain": "Palmer",
+  "captainPoints": -1,
   "chipsAdvised": []
  },
  "manager": {
@@ -34,6 +34,12 @@
  "average": 45,
  "rho": 0.433,
  "noShows": [
+  {
+   "id": 426,
+   "name": "B.Fernandes",
+   "flagged": false,
+   "xMins": 83
+  },
   {
    "id": 165,
    "name": "João Pedro",
@@ -136,7 +142,9 @@
   "right": 9
  },
  "lessons": [
-  "1 advised starter did not play: João Pedro.",
+  "Advised 1 transfer (Saka > Tavernier), none made.",
+  "2 advised starters did not play: B.Fernandes, João Pedro.",
+  "Captain Palmer (-1) vs the top 200's Haaland (8, 64%).",
   "Cards in the advised XI: Palmer (red), Rogers.",
   "Hauls the model did not see: N.Jackson 13 (ranked 89), Hill 11 (ranked 80), Bobb 11 (ranked 106), Tel 11 (ranked 265), Dedić 11 (ranked 198), White 10 (ranked 76).",
   "GK under-projected: 1.5 vs 2.2 per player.",
