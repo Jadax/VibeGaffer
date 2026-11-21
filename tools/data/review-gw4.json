@@ -2,24 +2,18 @@
  "gw": 4,
  "entry": 2769173,
  "advice": {
-  "points": 73,
+  "points": 83,
   "hitCost": 0,
-  "chip": "triple_captain",
+  "chip": null,
   "transfers": [
    [
-    "White",
-    "Gvardiol"
-   ],
-   [
-    "M.Sangaré",
+    "Ndiaye",
     "Groß"
    ]
   ],
   "captain": "Isak",
   "captainPoints": 2,
-  "chipsAdvised": [
-   "triple_captain"
-  ]
+  "chipsAdvised": []
  },
  "manager": {
   "points": 59,
@@ -40,20 +34,7 @@
  "average": 69,
  "rho": 0.527,
  "noShows": [],
- "cards": [
-  {
-   "id": 391,
-   "name": "Gvardiol",
-   "yc": 1,
-   "rc": 0
-  },
-  {
-   "id": 277,
-   "name": "Egan",
-   "yc": 1,
-   "rc": 0
-  }
- ],
+ "cards": [],
  "missedHauls": [
   {
    "id": 124,
@@ -135,9 +116,7 @@
   "right": 5
  },
  "lessons": [
-  "Advised triple captain was not played.",
   "Captain Isak (2) vs the top 200's Palmer (5, 54%).",
-  "Cards in the advised XI: Gvardiol, Egan.",
   "Hauls the model did not see: Davis 14 (ranked 102), Belloumi 13 (ranked 84), Dunk 12 (ranked 89).",
   "GK under-projected: 1.6 vs 2.2 per player.",
   "Price calls weak: 5 of 61 right."

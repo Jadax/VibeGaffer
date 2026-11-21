@@ -2,9 +2,9 @@
  "gw": 2,
  "entry": 2769173,
  "advice": {
-  "points": 69,
+  "points": 77,
   "hitCost": 0,
-  "chip": "bench_boost",
+  "chip": "wildcard",
   "transfers": [
    [
     "Watkins",
@@ -14,7 +14,7 @@
   "captain": "Haaland",
   "captainPoints": 13,
   "chipsAdvised": [
-   "bench_boost"
+   "wildcard"
   ]
  },
  "manager": {
@@ -34,28 +34,8 @@
  },
  "average": 81,
  "rho": 0.644,
- "noShows": [
-  {
-   "id": 498,
-   "name": "Senesi",
-   "flagged": false,
-   "xMins": 69
-  },
-  {
-   "id": 223,
-   "name": "Mateta",
-   "flagged": false,
-   "xMins": 61
-  }
- ],
- "cards": [
-  {
-   "id": 481,
-   "name": "Anderson",
-   "yc": 1,
-   "rc": 0
-  }
- ],
+ "noShows": [],
+ "cards": [],
  "missedHauls": [
   {
    "id": 426,
@@ -137,10 +117,8 @@
   "right": 3
  },
  "lessons": [
-  "Advised bench boost was not played.",
-  "2 advised starters did not play: Senesi, Mateta.",
+  "Advised wildcard was not played.",
   "Captain Haaland (13) vs the top 200's B.Fernandes (23, 86%).",
-  "Cards in the advised XI: Anderson.",
   "Hauls the model did not see: Cherki 14 (ranked 198), Gibbs-White 13 (ranked 84), Scott 12 (ranked 90).",
   "MID under-projected: 1.9 vs 2.7 per player.",
   "Price calls weak: 3 of 41 right."

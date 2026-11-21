@@ -9,6 +9,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      vibegaffer.astraiva.app
 // @require      https://cdn.jsdelivr.net/npm/highs@1.8.0/build/highs.js
 // @updateURL    https://vibegaffer.astraiva.app/copilot/fpl-copilot.user.js
@@ -24,6 +25,11 @@
   if (window.top !== window.self) return;
   const VERSION = '__VERSION__';
   const SITE = 'https://vibegaffer.astraiva.app';
+  // FPL API calls go through the page's own fetch so they carry the signed-in
+  // session. The sandbox's fetch did not, and v6.1 ran read-only for a
+  // signed-in manager (GW11, 21 Nov 2026).
+  const PAGE = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+  const pageFetch = (url, opts) => PAGE.fetch(url, opts);
 
   /* =========================================================================
    * Utilities
@@ -79,13 +85,13 @@
   const cookie = name => (document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)')) || [])[1] || '';
 
   async function api(path) {
-    const r = await fetch('/api/' + path, { credentials: 'same-origin' });
+    const r = await pageFetch('/api/' + path, { credentials: 'same-origin' });
     if (!r.ok) throw new Error(path + ' -> ' + r.status);
     return r.json();
   }
 
   async function apiPost(path, body) {
-    const r = await fetch('/api/' + path, {
+    const r = await pageFetch('/api/' + path, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': decodeURIComponent(cookie('csrftoken')) },
@@ -163,8 +169,10 @@
 
   async function loadTeam() {
     let me = null;
-    try { me = await api('me/'); } catch { /* signed out */ }
+    state.authNote = null;
+    try { me = await api('me/'); } catch (e) { state.authNote = 'FPL sign-in check failed (' + e.message + ').'; }
     const entry = me && me.player && me.player.entry;
+    if (!entry && !state.authNote) state.authNote = 'FPL does not see a sign-in in this tab. Sign in on fantasy.premierleague.com and reload the page.';
     if (entry) {
       const t = await api(`my-team/${entry}/`);
       const tr = t.transfers || {};
@@ -242,7 +250,8 @@
     const asPicks = made.squad.map((p, i) => ({ element: p.id, position: i + 1 }));
     const span = key === 'wildcard' ? L.horizon : 1;
     const score = picks => VG.planSquad(picks, allXP, 0, 0, L.gw, span, { maxTransfers: 0 }).totalXP;
-    return { key, budget, squad: made.squad, span, newXP: score(asPicks), oldXP: score(team.picks) };
+    const newPlan = VG.planSquad(asPicks, allXP, 0, 0, L.gw, span, { maxTransfers: 0 });
+    return { key, budget, squad: made.squad, span, newXP: newPlan.totalXP, oldXP: score(team.picks), lineup: newPlan.gwPicks[0] };
   }
 
   function computePlan(team) {
@@ -414,6 +423,7 @@
       }
       state.error = state.lineup && state.lineup.error || null;
       state.status = state.team ? (state.team.live ? 'Signed in' : 'Read-only (team ID)') : 'Sign in, or set a team ID under Auto';
+      if (state.team && !state.team.live && state.authNote) state.error = state.authNote;
       state.updated = now();
       // Weekly self-review (tools/review.js): how the advice did vs real results.
       try { const r = await remote('review.json'); state.review = r.ok ? await r.json() : null; } catch { state.review = null; }
@@ -512,10 +522,16 @@
         const adv = L.plan.chipAdvice || {};
         const teamChip = ['triple_captain', 'bench_boost'].find(k => adv[k] && adv[k].recommend && adv[k].bestGW === L.gw && !activeTeamChip(team));
         const c = L.chip && (L.chip.newXP - L.chip.oldXP >= (L.chip.key === 'wildcard' ? 15 : 6)) ? L.chip : null;
+        // The XI shown is for the squad the plan ends with: after the chip
+        // squad or the advised transfers, not the squad as it stands now.
+        const xiFrom = (c ? c.lineup : null) || L.plan.gwPicks[0] || L.lineup;
         return {
           gw: L.gw, deadline: L.ev.deadline_time, chipSquad: c, teamChip,
           transfers: c ? [] : L.plan.transfersOut.map((o, i) => [o.name, L.plan.transfersIn[i].name]), hitCost: c ? 0 : L.plan.hitCost || 0,
-          captain: name(L.lineup.gotCap[0].id), vice: name(L.lineup.gotCap[1].id), recXP: L.recXP, curXP: L.curXP,
+          captain: name(xiFrom.gotCap[0].id), vice: name(xiFrom.gotCap[1].id), recXP: L.recXP, curXP: L.curXP,
+          formation: xiFrom.formation,
+          xi: [...xiFrom.starting].sort((a, b) => a.positionId - b.positionId || (b.gwXP || 0) - (a.gwXP || 0)).map(p => ({ name: p.name, pos: POS[p.positionId], gwXP: p.gwXP, opp: `${p.gwOpp || ''} ${p.gwVenue || ''}`.trim() })),
+          bench: [...xiFrom.bench.filter(p => p.positionId === 1), ...xiFrom.bench.filter(p => p.positionId !== 1).sort((a, b) => (b.gwXP || 0) - (a.gwXP || 0))].map(p => ({ name: p.name, pos: POS[p.positionId], gwXP: p.gwXP })),
           chips: Object.fromEntries(Object.entries(adv).filter(([k]) => k !== 'gwScores').map(([k, v]) => [k, v.recommend ? 'GW' + v.bestGW : 'hold']))
         };
       });
@@ -524,7 +540,7 @@
       // squad first (chip squad or transfers), then lineup + captain (+ TC/BB).
       await step('apply', async () => {
         const P = W.plan;
-        if (!team.live) return { skipped: 'Read-only: sign in to make changes.' };
+        if (!team.live) return { skipped: 'Read-only, nothing changed. ' + (state.authNote || 'Sign in to FPL and reload the page.') };
         const hoursLeft = (new Date(P.deadline).getTime() - now()) / 3600e3;
         const lines = [];
         if (P.chipSquad) lines.push(`Play ${P.chipSquad.key === 'wildcard' ? 'Wildcard' : 'Free Hit'} (${f1(P.chipSquad.oldXP)} -> ${f1(P.chipSquad.newXP)} xP)`);
@@ -653,6 +669,11 @@
       if (P.hitCost) h += `<div class="bad">Hits: -${P.hitCost}</div>`;
       if (P.teamChip) h += `<div class="row"><span>Chip</span><span class="good">${P.teamChip === 'bench_boost' ? 'Bench Boost' : 'Triple Captain'}</span></div>`;
       h += `<div class="row"><span>Captain · vice</span><span>${esc(P.captain)} · ${esc(P.vice)}</span></div>`;
+      if (P.xi) {
+        h += `<h4>Starting XI${P.formation ? ' · ' + esc(P.formation.DEF + '-' + P.formation.MID + '-' + P.formation.FWD) : ''}</h4><table>` +
+          P.xi.map(x => `<tr><td>${esc(x.name)}${x.name === P.captain ? ' <b class="good">(C)</b>' : x.name === P.vice ? ' <span class="warn">(V)</span>' : ''}</td><td class="muted">${esc(x.pos)}</td><td class="muted">${esc(x.opp)}</td><td class="n">${f1(x.gwXP)}</td></tr>`).join('') + '</table>';
+        h += '<h4>Bench (sub order)</h4><table>' + P.bench.map((x, i) => `<tr><td>${i === 0 ? 'GK' : i}. ${esc(x.name)}</td><td class="muted">${esc(x.pos)}</td><td class="n">${f1(x.gwXP)}</td></tr>`).join('') + '</table>';
+      }
       h += `<div class="muted" style="font-size:11px">Chip plan: ${Object.entries(P.chips).map(([k, v]) => esc(k.replace('_', ' ')) + ' ' + esc(v)).join(', ')}</div>`;
     }
     const A = W.apply;

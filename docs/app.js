@@ -2800,6 +2800,18 @@ VG._applyChipWindow = (advice, gwScores, fixtures, opts = {}) => {
     taken.add(best.gw);
     advice[k] = { ...advice[k], recommend: true, bestGW: best.gw, reason, tip, deadline: windowEnd };
   };
+  // A broken squad gets the Wildcard first. TC and BB are worth more on the
+  // rebuilt squad, and every week with dead slots costs points (GW11 2026:
+  // the plan put TC on GW11 and pushed the Wildcard to GW13 while five of
+  // the fifteen were not playing). Chips that wanted this week move on.
+  if (open.includes("wildcard") && gwScores[0].deadCount >= 3) {
+    advice.wildcard = { ...advice.wildcard, recommend: true, bestGW: gw0, deadline: windowEnd,
+      reason: `${gwScores[0].deadCount} players unlikely to play: Wildcard first, then the other chips on the rebuilt squad`,
+      tip: "Fix the squad before Triple Captain or Bench Boost: both score more on the rebuilt team." };
+    ["triple_captain", "bench_boost", "free_hit"].forEach(k => {
+      if (advice[k].recommend && advice[k].bestGW === gw0) advice[k] = { ...advice[k], recommend: false, bestGW: null };
+    });
+  }
   // Chips the trigger rules already placed keep their week.
   open.forEach(k => { if (advice[k].recommend && advice[k].bestGW) taken.add(advice[k].bestGW); });
   const left = `${gwsLeft} GW${gwsLeft === 1 ? "" : "s"} before the GW${windowEnd} expiry`;

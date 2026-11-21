@@ -1587,6 +1587,16 @@ check("goals conceded cost defenders points but not midfielders", (() => {
   check("Understat workflow keeps the last good file when the fetch comes back empty", /if not players or not teams:[\s\S]*?raise SystemExit\(1\)[\s\S]*?with open\('docs\/data\/understat\.json', 'w'/.test(fs.readFileSync(path.join(root, ".github", "workflows", "fetch-understat.yml"), "utf8")));
   check("review compounds the advised season (own squad, bank, FTs, chips)", /sim\.picks = \[\.\.\.sim\.picks\.filter/.test(fs.readFileSync(path.join(root, "tools", "review.js"), "utf8")));
 
+  // v6.3: a broken squad plays the Wildcard before TC/BB, never in the same week.
+  {
+    const gs = [3, 4, 5, 6, 7].map(g => ({ gw: g, deadCount: g === 3 ? 5 : 0, capGWXP: g === 3 ? 9 : 7, benchXP: 4, wcScore: 75, fhScore: 0, badFixCount: 0, capName: "X" }));
+    const base = { triple_captain: { recommend: true, bestGW: 3, reason: "" }, bench_boost: { recommend: false, bestGW: 3, reason: "" }, wildcard: { recommend: false, bestGW: 5, reason: "" }, free_hit: { recommend: false, bestGW: 3, reason: "" } };
+    const adv = VG._applyChipWindow(JSON.parse(JSON.stringify(base)), gs, fixtures, { windowEnd: 7, chipsAvailable: ["wildcard", "free_hit", "bench_boost", "triple_captain"] });
+    check("a squad with 3+ dead slots plays the Wildcard this week", adv.wildcard.recommend && adv.wildcard.bestGW === 3);
+    check("Triple Captain moves off the Wildcard week", adv.triple_captain.bestGW !== 3);
+  }
+  check("FPL Copilot calls the FPL API through the page's own fetch (signed-in session)", /const pageFetch = \(url, opts\) => PAGE\.fetch\(url, opts\)/.test(fs.readFileSync(path.join(root, "copilot", "copilot.js"), "utf8")) && /@grant\s+unsafeWindow/.test(fs.readFileSync(path.join(root, "copilot", "copilot.js"), "utf8")));
+
   section("Summary");
   console.log(`${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

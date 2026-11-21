@@ -8,11 +8,11 @@
   "transfers": [
    [
     "João Pedro",
-    "Isak"
+    "Evanilson"
    ]
   ],
-  "captain": "Tavernier",
-  "captainPoints": 3,
+  "captain": "Haaland",
+  "captainPoints": 2,
   "chipsAdvised": []
  },
  "manager": {
@@ -34,6 +34,12 @@
  "rho": 0.546,
  "noShows": [],
  "cards": [
+  {
+   "id": 1,
+   "name": "Raya",
+   "yc": 1,
+   "rc": 0
+  },
   {
    "id": 115,
    "name": "De Cuyper",
@@ -121,8 +127,7 @@
   "right": 9
  },
  "lessons": [
-  "Captain Tavernier (3) vs the top 200's Haaland (2, 83%).",
-  "Cards in the advised XI: De Cuyper, Groß.",
+  "Cards in the advised XI: Raya, De Cuyper, Groß.",
   "Hauls the model did not see: Verbruggen 11 (ranked 123), Fofana 11 (ranked 219), Van den Berg 10 (ranked 243), Ayari 10 (ranked 138).",
   "Price calls weak: 9 of 35 right."
  ]
