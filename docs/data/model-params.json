@@ -1,12 +1,14 @@
 {
- "updated": "2026-11-20",
+ "updated": "2026-11-24",
  "gws": [
   1,
-  10
+  11
  ],
- "meanRho": 0.508,
- "meanRhoEpNext": 0.435,
- "teamPoints": 648,
- "avgManagerPoints": 563,
- "params": {}
+ "meanRho": 0.505,
+ "meanRhoEpNext": 0.437,
+ "teamPoints": 710,
+ "avgManagerPoints": 598,
+ "params": {
+  "marketWeight": 0.7
+ }
 }

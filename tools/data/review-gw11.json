@@ -1,0 +1,129 @@
+{
+ "gw": 11,
+ "entry": 2769173,
+ "advice": {
+  "points": 33,
+  "hitCost": 0,
+  "chip": null,
+  "transfers": [
+   [
+    "Ajayi",
+    "Vuskovic"
+   ]
+  ],
+  "captain": "Haaland",
+  "captainPoints": 2,
+  "chipsAdvised": []
+ },
+ "manager": {
+  "points": 30,
+  "hitCost": 0,
+  "chip": "wildcard",
+  "captain": "Haaland"
+ },
+ "top200": {
+  "points": 41.56,
+  "captain": "Haaland",
+  "chips": {
+   "3xc": 0.015,
+   "bboost": 0.03,
+   "wildcard": 0.01
+  }
+ },
+ "average": 35,
+ "rho": 0.467,
+ "noShows": [],
+ "cards": [
+  {
+   "id": 504,
+   "name": "Vuskovic",
+   "yc": 1,
+   "rc": 0
+  }
+ ],
+ "missedHauls": [
+  {
+   "id": 86,
+   "name": "Lewis-Potter",
+   "pts": 16,
+   "projRank": 68,
+   "proj": 3.3
+  },
+  {
+   "id": 336,
+   "name": "Okafor",
+   "pts": 15,
+   "projRank": 230,
+   "proj": 1.6
+  },
+  {
+   "id": 60,
+   "name": "Hill",
+   "pts": 14,
+   "projRank": 20,
+   "proj": 4.4
+  },
+  {
+   "id": 366,
+   "name": "Wirtz",
+   "pts": 14,
+   "projRank": 27,
+   "proj": 4
+  },
+  {
+   "id": 295,
+   "name": "McBurnie",
+   "pts": 13,
+   "projRank": 56,
+   "proj": 3.4
+  },
+  {
+   "id": 369,
+   "name": "Ngumoha",
+   "pts": 13,
+   "projRank": 294,
+   "proj": 1.1
+  },
+  {
+   "id": 601,
+   "name": "Williams-Barnett",
+   "pts": 13,
+   "projRank": 191,
+   "proj": 2
+  },
+  {
+   "id": 211,
+   "name": "Yeremy",
+   "pts": 12,
+   "projRank": 111,
+   "proj": 2.8
+  }
+ ],
+ "channel": {
+  "GK": {
+   "proj": 1.7,
+   "actual": 1.9
+  },
+  "DEF": {
+   "proj": 2.3,
+   "actual": 2.2
+  },
+  "MID": {
+   "proj": 2.1,
+   "actual": 2.6
+  },
+  "FWD": {
+   "proj": 2.5,
+   "actual": 2.9
+  }
+ },
+ "priceHit": {
+  "calls": 26,
+  "right": 4
+ },
+ "lessons": [
+  "Cards in the advised XI: Vuskovic.",
+  "Hauls the model did not see: Lewis-Potter 16 (ranked 68), Okafor 15 (ranked 230), Ngumoha 13 (ranked 294), Williams-Barnett 13 (ranked 191), Yeremy 12 (ranked 111).",
+  "Price calls weak: 4 of 26 right."
+ ]
+}

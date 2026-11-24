@@ -1,11 +1,11 @@
 {
- "updated": "2026-11-21",
+ "updated": "2026-11-24",
  "entry": 2769173,
  "totals": {
-  "advice": 633,
-  "manager": 400,
-  "top200": 708.2,
-  "average": 513
+  "advice": 666,
+  "manager": 430,
+  "top200": 749.7,
+  "average": 548
  },
  "weeks": [
   {
@@ -200,6 +200,26 @@
     "Cards in the advised XI: Tavernier.",
     "Hauls the model did not see: Alysson 16 (ranked 219), Delap 13 (ranked 141), Dorgu 11 (ranked 345).",
     "Price calls weak: 9 of 32 right."
+   ]
+  },
+  {
+   "gw": 11,
+   "advice": 33,
+   "manager": 30,
+   "top200": 41.56,
+   "average": 35,
+   "captain": "Haaland",
+   "chip": null,
+   "transfers": [
+    [
+     "Ajayi",
+     "Vuskovic"
+    ]
+   ],
+   "lessons": [
+    "Cards in the advised XI: Vuskovic.",
+    "Hauls the model did not see: Lewis-Potter 16 (ranked 68), Okafor 15 (ranked 230), Ngumoha 13 (ranked 294), Williams-Barnett 13 (ranked 191), Yeremy 12 (ranked 111).",
+    "Price calls weak: 4 of 26 right."
    ]
   }
  ]
